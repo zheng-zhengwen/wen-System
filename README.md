@@ -1,4 +1,4 @@
-# IvyeaOps · 自托管亚马逊运营工作台
+# wen · 亚马逊运营工作台
 
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/Hector-xue/IvyeaOps?label=release)](https://github.com/Hector-xue/IvyeaOps/releases/latest)
