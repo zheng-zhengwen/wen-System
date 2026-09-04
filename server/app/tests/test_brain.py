@@ -17,16 +17,16 @@ def client(tmp_path: Path, monkeypatch):
     (brain / "amazon").mkdir()
     (brain / "amazon" / "note.md").write_text("# Note\n\nAmazon 广告优化\n", encoding="utf-8")
 
-    monkeypatch.setenv("IVYEA_OPS_BRAIN_ROOT", str(brain))
-    monkeypatch.setenv("IVYEA_OPS_BRAIN_CHAT_DB", str(tmp_path / "brain_chat.sqlite3"))
-    monkeypatch.setenv("IVYEA_OPS_SECRET", "test-secret")
-    monkeypatch.setenv("IVYEA_OPS_ALLOWED_ORIGINS", _ORIGIN)
+    monkeypatch.setenv("AWENOPS_BRAIN_ROOT", str(brain))
+    monkeypatch.setenv("AWENOPS_BRAIN_CHAT_DB", str(tmp_path / "brain_chat.sqlite3"))
+    monkeypatch.setenv("AWENOPS_SECRET", "test-secret")
+    monkeypatch.setenv("AWENOPS_ALLOWED_ORIGINS", _ORIGIN)
 
     import importlib
     from app.core import config as cfg_mod
     importlib.reload(cfg_mod)
-    from app.services import gbrain_service as gb_mod
-    importlib.reload(gb_mod)
+    from app.services import brain_files as bf_mod
+    importlib.reload(bf_mod)
     from app.services import brain_chat_service as bc_mod
     importlib.reload(bc_mod)
     from app.routers import brain as brain_router_mod
@@ -34,15 +34,29 @@ def client(tmp_path: Path, monkeypatch):
     from app import main as main_mod
     importlib.reload(main_mod)
 
+    # 知识库的"前门"是 awenAgent，只有本地 agent 服务不可达时才回退到 GBrain
+    # markdown 存储（见 routers/brain._awen_front_door）。这批测试写的是 GBrain
+    # 那条路 —— 如果不钉死，结果就取决于**跑测试的机器上 8765 端口有没有 agent
+    # 在跑**：开发机上走 agent 分支去读真实知识库，于是 `total` 对不上、文件也不是
+    # 测试自己造的那份；CI 上没 agent 又能过。测试不该依赖某个服务恰好起着。
+    #
+    # （前门那条路自己的覆盖是缺的，见 test_brain_front_door 那条。）
+    monkeypatch.setattr(bc_mod, "awen_chat_available", lambda: False)
+
     from app.core import security as sec_mod
     main_mod.app.dependency_overrides[sec_mod.require_user] = lambda: "tester"
+    # 聊天消息那几个接口用的是 require_user_info（返回 principal 字典）而不是
+    # require_user —— 只 override 后者覆盖不到，请求会 401。
+    main_mod.app.dependency_overrides[sec_mod.require_user_info] = lambda: {
+        "id": "admin", "role": "admin", "email": "tester", "permissions": [],
+    }
 
     with TestClient(main_mod.app) as c:
-        yield c, brain, gb_mod, bc_mod
+        yield c, brain, bf_mod, bc_mod
 
 
 def test_list_and_read_file(client):
-    c, _brain, _gb, _bc = client
+    c, _brain, _bf, _bc = client
     r = c.get("/api/brain/files")
     assert r.status_code == 200, r.text
     data = r.json()
@@ -55,7 +69,7 @@ def test_list_and_read_file(client):
 
 
 def test_write_file_rejects_path_escape(client):
-    c, _brain, _gb, _bc = client
+    c, _brain, _bf, _bc = client
     r = c.put(
         "/api/brain/file",
         json={"path": "../x.md", "content": "bad"},
@@ -65,7 +79,7 @@ def test_write_file_rejects_path_escape(client):
 
 
 def test_write_file_allows_markdown_under_brain(client):
-    c, brain, _gb, _bc = client
+    c, brain, _bf, _bc = client
     r = c.put(
         "/api/brain/file",
         json={"path": "products/test.md", "content": "# Product\n"},
@@ -75,27 +89,44 @@ def test_write_file_allows_markdown_under_brain(client):
     assert (brain / "products" / "test.md").read_text(encoding="utf-8") == "# Product\n"
 
 
-def test_search_uses_whitelisted_service(client, monkeypatch):
-    c, _brain, gb, _bc = client
+def test_search_goes_through_the_agent(client, monkeypatch):
+    """检索唯一后端是 awenAgent —— 外部 GBrain 已摘除。"""
+    c, _brain, _bf, bc = client
+    from app.routers import brain as B
 
-    def fake_search(query: str, mode: str = "search"):
-        return {"query": query, "mode": mode, "raw": "", "items": [{"slug": "amazon/note", "score": 1, "snippet": "ok"}]}
+    monkeypatch.setattr(B, "_awen_front_door", lambda: True)
+    monkeypatch.setattr(bc, "ia_search", lambda q, m="search", limit=12: {
+        "mode": m, "query": q, "raw": "", "source": "awen-agent",
+        "items": [{"slug": "amazon/note", "score": 1, "snippet": "ok"}]})
 
-    monkeypatch.setattr(gb, "search", fake_search)
     r = c.post("/api/brain/search", json={"query": "广告", "mode": "search"}, headers=_HDR)
     assert r.status_code == 200, r.text
     assert r.json()["items"][0]["slug"] == "amazon/note"
 
 
+def test_search_reports_503_when_agent_is_down(client, monkeypatch):
+    """没有第二个后端了 —— 如实报不可用，而不是悄悄返回空结果
+    （那会让用户以为知识库里没有这些内容）。"""
+    c, _brain, _bf, _bc = client
+    from app.routers import brain as B
+
+    monkeypatch.setattr(B, "_awen_front_door", lambda: False)
+    r = c.post("/api/brain/search", json={"query": "广告", "mode": "search"}, headers=_HDR)
+    assert r.status_code == 503
+    assert "未连接" in r.json()["detail"]
+
+
 def test_search_rejects_bad_mode(client):
-    c, _brain, _gb, _bc = client
+    c, _brain, _bf, _bc = client
     r = c.post("/api/brain/search", json={"query": "x", "mode": "shell"}, headers=_HDR)
     assert r.status_code == 422
 
 
 def test_upload_text_creates_markdown_under_brain(client, monkeypatch):
-    c, brain, _gb, _bc = client
-    monkeypatch.setattr(_gb, "import_brain", lambda: {"ok": True, "raw": "import ok"})
+    c, brain, _bf, _bc = client
+    monkeypatch.setattr(_bc, "awen_chat_available", lambda: False)
+    # 索引重建单独打桩：这条测的是本地落盘，不该被"agent 在不在线"影响。
+    monkeypatch.setattr(_bc, "reindex_after_save", lambda: ("ok", ""))
     r = c.post(
         "/api/brain/upload",
         files={"file": ("note.txt", b"hello knowledge", "text/plain")},
@@ -110,11 +141,12 @@ def test_upload_text_creates_markdown_under_brain(client, monkeypatch):
 
 
 def test_ingest_text_uses_hermes_analysis_and_creates_new_directory(client, monkeypatch):
-    c, brain, _gb, bc = client
-    monkeypatch.setattr(_gb, "import_brain", lambda: {"ok": True, "raw": "import ok"})
+    c, brain, _bf, bc = client
+    monkeypatch.setattr(bc, "awen_chat_available", lambda: False)
+    monkeypatch.setattr(bc, "reindex_after_save", lambda: ("ok", ""))
     monkeypatch.setattr(
         bc,
-        "_call_hermes_json",
+        "_call_runner_json",
         lambda prompt: {
             "title": "Trail Camera 广告复盘",
             "directory": "amazon/ads/reviews",
@@ -144,11 +176,12 @@ def test_ingest_text_uses_hermes_analysis_and_creates_new_directory(client, monk
 
 
 def test_ingest_text_falls_back_and_sanitizes_bad_directory(client, monkeypatch):
-    c, brain, _gb, bc = client
-    monkeypatch.setattr(_gb, "import_brain", lambda: {"ok": True, "raw": "import ok"})
+    c, brain, _bf, bc = client
+    monkeypatch.setattr(bc, "awen_chat_available", lambda: False)
+    monkeypatch.setattr(bc, "reindex_after_save", lambda: ("ok", ""))
     monkeypatch.setattr(
         bc,
-        "_call_hermes_json",
+        "_call_runner_json",
         lambda prompt: {
             "title": "../危险标题",
             "directory": "../../.ssh/secret",
@@ -174,9 +207,10 @@ def test_ingest_text_falls_back_and_sanitizes_bad_directory(client, monkeypatch)
 
 
 def test_ingest_text_rules_fallback_when_hermes_unavailable(client, monkeypatch):
-    c, brain, _gb, bc = client
-    monkeypatch.setattr(_gb, "import_brain", lambda: {"ok": True, "raw": "import ok"})
-    monkeypatch.setattr(bc, "_call_hermes_json", lambda prompt: (_ for _ in ()).throw(RuntimeError("offline")))
+    c, brain, _bf, bc = client
+    monkeypatch.setattr(bc, "awen_chat_available", lambda: False)
+    monkeypatch.setattr(bc, "reindex_after_save", lambda: ("ok", ""))
+    monkeypatch.setattr(bc, "_call_runner_json", lambda prompt: (_ for _ in ()).throw(RuntimeError("offline")))
 
     r = c.post(
         "/api/brain/ingest/text",
@@ -192,8 +226,11 @@ def test_ingest_text_rules_fallback_when_hermes_unavailable(client, monkeypatch)
 
 
 def test_chat_sessions_persist_messages(client, monkeypatch):
-    c, _brain, gb, bc = client
-    monkeypatch.setattr(gb, "search", lambda q, mode="search": {"items": [{"slug": "amazon/note", "score": 1, "snippet": "广告优化"}]})
+    c, _brain, _bf, bc = client
+    # 引用来自 agent 的知识库；回答本身用桩，避免真调模型。
+    monkeypatch.setattr(bc, "awen_chat_available", lambda: True)
+    monkeypatch.setattr(bc, "ia_search", lambda q, m="search", limit=12: {
+        "items": [{"slug": "amazon/note", "score": 1, "snippet": "广告优化"}]})
     monkeypatch.setattr(bc, "_call_llm", lambda messages: "基于知识库的回答")
 
     r = c.post("/api/brain/chat/sessions", json={"title": "测试会话", "mode": "amazon_operator"}, headers=_HDR)
@@ -212,7 +249,84 @@ def test_chat_sessions_persist_messages(client, monkeypatch):
 
 
 def test_chat_model_status_does_not_leak_keys(client):
-    c, _brain, _gb, _bc = client
+    c, _brain, _bf, _bc = client
     r = c.get("/api/brain/chat/status")
     assert r.status_code == 200, r.text
     assert "api_key" not in r.text.lower()
+
+
+# ── GBrain 摘除：/brain 必须在「只有 awenAgent」的机器上完整工作 ──────────
+
+def test_citations_use_the_agent_not_gbrain(monkeypatch):
+    """对话引用检索此前**完全没有 awen 分支** —— agent 明明是前门、数据也早已
+    整批导入，每次对话还要起一次外部二进制查一遍，agent 内部又查一遍。"""
+    from app.services import brain_chat_service as bc
+    monkeypatch.setattr(bc, "awen_chat_available", lambda: True)
+    monkeypatch.setattr(bc, "ia_search", lambda q, m="search", limit=12: {
+        "items": [{"slug": "k1", "title": "否词", "snippet": "s", "category": "amazon_ads"}]})
+
+    cites = bc._search_citations("广告怎么优化否词")
+    assert [c["slug"] for c in cites] == ["k1"]
+
+
+def test_citations_respect_category_scope(monkeypatch):
+    from app.services import brain_chat_service as bc
+    monkeypatch.setattr(bc, "awen_chat_available", lambda: True)
+    monkeypatch.setattr(bc, "ia_search", lambda q, m="search", limit=12: {
+        "items": [{"slug": "a", "category": "amazon_ads"},
+                  {"slug": "b", "category": "policies"}]})
+
+    assert [c["slug"] for c in bc._search_citations("x", "amazon_ads")] == ["a"]
+    assert bc._search_citations("x", "不存在") == []
+
+
+def test_citations_return_empty_when_nothing_available(monkeypatch):
+    """agent 不可用 + 没装 GBrain → 干净地返回空，不抛错、不留"检索失败"假引用。"""
+    from app.services import brain_chat_service as bc
+    monkeypatch.setattr(bc, "awen_chat_available", lambda: False)
+    assert bc._search_citations("随便问点什么") == []
+
+
+def test_legacy_gbrain_category_is_recovered():
+    """从 GBrain 导入的卡片在 agent 里统一是 legacy_gbrain，原分类藏在
+    source_url / path 里。不还原的话按分类过滤会把历史卡片全滤掉。"""
+    from app.services import brain_chat_service as bc
+    assert bc._legacy_category(
+        {"source_url": "gbrain://amazon/ads/2026-06-10-x", "category": "legacy_gbrain"}) == "amazon"
+    assert bc._legacy_category(
+        {"path": "user/imported/gbrain/ops/notes/a.md", "category": "legacy_gbrain"}) == "ops"
+    assert bc._legacy_category({"category": "amazon_ads"}) == "amazon_ads"
+
+
+def test_reindex_prefers_the_agent(monkeypatch):
+    from app.services import brain_chat_service as bc
+    monkeypatch.setattr(bc, "awen_chat_available", lambda: True)
+    import app.services.awen_agent_service as ia_mod
+    monkeypatch.setattr(ia_mod, "retrieval_sync", lambda: {"ok": True})
+    status, raw = bc.reindex_after_save()
+    assert status == "ok" and "awen-agent" in raw
+
+
+def test_reindex_without_any_backend_is_not_a_failure(monkeypatch):
+    """文件已经落到 BRAIN_ROOT，agent 下次同步会捡到 —— 不该报成失败吓用户。"""
+    from app.services import brain_chat_service as bc
+    monkeypatch.setattr(bc, "awen_chat_available", lambda: False)
+    assert bc.reindex_after_save() == ("skipped", "")
+
+
+def test_missing_page_is_a_404_not_a_gbrain_fallback(monkeypatch):
+    """"卡片不存在"是 agent 的**正常答复**，不是故障 —— 不能拿它当理由去回退
+    已被摘除的 GBrain。"""
+    from fastapi import HTTPException
+    from app.routers import brain as B
+    from app.services import awen_agent_service as ia_mod
+    monkeypatch.setattr(B, "_awen_front_door", lambda: True)
+
+    def not_found(_slug):
+        raise ia_mod.awenAgentNotFound("awenAgent HTTP 404: 知识卡不存在")
+
+    monkeypatch.setattr(B, "_ia_page", not_found)
+    with pytest.raises(HTTPException) as ei:
+        B.get_page("nope")
+    assert ei.value.status_code == 404
+    assert "页面不存在" in str(ei.value.detail)   # 不透出 URL 编码的原始报错

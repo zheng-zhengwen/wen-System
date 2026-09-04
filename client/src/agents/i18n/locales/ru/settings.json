@@ -98,10 +98,6 @@
     "about": "О программе"
   },
   "appearanceSettings": {
-    "darkMode": {
-      "label": "Темная тема",
-      "description": "Переключение между светлой и темной темами"
-    },
     "projectSorting": {
       "label": "Сортировка проектов",
       "description": "Как проекты упорядочены на боковой панели",

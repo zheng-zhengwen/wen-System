@@ -18,17 +18,17 @@ import {
 import { useAuth } from "../../App";
 import { useConfirm } from "../../components/ConfirmDialog";
 import {
-  ivyeaKnowledgeChangeApply,
-  ivyeaKnowledgeChangeDraft,
-  ivyeaKnowledgeChangePacket,
-  ivyeaKnowledgeChanges,
-  ivyeaKnowledgeGovernance,
-  ivyeaKnowledgeEvidence,
-  ivyeaKnowledgeEvidenceApply,
-  ivyeaKnowledgeEvidenceDraft,
-  ivyeaKnowledgeQuality,
-  ivyeaKnowledgeReviewChange,
-  ivyeaKnowledgeSync,
+  awenKnowledgeChangeApply,
+  awenKnowledgeChangeDraft,
+  awenKnowledgeChangePacket,
+  awenKnowledgeChanges,
+  awenKnowledgeGovernance,
+  awenKnowledgeEvidence,
+  awenKnowledgeEvidenceApply,
+  awenKnowledgeEvidenceDraft,
+  awenKnowledgeQuality,
+  awenKnowledgeReviewChange,
+  awenKnowledgeSync,
   type KnowledgeChange,
   type KnowledgeChangePacket,
   type KnowledgeCoverageRequirement,
@@ -36,8 +36,9 @@ import {
   type KnowledgeEvidencePayload,
   type KnowledgeQuality,
   type KnowledgeReviewStatus,
-} from "../../api/ivyeaAgent";
+} from "../../api/awenAgent";
 import "../../styles/knowledge-governance.css";
+import { errText } from "../../lib/errText";
 
 type View = "overview" | "changes" | "coverage" | "freshness" | "quality" | "evidence" | "conflicts";
 
@@ -95,7 +96,7 @@ const STATUS_LABEL: Record<string, string> = {
 };
 
 function errorMessage(error: any, fallback = "操作失败") {
-  return error?.response?.data?.detail || error?.response?.data?.error || error?.message || fallback;
+  return errText(error, fallback);
 }
 
 function pct(value: number | undefined) {
@@ -156,7 +157,7 @@ export default function KnowledgeGovernancePanel() {
   const [flash, setFlash] = useState("");
 
   const loadChanges = useCallback(async (status = statusFilter) => {
-    const result = await ivyeaKnowledgeChanges(status, 200);
+    const result = await awenKnowledgeChanges(status, 200);
     setChanges(result.changes || []);
     setChangeSummary(result.summary || {});
     setSelected((current) => {
@@ -166,7 +167,7 @@ export default function KnowledgeGovernancePanel() {
   }, [statusFilter]);
 
   const loadGovernance = useCallback(async () => {
-    const result = await ivyeaKnowledgeGovernance();
+    const result = await awenKnowledgeGovernance();
     setGovernance(result);
   }, []);
 
@@ -187,7 +188,7 @@ export default function KnowledgeGovernancePanel() {
   useEffect(() => {
     if (view !== "quality" || quality) return;
     setBusy("quality");
-    ivyeaKnowledgeQuality()
+    awenKnowledgeQuality()
       .then(setQuality)
       .catch((error) => setError(errorMessage(error, "质量评测失败")))
       .finally(() => setBusy(""));
@@ -195,7 +196,7 @@ export default function KnowledgeGovernancePanel() {
 
   useEffect(() => {
     if (view !== "evidence") return;
-    ivyeaKnowledgeEvidence(100)
+    awenKnowledgeEvidence(100)
       .then((result) => setEvidenceRows(result.evidence || []))
       .catch((error) => setError(errorMessage(error, "账户证据列表加载失败")));
   }, [view]);
@@ -223,7 +224,7 @@ export default function KnowledgeGovernancePanel() {
     setBusy("evidence-preview");
     setError("");
     try {
-      const result = await ivyeaKnowledgeEvidenceDraft(evidencePayload(false));
+      const result = await awenKnowledgeEvidenceDraft(evidencePayload(false));
       setEvidenceDraft(result);
       setFlash("账户证据已在本机完成脱敏并生成草案；尚未写入知识库。");
     } catch (error: any) {
@@ -245,12 +246,12 @@ export default function KnowledgeGovernancePanel() {
     setBusy("evidence-apply");
     setError("");
     try {
-      const result = await ivyeaKnowledgeEvidenceApply(evidencePayload(true));
+      const result = await awenKnowledgeEvidenceApply(evidencePayload(true));
       if (!result.ok) throw new Error(result.error || result.result?.error || "写入失败");
       setFlash(`已写入脱敏账户证据 ${result.evidence?.id || ""}。`);
       setEvidenceForm({ ...EMPTY_EVIDENCE });
       setEvidenceDraft(null);
-      const listed = await ivyeaKnowledgeEvidence(100);
+      const listed = await awenKnowledgeEvidence(100);
       setEvidenceRows(listed.evidence || []);
     } catch (error: any) {
       setError(errorMessage(error, "账户证据写入失败"));
@@ -286,7 +287,7 @@ export default function KnowledgeGovernancePanel() {
     setBusy("review");
     setError("");
     try {
-      await ivyeaKnowledgeReviewChange({
+      await awenKnowledgeReviewChange({
         eventId: selected.event_id,
         decision,
         reviewer: username || "local-operator",
@@ -307,7 +308,7 @@ export default function KnowledgeGovernancePanel() {
     setDetailLoading(true);
     setError("");
     try {
-      const result = await ivyeaKnowledgeChangePacket(selected.event_id, cardId);
+      const result = await awenKnowledgeChangePacket(selected.event_id, cardId);
       const next = result.packet;
       setPacket(next);
       const resolvedCard = next.target?.id || cardId;
@@ -332,7 +333,7 @@ export default function KnowledgeGovernancePanel() {
     setBusy("preview");
     setError("");
     try {
-      const result = await ivyeaKnowledgeChangeDraft({
+      const result = await awenKnowledgeChangeDraft({
         eventId: selected.event_id,
         cardId: targetCardId,
         newCardId,
@@ -361,7 +362,7 @@ export default function KnowledgeGovernancePanel() {
     setBusy("publish");
     setError("");
     try {
-      const result = await ivyeaKnowledgeChangeApply({
+      const result = await awenKnowledgeChangeApply({
         eventId: selected.event_id,
         cardId: targetCardId,
         newCardId,
@@ -391,7 +392,7 @@ export default function KnowledgeGovernancePanel() {
     setBusy("sync");
     setError("");
     try {
-      const result = await ivyeaKnowledgeSync([], false);
+      const result = await awenKnowledgeSync([], false);
       setFlash(`来源检查完成：selected=${result.summary?.selected || 0}，error=${result.summary?.error || 0}。`);
       await refresh();
     } catch (error: any) {
@@ -423,7 +424,7 @@ export default function KnowledgeGovernancePanel() {
         <strong>{transient ? "知识治理数据加载失败" : "知识治理能力不可用"}</strong>
         <p>{transient
           ? `连接失败（${error}），可能是网络瞬断或服务正在重启，重试即可。`
-          : error || "当前 IvyeaAgent 版本没有治理接口。请先升级并重启本地服务。"}</p>
+          : error || "当前 awenAgent 版本没有治理接口。请先升级并重启本地服务。"}</p>
         <div style={{ display: "flex", gap: 8 }}>
           <button className="tbtn" onClick={() => refresh()} disabled={loading}>
             {loading ? <Loader2 className="spin" size={13} /> : null}重试
@@ -442,7 +443,7 @@ export default function KnowledgeGovernancePanel() {
     <div className="kg-root">
       <div className="kg-head">
         <div>
-          <div className="kg-title"><ShieldCheck size={18} />IvyeaAgent 知识治理中心</div>
+          <div className="kg-title"><ShieldCheck size={18} />awenAgent 知识治理中心</div>
           <div className="kg-subtitle">官方来源审核、知识覆盖、时效、质量与冲突证据统一管理</div>
         </div>
         <div className="kg-head-actions">
@@ -628,7 +629,7 @@ export default function KnowledgeGovernancePanel() {
 
       {view === "quality" && (
         <section className="kg-card">
-          <div className="kg-card-head"><h3><FlaskConical size={15} />持续质量评测</h3><button className="tbtn" onClick={async () => { setBusy("quality"); try { setQuality(await ivyeaKnowledgeQuality()); } catch (error: any) { setError(errorMessage(error)); } finally { setBusy(""); } }} disabled={busy === "quality"}>{busy === "quality" ? <Loader2 className="spin" size={13} /> : <RefreshCw size={13} />}重新运行</button></div>
+          <div className="kg-card-head"><h3><FlaskConical size={15} />持续质量评测</h3><button className="tbtn" onClick={async () => { setBusy("quality"); try { setQuality(await awenKnowledgeQuality()); } catch (error: any) { setError(errorMessage(error)); } finally { setBusy(""); } }} disabled={busy === "quality"}>{busy === "quality" ? <Loader2 className="spin" size={13} /> : <RefreshCw size={13} />}重新运行</button></div>
           {qualitySummary ? <>
             <div className="kg-quality-hero"><div className={quality?.quality.ok ? "pass" : "fail"}>{quality?.quality.ok ? "PASS" : "FAIL"}</div><strong>{qualitySummary.passed}/{qualitySummary.cases}</strong><span>通过率 {pct(qualitySummary.pass_rate)}</span></div>
             <div className="kg-table-wrap"><table className="kg-table"><thead><tr><th>用例</th><th>知识域</th><th>风险</th><th>命中排名</th><th>结果</th></tr></thead><tbody>
@@ -645,7 +646,7 @@ export default function KnowledgeGovernancePanel() {
               <div><h3><Database size={15} />授权账户证据导入</h3><small>粘贴 Seller Central 或官方报表中的必要文本；不要上传身份证、银行卡或完整原始文件。</small></div>
               {!isAdmin && <Badge status="review_due">管理员可写</Badge>}
             </div>
-            <div className="kg-alert kg-alert-info"><ShieldCheck size={14} />数据只发送到本机 IvyeaAgent。账户号、订单号、case、notification、结算和交易标识只保存哈希引用；邮箱、电话、地址、证件、银行和税号会专项脱敏。</div>
+            <div className="kg-alert kg-alert-info"><ShieldCheck size={14} />数据只发送到本机 awenAgent。账户号、订单号、case、notification、结算和交易标识只保存哈希引用；邮箱、电话、地址、证件、银行和税号会专项脱敏。</div>
             <div className="kg-draft-fields kg-evidence-fields">
               <label>证据类型<select data-testid="evidence-kind" value={evidenceForm.kind} onChange={(event) => setEvidenceField("kind", event.target.value)}>
                 {EVIDENCE_KINDS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}

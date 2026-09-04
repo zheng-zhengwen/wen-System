@@ -12,6 +12,7 @@ shaping only.
 from __future__ import annotations
 
 import re
+import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -19,6 +20,7 @@ from pydantic import BaseModel, Field
 
 from app.core.security import require_user
 from app.services import skill_repo
+from app.services import agent_skills
 from app.services import snapshot as snapshot_svc
 from app.services import git_import
 from app.services import studio_audit
@@ -477,12 +479,15 @@ def audit_tail_route(
 import json
 from app.core.skill_paths import SETTINGS_FILE
 
+logger = logging.getLogger("awen.routers.skill")
+
 
 _DEFAULT_SETTINGS: dict[str, Any] = {
     "snapshot_retention": 20,          # keep N per-skill snapshots
     "trash_ttl_days": 7,
     "autosave_debounce_ms": 600,
-    "theme": "dark",
+    # Retained for API compatibility; the product has one light theme.
+    "theme": "light",
 }
 
 
@@ -496,6 +501,8 @@ def _load_settings() -> dict[str, Any]:
     merged = dict(_DEFAULT_SETTINGS)
     if isinstance(data, dict):
         merged.update({k: v for k, v in data.items() if k in _DEFAULT_SETTINGS})
+    # Normalize settings written by older releases before returning them.
+    merged["theme"] = "light"
     return merged
 
 
@@ -522,7 +529,7 @@ class UpdateSettingsBody(BaseModel):
     snapshot_retention: int | None = Field(None, ge=1, le=200)
     trash_ttl_days: int | None = Field(None, ge=1, le=365)
     autosave_debounce_ms: int | None = Field(None, ge=100, le=10_000)
-    theme: str | None = Field(None, pattern=r"^(dark|light)$")
+    theme: str | None = Field(None, pattern=r"^light$")
 
 
 @router.put("/settings", response_model=dict)
@@ -571,7 +578,7 @@ async def generate_from_idea(
             ref = skill_repo.get_skill(body.ref_skill)
             ref_context = f"\n\n参考 Skill（{body.ref_skill}）的结构：\n---\n{ref.content_body[:2000]}\n---"
         except Exception:
-            pass
+            logger.debug("skill_repo.get_skill 失败（旁路，已忽略）", exc_info=True)
 
     prompt = f"""你是一位 Hermes Skill 编写专家。用户描述了一个需求，请帮他**编写**一份完整的 SKILL.md。
 
@@ -766,3 +773,29 @@ def architect_prompts() -> dict:
     """Return the editable stage prompts (seeding defaults on first access)."""
     from app.services import skill_architect
     return skill_architect.list_prompts()
+
+
+# ---------------------------------------------------------------------------
+# Agent 技能库同步
+# ---------------------------------------------------------------------------
+
+
+@router.get("/agent-sync", response_model=dict)
+def agent_skills_status() -> dict:
+    """技能库有没有挂给 awenAgent（挂上的技能任务台才能自动匹配到）。"""
+    return agent_skills.status()
+
+
+@router.post("/agent-sync", response_model=dict)
+def agent_skills_register(user: str = Depends(require_user)) -> dict:
+    """重新把技能库挂给 awenAgent。
+
+    正常情况下开机自动挂好，**技能改完立即生效、不需要同步**。这个入口是给
+    "手工动过 agent 的 settings.json"之后重新挂上用的，幂等。
+    """
+    res = agent_skills.register_roots()
+    studio_audit.record(
+        "skill.agent_mount", actor=user, skill_name="",
+        details={"changed": res.get("changed"), "roots": res.get("roots")},
+    )
+    return {**res, **agent_skills.status()}

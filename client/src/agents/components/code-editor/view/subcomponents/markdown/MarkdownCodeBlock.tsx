@@ -1,9 +1,7 @@
 import { useState } from 'react';
 import type { ComponentProps } from 'react';
-// PrismLight with a curated language set (see lib/prismLight) instead of the
-// full Prism build that bundles every language.
-import SyntaxHighlighter from '../../../../../lib/prismLight';
-import { oneDark as prismOneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
+// 同 chat 的 Markdown：高亮器按需加载。
+import LazyHighlighter from '../../../../../lib/LazyHighlighter';
 import { copyTextToClipboard } from '../../../../../utils/clipboard';
 
 type MarkdownCodeBlockProps = {
@@ -26,7 +24,7 @@ export default function MarkdownCodeBlock({
   if (shouldRenderInline) {
     return (
       <code
-        className={`whitespace-pre-wrap break-words rounded-md border border-gray-200 bg-gray-100 px-1.5 py-0.5 font-mono text-[0.9em] text-gray-900 dark:border-gray-700 dark:bg-gray-800/60 dark:text-gray-100 ${className || ''}`}
+        className={`whitespace-pre-wrap break-words rounded-md border border-gray-200 bg-gray-100 px-1.5 py-0.5 font-mono text-[0.9em] text-gray-900 border-gray-700 bg-gray-800/60 text-gray-100 ${className || ''}`}
         {...props}
       >
         {children}
@@ -57,18 +55,16 @@ export default function MarkdownCodeBlock({
         {copied ? 'Copied!' : 'Copy'}
       </button>
 
-      <SyntaxHighlighter
+      <LazyHighlighter
         language={language}
-        style={prismOneDark}
+        code={rawContent}
         customStyle={{
           margin: 0,
           borderRadius: '0.5rem',
           fontSize: '0.875rem',
           padding: language !== 'text' ? '2rem 1rem 1rem 1rem' : '1rem',
         }}
-      >
-        {rawContent}
-      </SyntaxHighlighter>
+      />
     </div>
   );
 }

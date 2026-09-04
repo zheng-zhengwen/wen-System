@@ -1,5 +1,15 @@
 import type { DataSourceId } from "../lib/dataSource";
 
+async function requireOk(response: Response): Promise<void> {
+  if (response.ok) return;
+  let message = `HTTP ${response.status}`;
+  try {
+    const body = await response.json();
+    if (typeof body?.detail === "string" && body.detail.trim()) message = body.detail;
+  } catch { /* 非 JSON 错误体保留 HTTP 状态 */ }
+  throw new Error(message);
+}
+
 export type WatchKind = "competitor" | "own";
 
 export interface WatchItem {
@@ -77,10 +87,11 @@ export async function addWatch(item: {
 }
 
 export async function deleteWatch(id: string): Promise<void> {
-  await fetch(`/api/home/watch/${encodeURIComponent(id)}`, {
+  const response = await fetch(`/api/home/watch/${encodeURIComponent(id)}`, {
     method: "DELETE",
     credentials: "include",
   });
+  await requireOk(response);
 }
 
 export interface WatchSnapshot {
@@ -235,10 +246,11 @@ export async function addMarketWatch(item: { query: string; marketplace: string;
 }
 
 export async function deleteMarketWatch(id: string): Promise<void> {
-  await fetch(`/api/home/market-watch/${encodeURIComponent(id)}`, {
+  const response = await fetch(`/api/home/market-watch/${encodeURIComponent(id)}`, {
     method: "DELETE",
     credentials: "include",
   });
+  await requireOk(response);
 }
 
 export async function fetchMarketSeries(query: string, marketplace: string, dataSource: DataSourceId = "sorftime"): Promise<MarketSeries> {
@@ -320,7 +332,8 @@ export async function addKeyword(keyword: string, marketplace: string, dataSourc
 }
 
 export async function deleteKeyword(id: string): Promise<void> {
-  await fetch(`/api/home/keyword/${encodeURIComponent(id)}`, { method: "DELETE", credentials: "include" });
+  const response = await fetch(`/api/home/keyword/${encodeURIComponent(id)}`, { method: "DELETE", credentials: "include" });
+  await requireOk(response);
 }
 
 // ── Expanded keywords (拓展词) ────────────────────────────────────────────────

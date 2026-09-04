@@ -20,9 +20,8 @@ fi
 # shellcheck disable=SC1090
 set -a; . "$CONF"; set +a
 
-EXPECTED=(SERVER_NAME INSTALL_DIR IVYEA_OPS_USER IVYEA_OPS_PORT PYTHON_BIN
-          CPU_ALERT_LOG CLAUDECODEUI_PORT IMGFLOW_WEB_PORT IMGFLOW_API_PORT
-          SKILL_STUDIO_DIST)
+EXPECTED=(SERVER_NAME INSTALL_DIR AWENOPS_USER AWENOPS_PORT PYTHON_BIN
+          CPU_ALERT_LOG CLAUDECODEUI_PORT SKILL_STUDIO_DIST)
 for v in "${EXPECTED[@]}"; do
   if [ -z "${!v:-}" ]; then
     echo "error: $v is empty in $CONF" >&2
@@ -47,25 +46,25 @@ render() {
   echo "  rendered: $dst"
 }
 
-render deploy/nginx/ivyea-ops.conf.template      "$DIST/nginx/ivyea-ops.conf"
-render deploy/systemd/ivyea-ops.service.template "$DIST/systemd/ivyea-ops.service"
-render deploy/cron.d/ivyea-ops-cpu-alert.template "$DIST/cron.d/ivyea-ops-cpu-alert"
+render deploy/nginx/awenops.conf.template      "$DIST/nginx/awenops.conf"
+render deploy/systemd/awenops.service.template "$DIST/systemd/awenops.service"
+render deploy/cron.d/awenops-cpu-alert.template "$DIST/cron.d/awenops-cpu-alert"
 
 cat <<EOF
 
 Done. Next steps:
 
   # 1. nginx (after certbot has issued the cert)
-  sudo cp $DIST/nginx/ivyea-ops.conf /etc/nginx/conf.d/
+  sudo cp $DIST/nginx/awenops.conf /etc/nginx/conf.d/
   sudo nginx -t && sudo systemctl reload nginx
 
   # 2. systemd
-  sudo cp $DIST/systemd/ivyea-ops.service /etc/systemd/system/
+  sudo cp $DIST/systemd/awenops.service /etc/systemd/system/
   sudo systemctl daemon-reload
-  sudo systemctl enable --now ivyea-ops.service
+  sudo systemctl enable --now awenops.service
 
   # 3. CPU alert cron
   sudo mkdir -p \$(dirname $CPU_ALERT_LOG)
-  sudo cp $DIST/cron.d/ivyea-ops-cpu-alert /etc/cron.d/
+  sudo cp $DIST/cron.d/awenops-cpu-alert /etc/cron.d/
 
 EOF

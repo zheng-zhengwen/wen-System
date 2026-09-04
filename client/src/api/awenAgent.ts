@@ -1,0 +1,1757 @@
+import { api } from "./client";
+
+export type awenAgentStatus = {
+  ok: boolean;
+  available: boolean;
+  base_url: string;
+  token_configured: boolean;
+  health?: any;
+  error?: string;
+};
+
+export type awenChatResult = {
+  ok: boolean;
+  session_id?: string;
+  text?: string;
+  events?: { type: string; text?: string }[];
+  error?: string;
+  detail?: string;
+  model?: any;
+};
+
+export type awenChatSession = {
+  id: string;
+  updated?: number;
+  turns?: number;
+  preview?: string;
+};
+
+export type awenChatSessionDetail = {
+  id: string;
+  created?: number;
+  updated?: number;
+  model?: string;
+  usage?: any;
+  /**
+   * 本页的消息。assistant 行带 `tool_calls`（id + 工具名）、tool 行带 `tool_call_id` ——
+   * 它们是把落盘的执行步骤挂回对应轮次的锚点（agent ≥ v1.10.3）。
+   */
+  messages: {
+    role: string;
+    content: string;
+    tool_calls?: { id: string; name: string }[];
+    tool_call_id?: string;
+  }[];
+  /** 本页涉及的执行步骤（agent ≥ v1.10.3；老版本没有这个字段）。 */
+  steps?: awenStepEvent[];
+  /** 本页涉及的技能命中，anchor 是该轮第一个 call_id。 */
+  skill_matches?: { anchor: string; skills: MatchedSkillRow[] }[];
+  /**
+   * 这条会话现在占多少上下文（agent ≥ v1.16）。**按整份存档算，不是按这一页** ——
+   * 打开历史会话时进度条就靠它，不必等用户再问一句才长出来。
+   */
+  context?: awenContextUsage;
+  /** 按轮分页的游标。老 agent 不回这个字段 —— 那就当成"只有这一页"。 */
+  turns?: { total: number; from: number; to: number; has_more: boolean };
+  /**
+   * 本页每轮的时刻表（agent ≥ v1.16.0）：`turn` 与上面的分页同源（都数"第几条真实
+   * 用户消息"），`started_at`/`ended_at` 是秒、`ms` 是挂钟毫秒。
+   *
+   * 刷新之后"发送于 09:46 / 结束于 09:49 · 用时 3 分"靠它 —— 客户端自己掐的表在
+   * 断链、换标签页、换机器之后就没了，而这一轮跑完前端还会重新拉一次存档。
+   * 老 agent 不回这个字段 → 那两行不显示，而不是编一个数出来。
+   */
+  turn_times?: { turn: number; started_at: number; ended_at: number; ms: number }[];
+};
+
+export type MatchedSkillRow = { id: string; title: string; domain?: string; score?: number };
+
+export type RetrievalStatus = {
+  ok: boolean;
+  index: {
+    enabled?: boolean;
+    backend?: string;
+    chunks?: number;
+    knowledge_cards?: number;
+    memory_chunks?: number;
+    needs_rebuild?: boolean;
+    [key: string]: any;
+  };
+};
+
+export type RetrievalEmbeddings = {
+  ok: boolean;
+  embeddings: {
+    configured_backend?: string;
+    active_backend?: string;
+    semantic_enabled?: boolean;
+    vector_kind?: string;
+    model?: string;
+    model_path?: string;
+    package_available?: boolean;
+    offline_model_available?: boolean;
+    fallback_reason?: string;
+    [key: string]: any;
+  };
+};
+
+export type KnowledgeUpload = {
+  id: string;
+  filename: string;
+  title: string;
+  raw_path: string;
+  extracted_path: string;
+  size: number;
+  created_at: string;
+  source_url?: string;
+  source_type?: string;
+  tags?: string[];
+  card_id?: string;
+  warnings?: string[];
+  text_chars?: number;
+  import_status?: string;
+};
+
+export type KnowledgeDraft = {
+  ok: boolean;
+  action: string;
+  card_id: string;
+  title: string;
+  source_type: string;
+  source_url?: string;
+  diff?: string;
+  warnings?: string[];
+  review_required?: boolean;
+  old_hash?: string;
+  new_hash?: string;
+};
+
+export type KnowledgeCard = {
+  id: string;
+  title: string;
+  path?: string;
+  tags?: string[];
+  source_type?: string;
+  source_url?: string;
+  body_hash?: string;
+};
+
+export type KnowledgeDirectoryImport = {
+  ok: boolean;
+  import: {
+    ok: boolean;
+    root: string;
+    namespace: string;
+    confirm: boolean;
+    scanned_files: number;
+    candidates: Array<{
+      source_path: string;
+      target_path: string;
+      action: string;
+      card_id: string;
+      title: string;
+      size: number;
+      text_chars?: number;
+      warnings?: string[];
+    }>;
+    summary: {
+      candidate_files: number;
+      skipped_files: number;
+      create: number;
+      update: number;
+      noop: number;
+      imported: number;
+      unchanged: number;
+      limit_reached?: boolean;
+    };
+    indexes?: any;
+  };
+};
+
+export type KnowledgeReviewStatus = "pending" | "approved" | "rejected" | "superseded";
+
+export type KnowledgeChange = {
+  event_id: string;
+  id: string;
+  title?: string;
+  url?: string;
+  checked_at?: string;
+  content_hash?: string;
+  diff?: string;
+  authority_tier?: string;
+  evidence_class?: string;
+  category?: string;
+  topics?: string[];
+  marketplaces?: string[];
+  locales?: string[];
+  review_status: KnowledgeReviewStatus;
+  reviewed_at?: string;
+  reviewer?: string;
+  reviewer_source?: string;
+  review_identity_verified?: boolean;
+  review_note?: string;
+  published?: boolean;
+  published_at?: string;
+  published_card_id?: string;
+  ready_for_import_draft?: boolean;
+};
+
+export type KnowledgeCoverageRequirement = {
+  domain: string;
+  marketplace: string;
+  status: "strong" | "review_due" | "governed" | "synthesis_only" | "gap" | string;
+  covered: boolean;
+  primary_current: boolean;
+  card_ids: string[];
+  source_urls: string[];
+};
+
+export type KnowledgeGovernance = {
+  ok: boolean;
+  healthy: boolean;
+  summary: {
+    pending_reviews: number;
+    approved_not_published: number;
+    published_changes?: number;
+    coverage_gaps: number;
+    stale_cards: number;
+    monitor_errors: number;
+    monitor_overdue: number;
+    conflicts: number;
+    unverified_approved?: number;
+  };
+  reviews: { summary: Record<string, number>; changes: KnowledgeChange[] };
+  coverage: {
+    summary: Record<string, number>;
+    requirements: KnowledgeCoverageRequirement[];
+    policy?: string;
+  };
+  freshness: {
+    summary: {
+      cards: number;
+      card_freshness: Record<string, number>;
+      monitor_sources: number;
+      monitor_status: Record<string, number>;
+    };
+    cards_requiring_review: any[];
+    sources: any[];
+  };
+  conflicts: any[];
+};
+
+export type KnowledgeQuality = {
+  ok: boolean;
+  quality: {
+    ok: boolean;
+    summary: {
+      cases: number;
+      passed: number;
+      failed: number;
+      pass_rate: number;
+      domains: Record<string, { cases: number; passed: number }>;
+    };
+    results: Array<{
+      id: string;
+      domain: string;
+      ok: boolean;
+      query: string;
+      ids: string[];
+      matched_ranks: Record<string, number | null>;
+      risk: string;
+      checks: Record<string, boolean>;
+    }>;
+  };
+};
+
+export type KnowledgeChangePacket = {
+  event: KnowledgeChange;
+  snapshot_excerpt: string;
+  snapshot_chars: number;
+  snapshot_truncated: boolean;
+  candidates: Array<KnowledgeCard & { category?: string; score: number; exact_source: boolean }>;
+  target: (KnowledgeCard & { body: string; license?: string }) | null;
+  selection_required: boolean;
+  publication_boundary: string;
+};
+
+export type KnowledgeEvidencePayload = {
+  authorized: boolean;
+  rights_confirmed: boolean;
+  kind: string;
+  marketplace: string;
+  title?: string;
+  source_url?: string;
+  content?: string;
+  exact_message?: string;
+  account_id?: string;
+  case_id?: string;
+  notification_id?: string;
+  order_id?: string;
+  claim_id?: string;
+  settlement_id?: string;
+  transaction_id?: string;
+  asin?: string;
+  sku?: string;
+  product_type?: string;
+  error_code?: string;
+  account_status?: string;
+  policy?: string;
+  program?: string;
+  report_type?: string;
+  record_type?: string;
+  currency?: string;
+  registration_stage?: string;
+  document_request?: string;
+  confirm?: boolean;
+  rebuild?: boolean;
+};
+
+export type AgentModelCatalog = {
+  ok: boolean;
+  provider_id?: string;
+  label?: string;
+  models: string[];
+  default_model?: string;
+  /** live = 刚从端点拉的；cache = 24h 内的缓存；builtin = 内置兜底清单。 */
+  source?: string;
+  error?: string;
+};
+
+/** 这家 provider 的密钥配好了吗。oauth 那几档的字符串形态不止一种，统一在这里判。 */
+export function providerKeyReady(keyStatus: string): boolean {
+  const s = String(keyStatus || "");
+  if (!s || s.startsWith("missing:")) return false;
+  // authenticated / authenticated+refresh 是**订阅登录成功**后的取值（Codex、
+  // Claude 订阅、Gemini CLI、Qwen…）。漏掉它们的后果很别扭：系统配置里明明
+  // 显示"已登录"，任务台的模型选择器却把它归到「未配置密钥 · 去登录」，
+  // 点进去又发现已经登录了。
+  // 注意原先连 expired+refresh（**已过期**、靠 refresh token 自动续）都算就绪，
+  // 唯独刚登录成功的不算 —— 纯属遗漏。
+  return s === "configured" || s.startsWith("configured:")
+    || s === "authenticated" || s === "authenticated+refresh"
+    || s === "none" || s === "aws_sdk" || s === "valid" || s === "expired+refresh";
+}
+
+// ── 订阅制 provider 的登录（agent ≥ v1.15.5，仅管理员）──────────────────────
+// Claude 订阅 / Codex / Gemini / Qwen / Copilot 不是填 key 而是走 OAuth。
+// 凭据全程留在 agent 那边：这些接口来回传的只有授权链接、user_code 和用户粘回来
+// 的那段东西，**没有任何 token**。
+
+export type AuthProviderRow = {
+  id: string;
+  label: string;
+  /** device = 显示代码去输；paste = 粘回调内容；token = 直接填一个 token。 */
+  kind: "device" | "paste" | "token";
+  auth_type?: string;
+  /** not-authenticated / authenticated[+refresh] / expired[+refresh] / configured:ENV */
+  status: string;
+  ready: boolean;
+  expires_at?: number;
+  source?: string;
+  hint?: string;
+  models?: string[];
+};
+
+export type AuthStartResp = {
+  ok: boolean;
+  provider?: string;
+  kind?: "device" | "paste" | "token";
+  session?: string;
+  hint?: string;
+  /** paste 流程的授权链接。 */
+  url?: string;
+  /** device 流程要用户输进去的代码。 */
+  user_code?: string;
+  verification_uri?: string;
+  interval?: number;
+  expires_in?: number;
+  error?: string;
+};
+
+export type AuthPollResp = {
+  ok: boolean;
+  status?: "pending" | "ok" | "error";
+  interval?: number;
+  /** 暂时性问题（网关 5xx、网络抖动）。不是失败，但该让人知道在等什么。 */
+  note?: string;
+  error?: string;
+  auth?: { providers: AuthProviderRow[] };
+};
+
+export async function awenAuthStatus() {
+  const { data } = await api.get<{ ok: boolean; providers: AuthProviderRow[] }>(
+    "/awen-agent/auth", { timeout: 20000 });
+  return data;
+}
+
+export async function awenAuthStart(providerId: string) {
+  const { data } = await api.post<AuthStartResp>(
+    `/awen-agent/auth/${encodeURIComponent(providerId)}/start`, {}, { timeout: 60000 });
+  return data;
+}
+
+export async function awenAuthPoll(providerId: string, session: string) {
+  const { data } = await api.post<AuthPollResp>(
+    `/awen-agent/auth/${encodeURIComponent(providerId)}/poll`, { session }, { timeout: 60000 });
+  return data;
+}
+
+export async function awenAuthComplete(providerId: string, session: string, value: string) {
+  const { data } = await api.post<AuthPollResp>(
+    `/awen-agent/auth/${encodeURIComponent(providerId)}/complete`, { session, value },
+    { timeout: 90000 });
+  return data;
+}
+
+export async function awenAuthLogout(providerId: string) {
+  const { data } = await api.post<AuthPollResp>(
+    `/awen-agent/auth/${encodeURIComponent(providerId)}/logout`, {}, { timeout: 30000 });
+  return data;
+}
+
+/** 登录状态的中文说法。agent 那边的取值不止一种形态，统一在这里翻。 */
+export function authStatusLabel(status: string): { text: string; tone: "ok" | "warn" | "off" } {
+  const s = String(status || "");
+  if (s.startsWith("configured:")) return { text: `已配置（来自 ${s.slice(11)}）`, tone: "ok" };
+  if (s === "authenticated" || s === "authenticated+refresh") return { text: "已登录", tone: "ok" };
+  if (s === "expired+refresh") return { text: "已过期（会自动续）", tone: "warn" };
+  if (s === "expired") return { text: "已过期，需重新登录", tone: "warn" };
+  return { text: "未登录", tone: "off" };
+}
+
+/** 内置 provider 的实时模型清单（agent 侧带 24h 缓存）。 */
+export async function awenProviderModels(providerId: string, refresh = false) {
+  const { data } = await api.get<{ ok: boolean; catalog: AgentModelCatalog }>(
+    `/awen-agent/model/providers/${encodeURIComponent(providerId)}/models`,
+    { params: refresh ? { refresh: 1 } : undefined, timeout: 20000 });
+  return data;
+}
+
+export async function awenAgentStatus() {
+  const { data } = await api.get<awenAgentStatus>("/awen-agent/status");
+  return data;
+}
+
+export async function awenAgentChat(payload: {
+  message: string;
+  session_id?: string;
+  ops_context?: Record<string, any>;
+  max_steps?: number;
+  plan_mode?: boolean;
+  persist?: boolean;
+  inject_retrieval?: boolean;
+  /** false = 纯文本轮次，不给模型任何工具（跟进建议这类小活用它，便宜且快）。 */
+  use_tools?: boolean;
+  skill?: string;
+  system?: string;
+}) {
+  // 复杂任务一轮可跑 10 分钟以上；180s 会掐断仍在健康生成的轮次。
+  const { data } = await api.post<awenChatResult>("/awen-agent/chat", payload, { timeout: 600000 });
+  return data;
+}
+
+// 流式中断后的恢复：serve 端的轮次独立于浏览器连接继续执行，收尾时把完整会话
+// 落盘。这里轮询会话详情，等 sentAt 之后落盘的 assistant 回复出现——绝不重发
+// 消息（重发会把同一个 8 分钟的 agentic 轮次再跑一遍）。
+export async function awenAwaitSessionAnswer(
+  sessionId: string,
+  sentAtEpochSeconds: number,
+  opts?: { deadlineMs?: number; intervalMs?: number },
+): Promise<string | null> {
+  const deadline = Date.now() + (opts?.deadlineMs ?? 12 * 60 * 1000);
+  const interval = opts?.intervalMs ?? 5000;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, interval));
+    try {
+      // 只要最后一条回答，别每 5 秒把整页历史拖回来（最长要轮询 12 分钟）。
+      const data = await awenChatSession(sessionId, { turns: 1 });
+      const session = data?.session;
+      if (!session) continue;
+      if ((session.updated ?? 0) < sentAtEpochSeconds) continue; // 还没落盘
+      const answers = (session.messages || []).filter(
+        (m) => m.role === "assistant" && m.content && m.content.trim() && m.content.trim() !== "None",
+      );
+      if (answers.length) return answers[answers.length - 1].content.trim();
+    } catch {
+      // 后端重启/瞬时网络失败：继续等下一轮
+    }
+  }
+  return null;
+}
+
+/** 一次 agent 轮次的入参。字段与 agent serve 的 /v1/chat/stream 一一对应。 */
+/**
+ * 上下文占用快照（agent 的 context 事件 / final.context）。
+ *
+ * used 是**估算**（estimated=true）：服务商回报的 prompt_tokens 只说得清"上一次
+ * 调用花了多少"，而进度条要在这一轮发出去之前就说得出话。分三档是因为满了之后
+ * 该动的地方完全不同：系统提示词大 = 人设太长，工具大 = 挂了全量工具，
+ * 对话消息大 = 该压缩历史了。
+ */
+export type awenContextUsage = {
+  used: number;
+  window: number;
+  percent: number;
+  breakdown: { system: number; tools: number; messages: number };
+  estimated?: boolean;
+  model?: string;
+};
+
+/** 一张附图在这一轮里的样子：读出来的文字 + 原图句柄，图片本体留在 ops 服务器上。 */
+export type awenChatAttachment = {
+  /**
+   * `image` = 用户贴的图（正文是视觉模型代读出来的字）；
+   * `document` = 会话附件，只这轮用、**没进知识库**的文档（正文是抽出来的原文）。
+   *
+   * agent 按这个字段分流成两段注入，各有各的份数和字数上限 —— 文档几万字，图片
+   * 描述几百字，共用一个池子的话贴几张图就能把文档挤没。**不带 kind 的一律当图**
+   * （老前端只发图且不带这个字段）。
+   */
+  kind: "image" | "document";
+  /** ops 侧的 `awen-ref://` 原图句柄，也是会话记录里那张缩略图的来源。 */
+  ref?: string;
+  /** 代读这张图的视觉模型。 */
+  by?: string;
+  /** 文件名。document 必给 —— 会话记录里那枚附件小标就是它。 */
+  name?: string;
+  /** image：视觉模型读出的正文；document：从文件里抽出来的正文。 */
+  text: string;
+};
+
+export type awenChatPayload = {
+  message: string;
+  session_id?: string;
+  ops_context?: Record<string, any>;
+  max_steps?: number;
+  plan_mode?: boolean;
+  persist?: boolean;
+  inject_retrieval?: boolean;
+  /** 显式指定本轮必须遵循的 skill id。 */
+  skill?: string;
+  /**
+   * 本轮用哪个主脑模型（agent ≥ v1.15.4），形如 `openrouter:x-ai/grok-4.6`。
+   * 留空 = agent 的全局主脑。老 agent 会忽略它。
+   */
+  model?: string;
+  /** 让 serve 按用户问题自动匹配 skill 并回发 skill_match 事件。 */
+  auto_skill?: boolean;
+  /**
+   * 审批三档（线上语义，界面档位见 lib/approvalModes）：
+   * "none"=只读（默认）；"remote"=写操作弹前端审批卡；"auto"=完全放行、不再弹卡。
+   * **必须和 plan_mode 成对**：agent 那边 execute = 放开 && !plan_mode。
+   */
+  approval?: "none" | "remote" | "auto";
+  /** 工作区（沙箱目录 / 上下文分组）。 */
+  workspace?: string;
+  turn_id?: string;
+  /** false = 纯文本轮次，不给模型任何工具。 */
+  use_tools?: boolean;
+  /**
+   * 这条流的另一端**有人在看、并且画得出选项卡**（agent ≥ v1.16.0）。
+   *
+   * 只有它为 true 时，模型拿不准才会把选项弹过来（`question_request`）。默认不带 ——
+   * 服务端自己读流的那几处没有人能点，弹了只会让那一轮白等一个超时。
+   */
+  interactive?: boolean;
+  /** 追加到本轮系统提示的额外上下文（@ 引用的资料就走这里）。 */
+  system?: string;
+  /**
+   * 本轮附图（agent ≥ v1.15.3）。图片本体不进模型：ops 先用视觉模型把图读成文字，
+   * 连同原图句柄一起走这个字段 —— agent 会把它并进**这一轮的 user 消息**，于是
+   * 它跟着历史和存档走。**别再塞回 system**：system 每轮重建、落盘时被本轮那份
+   * 覆盖，下一轮用户问"你刚才怎么看到那张图的"，模型手里一个字都没有，只能否认
+   * 自己看过图（真实投诉）。
+   */
+  attachments?: awenChatAttachment[];
+  /**
+   * 要模型的思考流（agent ≥ v1.10.3）。默认不要 —— agent 侧同样默认关，
+   * 因为老前端会把未知事件当自由文本渲染。老 agent 收到这个多余字段直接忽略。
+   */
+  stream_reasoning?: boolean;
+  /** 会话开在哪个板块。ops 自用（左栏来源标记），不会下发给 agent。 */
+  source?: ConsoleSource;
+};
+
+/**
+ * 一次文件改动。step 事件里虽然有 `path`，但它只说明"调用了 write_file"，
+ * 说不出**改了什么** —— diff 那一格靠这个事件。
+ */
+export type awenFileChange = {
+  path: string;
+  action: "create" | "overwrite" | "edit" | string;
+  /**
+   * "file" = 整文件前后对比（write_file）；
+   * "fragment" = 只有被替换的那一段（edit_file），**行号是片段内的相对行号**，
+   * 别拿去对文件行号。
+   */
+  scope: "file" | "fragment" | string;
+  diff: string;
+  /** 服务端截断过（超大文件）。 */
+  truncated?: boolean;
+  session_id?: string;
+  turn_id?: string;
+};
+
+/**
+ * 结构化步骤事件（agent serve ≥ v1.9 才会发；旧版本只有自由文本 event）。
+ * 契约见 awen_agent/stream_json.py:step_event。
+ * - phase "plan" = todo_write/progress_update 这类规划汇报调用，UI 折起来
+ * - status "blocked" = 被前置护栏拦下的流程纠偏，不是工具出错
+ */
+export type awenStepEvent = {
+  type: "step";
+  id: string;
+  seq: number;
+  phase: "tool" | "mcp" | "board" | "subagent" | "knowledge" | "plan";
+  name: string;
+  tool?: string;
+  server?: string;
+  args?: Record<string, any>;
+  status: "running" | "ok" | "error" | "blocked";
+  ms?: number | null;
+  session_id?: string;
+  turn_id?: string;
+};
+
+export type awenSkillMatch = {
+  skills: { id: string; title: string; domain?: string; score?: number }[];
+};
+
+/** 写操作审批请求 —— 对应 agent 侧 permission.request_intent 的那张确认卡。 */
+export type awenPermissionRequest = {
+  request_id: string;
+  session_id?: string;
+  op_type: string;
+  title: string;
+  preview: string;
+  options: { key: string; label: string }[];
+  destructive?: boolean;
+  expires_at?: number;
+};
+
+/**
+ * 这条 `answer_reset` 该不该把已经流出来的正文**丢掉**。
+ *
+ * 分两类，因为它们的性质完全不同：
+ *   - `gate:*`（引用校验/自验证/阶段汇报没过）：模型被明确要求**整篇重写**，
+ *     旧的那一稿作废。不丢就是"同一张表连出三遍"。
+ *   - `tool_call`（这一段之后模型又去调工具了）：这段话**没有被作废**，只是还没
+ *     说完。实测过一轮：模型在早轮写完了整篇答案、又去调了几个工具、最后只补
+ *     一句"上面已经给了完整回答，这里补一句收尾" —— 这时候丢掉早轮那段，用户
+ *     就只剩一句没头没尾的收尾。所以这类只断段，不丢字。
+ */
+export function answerResetDiscards(reason?: string): boolean {
+  return String(reason || "").startsWith("gate:");
+}
+
+/**
+ * 一条 agent 事件流的处理器。**直连（POST /chat/stream）和接进活轮
+ * （GET /chat/sessions/{id}/live）共用这一套** —— 两条路必须把同一轮任务渲染成
+ * 同一个东西，共用类型和共用分发是第一道保证。
+ */
+export type awenStreamHandlers = {
+    onStart?: (data: any) => void;
+    onToken?: (text: string) => void;
+    onFinal?: (data: any) => void;
+    onEvent?: (data: any) => void;
+    onError?: (data: any) => void;
+    /** 结构化步骤（工具/MCP/板块能力调用的开始与收尾）。 */
+    onStep?: (data: awenStepEvent) => void;
+    /** 本轮命中的 skill。 */
+    onSkillMatch?: (data: awenSkillMatch) => void;
+    onMemoryRecall?: (data: { count?: number; names?: string[] }) => void;
+    /** 需要人工确认的写操作。 */
+    onPermission?: (data: awenPermissionRequest) => void;
+    /** Agent 改过一个文件（带 diff）。 */
+    onFileChange?: (data: awenFileChange) => void;
+    /** 审批超时被自动拒绝。 */
+    onPermissionTimeout?: (data: { request_id: string }) => void;
+    /**
+     * 前面已经流出来的正文**作废**了，从下一个 token 起是新一稿（agent ≥ v1.10.2）。
+     * 一轮里模型会把正文吐好几遍——工具前的开场白、门禁打回后的整篇重写——
+     * 不接这条就会把三份草稿首尾拼在同一个气泡里（"同一张表连出三遍"）。
+     * reason: tool_call | gate:verify | gate:progress | gate:citation。
+     */
+    onAnswerReset?: (data: { reason?: string }) => void;
+    /**
+     * 本轮的上下文占用（agent ≥ v1.16）：进度条画的就是它。
+     * 老 agent 不发这条 —— 进度条整块不出现，而不是画一个编出来的百分比。
+     */
+    onContext?: (data: awenContextUsage) => void;
+    /**
+     * Agent 自己排的计划变了（agent ≥ v1.16.1，每次 todo_write 落地后播一份）。
+     * 老 agent 不发这条 —— 计划只能等 final 那一份，界面上"接下来要干什么"
+     * 在这一轮跑完前就是空的，而不是编一条出来。
+     */
+    onTodos?: (data: { todos?: any[] }) => void;
+    /**
+     * 模型的思考流（agent ≥ v1.10.3，且 payload 里带 stream_reasoning）。
+     * 只有会思考的模型（deepseek-reasoner / claude / codex / gemini）才有；
+     * 主脑不吐思考时这条永远不来，活动行退回显示工具步骤。
+     */
+    onReasoning?: (data: { text?: string }) => void;
+    /**
+     * 接进一条**已经在跑**的轮次时，回放开始（agent ≥ v1.15.17）。
+     * data.running 说这一轮还在不在跑，seq 是回放到哪一条 —— 断线重连时带回去。
+     */
+    onLiveBegin?: (data: { running?: boolean; seq?: number; dropped?: number;
+                           started_ms?: number; reasoning?: string }) => void;
+    /** 活轮日志播完了（这一轮已经收尾）。 */
+    onLiveEnd?: (data: { ended_ms?: number }) => void;
+    /**
+     * 一条**追加指令**已经插进当前这一轮（agent ≥ v1.16.0）。
+     * 用户在轮次跑着的时候补的那句话，模型从下一步起就看得见了。
+     * 老 agent 不发这条 —— 前端据此把那条指令留在待发队列里，本轮结束后当下一轮发出去。
+     */
+    onInjected?: (data: { id?: string; text?: string; ts?: number }) => void;
+    /**
+     * 模型拿不准，把选项弹给用户选（agent ≥ v1.16.0）。
+     * 没人在 timeout_s 内选就按标了 recommended 的那项继续（agent 侧自己收敛），
+     * 所以这张卡片永远不会把一轮任务挂死。
+     */
+    onQuestion?: (data: awenQuestionRequest) => void;
+    /** 选项卡超时，已按推荐项继续。 */
+    onQuestionTimeout?: (data: { request_id: string }) => void;
+    /**
+     * 这一轮被用户停掉了（agent ≥ v1.16.0）。**这是正常结局，不是错误** ——
+     * 已经跑出来的正文和执行过程都已落盘，`injected_pending` 里是还没被读到的追加指令。
+     */
+    onCancelled?: (data: { session_id?: string; text?: string;
+                           injected_pending?: { id: string; text: string }[] }) => void;
+};
+
+/** 一张选项卡（ask_user_question）。 */
+export type awenQuestionOption = {
+  label: string;
+  description?: string;
+  recommended?: boolean;
+};
+
+export type awenQuestion = {
+  question: string;
+  header?: string;
+  multi_select?: boolean;
+  options: awenQuestionOption[];
+};
+
+export type awenQuestionRequest = {
+  request_id: string;
+  session_id?: string;
+  questions: awenQuestion[];
+  timeout_s?: number;
+  expires_at?: number;
+};
+
+/** 本轮里**替用户定的**那些选择（没人在超时前选，按推荐项走了）。 */
+export type awenAutoDecision = {
+  question: string;
+  header?: string;
+  chosen: string;
+  reason?: string;
+};
+
+export async function awenAgentChatStream(
+  payload: awenChatPayload,
+  handlers: awenStreamHandlers,
+  opts?: { signal?: AbortSignal },
+) {
+  const res = await fetch("/api/awen-agent/chat/stream", {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+    signal: opts?.signal,
+  });
+  return pumpSse(res, handlers);
+}
+
+/**
+ * 接进这条会话**正在跑的那一轮**：先把已经发生的事件回放一遍，再实时跟随。
+ *
+ * 为什么必须有这条路：一轮任务的执行过程此前只活在发起它的那个标签页的内存里。
+ * 切到别的会话/板块再切回来、刷新、换台机器打开同一条会话 —— 进度全都看不到，
+ * 只剩自己发的那句话干挂着，得等整轮跑完再刷新一次才"一下子全出来"。
+ *
+ * 轮次本身与这条连接无关（agent 侧独立跑完并落盘），所以随便接、随便断。
+ */
+export async function awenAgentSessionLive(
+  sessionId: string,
+  handlers: awenStreamHandlers,
+  opts?: { signal?: AbortSignal; from?: number },
+) {
+  const res = await fetch(
+    `/api/awen-agent/chat/sessions/${encodeURIComponent(sessionId)}/live?from=${Math.max(0, opts?.from || 0)}`,
+    { method: "GET", credentials: "include", signal: opts?.signal },
+  );
+  return pumpSse(res, handlers);
+}
+
+async function pumpSse(res: Response, handlers: awenStreamHandlers) {
+  if (!res.ok || !res.body) {
+    let detail = "";
+    try {
+      const body = await res.json();
+      detail = body.detail || body.error || "";
+    } catch {
+      detail = await res.text().catch(() => "");
+    }
+    throw new Error(detail || `HTTP ${res.status}`);
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  const emit = (block: string) => {
+    let event = "message";
+    const dataLines: string[] = [];
+    for (const raw of block.split(/\r?\n/)) {
+      if (raw.startsWith("event:")) event = raw.slice(6).trim();
+      else if (raw.startsWith("data:")) dataLines.push(raw.slice(5).trimStart());
+    }
+    if (dataLines.length === 0) return;
+    let data: any = dataLines.join("\n");
+    try { data = JSON.parse(data); } catch { /* keep raw string */ }
+    if (event === "start") handlers.onStart?.(data);
+    else if (event === "token") handlers.onToken?.(typeof data === "string" ? data : data.text || "");
+    else if (event === "final") handlers.onFinal?.(data);
+    else if (event === "error") handlers.onError?.(data);
+    // 结构化事件（agent serve ≥ v1.9）。老版本不发这些，走下面的自由文本兜底，
+    // 所以升级前后前端都不会白屏。
+    // answer_reset 必须显式分流：落进下面的 onEvent 就会被当成自由文本叙述，
+    // 而它没有 text 字段，等于这条边界被静默丢掉，重复照旧。
+    else if (event === "answer_reset") handlers.onAnswerReset?.(typeof data === "string" ? {} : data || {});
+    // 思考流同样必须显式分流：落进 onEvent 就会被当成"老 agent 的自由文本叙述"，
+    // 一段思考几百个碎片，注记那条路只留最近 12 行，等于把真正的执行叙述挤没了。
+    else if (event === "reasoning") {
+      handlers.onReasoning?.(typeof data === "string" ? { text: data } : data || {});
+    }
+    else if (event === "context") handlers.onContext?.(data);
+    // todos 同样要显式分流：落进 onEvent 会被当成老 agent 的自由文本叙述。
+    else if (event === "todos") handlers.onTodos?.(typeof data === "string" ? {} : data || {});
+    else if (event === "step") handlers.onStep?.(data);
+    else if (event === "skill_match") handlers.onSkillMatch?.(data);
+    // 记忆召回同样必须显式分流：落进下面的 onEvent 兜底会被当成"老 agent 的自由
+    // 文本叙述"，于是一串 {"count":3,...} 直接印在对话里。
+    else if (event === "memory_recall") handlers.onMemoryRecall?.(typeof data === "string" ? {} : data || {});
+    else if (event === "file_change") handlers.onFileChange?.(data);
+    else if (event === "permission_request") handlers.onPermission?.(data);
+    else if (event === "permission_timeout") handlers.onPermissionTimeout?.(data);
+    // 活轮回放的边界事件。同样必须显式分流 —— 落进 onEvent 会被当成老 agent 的
+    // 自由文本叙述，在时间线上凭空多出两行没有正文的注记。
+    // 追加指令与选项卡同样必须显式分流：落进 onEvent 兜底会被当成"老 agent 的
+    // 自由文本叙述"，于是一串 JSON 直接印在对话里。
+    // 用户按了停止 —— **正常结局**，不是 error（画成红色的失败会让人以为出了问题）。
+    else if (event === "cancelled") handlers.onCancelled?.(typeof data === "string" ? {} : data || {});
+    else if (event === "injected") handlers.onInjected?.(typeof data === "string" ? {} : data || {});
+    else if (event === "question_request") handlers.onQuestion?.(data);
+    else if (event === "question_timeout") handlers.onQuestionTimeout?.(data);
+    else if (event === "live_begin") handlers.onLiveBegin?.(typeof data === "string" ? {} : data || {});
+    else if (event === "live_end") handlers.onLiveEnd?.(typeof data === "string" ? {} : data || {});
+    else handlers.onEvent?.(data);
+  };
+  while (true) {
+    const { value, done } = await reader.read();
+    if (value) {
+      buffer += decoder.decode(value, { stream: !done });
+      let idx = buffer.indexOf("\n\n");
+      while (idx >= 0) {
+        emit(buffer.slice(0, idx));
+        buffer = buffer.slice(idx + 2);
+        idx = buffer.indexOf("\n\n");
+      }
+    }
+    if (done) break;
+  }
+  if (buffer.trim()) emit(buffer);
+}
+
+export async function awenChatSessions(limit = 30) {
+  const { data } = await api.get<{ ok: boolean; sessions: awenChatSession[] }>("/awen-agent/chat/sessions", {
+    params: { limit },
+  });
+  return data;
+}
+
+/**
+ * 历史会话详情，**按轮**分页。
+ *
+ * turns = 这一页要几轮；before = 从第几轮往前取（翻更早的对话时传上一页的 from）。
+ * 别改回按条数取：一次提问能产生几十条消息，按条切会把用户自己发的那句话挤出窗口 ——
+ * 这正是"刷新之后我发的指令不见了"的成因。
+ */
+/** 这条会话现在有没有一轮正在跑（agent ≥ v1.15.17）。老 agent 不回报 → undefined。 */
+export type awenLiveStatus = { running?: boolean; seq?: number; started_ms?: number };
+
+export async function awenChatSession(
+  sessionId: string, opts?: { turns?: number; before?: number },
+) {
+  const { data } = await api.get<{ ok: boolean; session: awenChatSessionDetail;
+                                   live?: awenLiveStatus }>(
+    `/awen-agent/chat/sessions/${encodeURIComponent(sessionId)}`,
+    { params: { turns: opts?.turns, before: opts?.before } },
+  );
+  return data;
+}
+
+export async function awenChatSessionDelete(sessionId: string) {
+  const { data } = await api.delete<{ ok: boolean; deleted: string }>(
+    `/awen-agent/chat/sessions/${encodeURIComponent(sessionId)}`,
+  );
+  return data;
+}
+
+/**
+ * 板块能力（ops-bridge 工具）目录。每条自带中文 title / module / destructive /
+ * long_running —— 任务台的步骤芯片文案和「需要确认」判定都直接吃这份元数据，
+ * 不再另建映射表。
+ */
+export type OpsToolInfo = {
+  name: string;
+  module: string;
+  title: string;
+  description: string;
+  parameters?: any;
+  destructive?: boolean;
+  long_running?: boolean;
+};
+
+export async function awenOpsTools(params?: { module?: string; query?: string }) {
+  const { data } = await api.get<{ ok: boolean; tools: OpsToolInfo[]; modules: string[] }>(
+    "/awen-agent/ops-tools",
+    { params },
+  );
+  return data;
+}
+
+/**
+ * 主脑 provider。
+ * ⚠️ `models` 是**字符串数组**（["gpt-4.1", "gpt-4o", …]），不是对象数组 ——
+ * 按对象取 m.id/m.name 会全取到 undefined，模型列表会静默变空。
+ */
+export type awenProvider = {
+  id: string;
+  label?: string;
+  models?: string[];
+  default_model?: string;
+  key_status?: string;
+  model_count?: number;
+  [k: string]: any;
+};
+
+/** 兼容字符串/对象两种形状，取出模型 id。 */
+export function providerModelId(m: unknown): string {
+  if (typeof m === "string") return m;
+  if (m && typeof m === "object") {
+    const o = m as Record<string, any>;
+    return String(o.id || o.name || o.model || "");
+  }
+  return "";
+}
+
+export async function awenModelProviders() {
+  const { data } = await api.get<{ ok: boolean; providers?: awenProvider[]; active?: any }>(
+    "/awen-agent/model/providers",
+  );
+  return data;
+}
+
+/** agent 侧技能库（内置 + ~/.awen/skills）。 */
+export type awenSkillInfo = {
+  id: string;
+  title: string;
+  domain?: string;
+  version?: string;
+  description?: string;
+  triggers?: string[];
+  score?: number;
+};
+
+export async function awenSkills(query = "") {
+  const path = query.trim()
+    ? `/awen-agent/skills/search?q=${encodeURIComponent(query.trim())}`
+    : "/awen-agent/skills";
+  const { data } = await api.get<{ ok: boolean; skills: awenSkillInfo[] }>(path);
+  return data;
+}
+
+// ── 任务台会话与工作区 ──────────────────────────────────────────────────────
+export type ConsoleSessionRow = {
+  id: string;
+  title: string;
+  preview: string;
+  turns: number;
+  updated: number;
+  workspace: string;
+  owner: string;
+  /** 会话开在哪个板块：任务台 / AI 问答 / 知识库 / 终端。空 = 未登记的历史会话。 */
+  source?: ConsoleSource | "";
+  /** false = agent 那边有正文但 ops 没登记归属（悬浮球/终端开的，仅管理员可见）。 */
+  indexed: boolean;
+  /** 这条会话此刻有没有一轮在跑（agent ≥ v1.16.0）。左栏据此打闪烁标记。 */
+  running?: boolean;
+  /** 终端会话开在哪个目录（agent 落盘的 cwd）。**只是展示标签，不是工作区**。 */
+  cwd?: string;
+};
+
+/**
+ * 共用 agent 会话库的各个入口，靠这个字段区分来源。
+ *
+ * 前三个是 ops 自己的网页板块，会话开出来时就登记了归属；`cli` 不一样 ——
+ * 那是有人在终端里敲 `awen chat` 开的，ops 只是从 agent 的共享会话库里读到，
+ * 索引表里多半没有行，来源是服务端按 agent 给的 origin 现推的。
+ */
+export type ConsoleSource = "console" | "assistant" | "brain" | "cli";
+
+export const SOURCE_LABEL: Record<ConsoleSource, string> = {
+  console: "任务台",
+  assistant: "AI 问答",
+  brain: "知识库",
+  cli: "终端",
+};
+
+/**
+ * 各来源的归属页面 —— 左栏点一条会话回到它本来的板块。
+ *
+ * assistant 指向任务台：AI 问答那一页已经并进任务台，但**来源标记要留着** ——
+ * 历史会话是按来源筛选的，把 assistant 从类型里删掉等于让那些老对话在左栏里
+ * 筛不出来。会话本身一条没动，只是都在任务台里打开。
+ */
+export const SOURCE_PATH: Record<ConsoleSource, string> = {
+  console: "/console",
+  assistant: "/console",
+  brain: "/brain",
+  // 终端会话就是带工具的 agent 会话，和任务台的完全同构，所以在任务台里打开。
+  cli: "/console",
+};
+
+export type ConsoleWorkspace = {
+  name: string; path: string; builtin: boolean;
+  /** 该工作区的**真实**会话数（服务端在分页前数的）。别拿当前页里的条数当计数 ——
+   *  只加载了 60 条时，一个有 211 条的工作区会显示成 60，看着像会话丢了。 */
+  count?: number;
+};
+
+/** 目录浏览（给「新建工作区」选绑定目录用）。走 agents 那套 /browse-filesystem，
+ *  **仅管理员**可用（后端 require_admin_actor），非管理员会 403 —— 调用方要退回手填。 */
+export type FolderEntry = { path: string; name: string; type: "directory" };
+
+export async function browseFolders(path?: string) {
+  const { data } = await api.get<{
+    path: string; parent: string; suggestions: FolderEntry[]; isDrives?: boolean;
+  }>("/agents/browse-filesystem", { params: path ? { path } : {} });
+  return data;
+}
+
+export async function createFolder(path: string) {
+  const { data } = await api.post<{ success: boolean; path: string }>(
+    "/agents/create-folder", { path });
+  return data;
+}
+
+export async function consoleSessions(
+  workspace = "", limit = 60, source = "", q = "", offset = 0,
+) {
+  const { data } = await api.get<{
+    ok: boolean; sessions: ConsoleSessionRow[]; workspaces: ConsoleWorkspace[];
+    /** false = agent 读不到，列表是空的但不代表会话没了。 */
+    agent_available?: boolean;
+    /** 过滤后的总条数（不是本页条数）。 */
+    total?: number;
+    offset?: number;
+    /** 服务端算好的，前端别自己推 —— 推错就是"加载更多"点了没反应。 */
+    has_more?: boolean;
+  }>("/awen-agent/console/sessions", { params: { workspace, limit, source, q, offset } });
+  return data;
+}
+
+export async function consoleSessionPatch(
+  sessionId: string, patch: { title?: string; workspace?: string },
+) {
+  const { data } = await api.patch<{ ok: boolean }>(
+    `/awen-agent/console/sessions/${encodeURIComponent(sessionId)}`, patch);
+  return data;
+}
+
+export async function consoleSessionDelete(sessionId: string) {
+  const { data } = await api.delete<{ ok: boolean }>(
+    `/awen-agent/console/sessions/${encodeURIComponent(sessionId)}`);
+  return data;
+}
+
+/** path 可选，且**仅管理员**能绑目录 —— 绑了它就是 Agent 文件工具的工作目录。 */
+/** 工作区列表。后端 GET /console/workspaces 一直都在，只是前端此前都从会话列表里顺带取。 */
+export async function consoleWorkspaces() {
+  const { data } = await api.get<{ ok: boolean; workspaces: ConsoleWorkspace[] }>(
+    "/awen-agent/console/workspaces");
+  return data.workspaces || [];
+}
+
+export async function consoleWorkspaceCreate(name: string, path = "") {
+  const { data } = await api.post<{ ok: boolean; workspace: ConsoleWorkspace }>(
+    "/awen-agent/console/workspaces", { name, path });
+  return data;
+}
+
+export async function consoleWorkspaceDelete(name: string) {
+  const { data } = await api.delete<{ ok: boolean; sessions_moved: number }>(
+    `/awen-agent/console/workspaces/${encodeURIComponent(name)}`);
+  return data;
+}
+
+/** 左栏需要刷新会话列表时广播它（发完一轮、改名、删除…）。 */
+export const CONSOLE_SESSIONS_CHANGED = "awenops:console-sessions-changed";
+
+/**
+ * @param expectId 期望这一次刷新之后能在列表里看到的会话 id。会话是 agent 侧落库的，
+ *   「开始」事件到得比落库早一拍 —— 左栏取回来没看见它，就按这个 id 再补取一次，
+ *   而不是让用户去刷新整页。
+ */
+export function notifyConsoleSessionsChanged(expectId?: string) {
+  window.dispatchEvent(new CustomEvent(CONSOLE_SESSIONS_CHANGED, { detail: { expectId } }));
+}
+
+/**
+ * 把图片读成文字（ops 侧视觉旁路）。
+ * agent serve 在主脑没有视觉时会直接抛错，而本机主脑就没有视觉 —— 所以图片不能直接
+ * 丢给 agent，得先在 ops 这边用配好的视觉链读成文字，再作为文本带进那一轮。
+ */
+export async function visionDescribe(images: string[], prompt = "") {
+  const { data } = await api.post<{ ok: boolean; provider: string; text: string }>(
+    "/awen-agent/vision/describe", { images, prompt }, { timeout: 180000 });
+  return data;
+}
+
+/** agent 的 MCP 注册表（~/.awen/mcp.json）—— 决定 Agent 能连哪些数据源。 */
+export type AgentMcpServer = {
+  name: string;
+  transport: string;
+  trusted: boolean;
+  /** true = 由「系统配置 → 数据源」的密钥自动同步，删了下次保存设置又会回来。 */
+  managed: boolean;
+  has_data_source: boolean;
+  spec: Record<string, any>;
+};
+
+export async function awenMcpServers() {
+  const { data } = await api.get<{
+    ok: boolean;
+    servers: AgentMcpServer[];
+    claude_servers: { name: string; transport: string; spec: Record<string, any> }[];
+    managed: string[];
+  }>("/awen-agent/mcp/servers");
+  return data;
+}
+
+export async function awenMcpUpsert(payload: {
+  name: string;
+  transport: "http" | "sse" | "stdio";
+  url?: string;
+  command?: string;
+  args?: string[];
+  headers?: Record<string, string>;
+  env?: Record<string, string>;
+  trusted?: boolean;
+}) {
+  const { data } = await api.post<{ ok: boolean; name: string }>("/awen-agent/mcp/servers", payload);
+  return data;
+}
+
+export async function awenMcpDelete(name: string) {
+  const { data } = await api.delete<{ ok: boolean; removed: string }>(
+    `/awen-agent/mcp/servers/${encodeURIComponent(name)}`,
+  );
+  return data;
+}
+
+/**
+ * 回送一次写操作审批决策，解开 agent 侧阻塞的那一步。
+ * choice 与 permission_request 事件里的 options[].key 对应
+ * （approve / session / deny / abort，部分场景还有 edit）。
+ */
+export async function awenChatPermission(params: {
+  request_id: string;
+  session_id?: string;
+  choice: string;
+  edits?: Record<string, any>;
+}) {
+  const { data } = await api.post<{ ok: boolean; error?: string; detail?: string }>(
+    "/awen-agent/chat/permission",
+    params,
+    { timeout: 20000 },
+  );
+  return data;
+}
+
+/**
+ * 把一条**追加指令**送进正在跑的那一轮（agent ≥ v1.16.0）。
+ *
+ * 回包里的 `accepted` 才是答案：false = 这条会话此刻没有活轮（或 agent 太老），
+ * 调用方要把这句话当成下一轮发出去。**别把 accepted 当成"发送成功"** ——
+ * 那会让用户以为说过的话进去了，实际谁也没读到。
+ */
+export async function awenChatInject(params: { session_id: string; text: string }) {
+  const { data } = await api.post<{
+    ok: boolean; accepted?: boolean; reason?: string;
+    item?: { id: string; text: string; ts: number }; pending?: number;
+  }>("/awen-agent/chat/inject", params, { timeout: 20000 });
+  return data;
+}
+
+/**
+ * 真的停掉这条会话正在跑的那一轮（agent ≥ v1.16.0）。
+ *
+ * 回包里的 `cancelled` 才是答案：false = 这条会话本来就没有在跑的轮次（多半刚好
+ * 收尾了）。**别把请求成功当成停住了** —— 那会显示"已停止"而它其实还在烧 token。
+ */
+export async function awenChatCancel(params: { session_id: string }) {
+  const { data } = await api.post<{ ok: boolean; cancelled?: boolean; reason?: string }>(
+    "/awen-agent/chat/cancel", params, { timeout: 20000 });
+  return data;
+}
+
+/**
+ * 回送一次选项卡的选择。
+ *
+ * `session_id` **必填**：ops 按会话归属放行（那份归属落在库里，ops 重启还在），
+ * 而不是靠内存里的 request_id 登记表 —— 后者一重启，用户面前那张卡就点不动了。
+ */
+export async function awenChatQuestion(params: {
+  request_id: string;
+  session_id: string;
+  answers: Record<string, string>;
+}) {
+  const { data } = await api.post<{ ok: boolean; error?: string }>(
+    "/awen-agent/chat/question", params, { timeout: 20000 });
+  return data;
+}
+
+/**
+ * 此刻真的有一轮在跑的会话（只回自己的）。左栏的闪烁标记读它。
+ *
+ * `available: false` = agent 没起或版本太老。**这不等于"一条都没在跑"** ——
+ * 调用方遇到它应当保持上一次的显示/不显示标记，而不是把正在执行的会话画成已停。
+ */
+export async function awenLiveSessions() {
+  const { data } = await api.get<{
+    ok: boolean; available?: boolean;
+    sessions: { id: string; started_ms?: number; seq?: number }[];
+  }>("/awen-agent/chat/live-sessions", { timeout: 8000 });
+  return data;
+}
+
+/** 一条待审批（跨会话列表用，字段来自 console_approvals 表）。 */
+export type PendingApproval = {
+  request_id: string;
+  session_id: string;
+  title: string;
+  op_type: string;
+  requested_at: number;
+};
+
+/** 我名下所有还没决定的审批，跨会话 —— 手机上审批的入口。 */
+export async function awenPendingApprovals() {
+  const { data } = await api.get<{ ok: boolean; approvals: PendingApproval[] }>(
+    "/awen-agent/console/approvals/pending");
+  return data.approvals || [];
+}
+
+export async function awenServiceStart() {
+  const { data } = await api.post<{ ok: boolean }>("/awen-agent/service/start", {}, { timeout: 25000 });
+  return data;
+}
+
+export async function awenRetrievalStatus() {
+  const { data } = await api.get<RetrievalStatus>("/awen-agent/retrieval/status");
+  return data;
+}
+
+export async function awenRetrievalEmbeddings() {
+  const { data } = await api.get<RetrievalEmbeddings>("/awen-agent/retrieval/embeddings");
+  return data;
+}
+
+export async function awenRetrievalSync() {
+  const { data } = await api.post<any>("/awen-agent/retrieval/sync", {}, { timeout: 180000 });
+  return data;
+}
+
+export async function awenKnowledgeFiles(limit = 500) {
+  const { data } = await api.get<{
+    ok: boolean;
+    uploads: { path: string; name: string; size: number; kind: string; mtime: number }[];
+    cards: KnowledgeCard[];
+    history: KnowledgeUpload[];
+  }>("/awen-agent/knowledge/files", { params: { limit } });
+  return data;
+}
+
+/**
+ * 读一份知识库文件/卡片的正文 —— composer 的 @ 引用靠它把内容真的带进本轮。
+ * ⚠️ 正文在 `file.content` 里，不是顶层 `content`（照顶层取会静默拿到空字符串，
+ * 结果就是"引用了但什么都没带进去"，实测踩过）。
+ */
+export async function awenKnowledgeFile(path: string) {
+  const { data } = await api.get<{
+    ok: boolean;
+    file?: { path: string; name: string; size: number; mtime: number; content: string };
+  }>("/awen-agent/knowledge/file", { params: { path } });
+  return { ok: data.ok, content: String(data.file?.content || ""), name: data.file?.name || "" };
+}
+
+export async function awenKnowledgeSearch(q: string, limit = 8) {
+  const { data } = await api.get<{ ok: boolean; results: any[] }>("/awen-agent/knowledge/search", {
+    params: { q, limit },
+  });
+  return data;
+}
+
+export async function awenKnowledgeWatchlist() {
+  const { data } = await api.get<{ ok: boolean; summary: any; sources: any[] }>("/awen-agent/knowledge/watchlist");
+  return data;
+}
+
+export async function awenKnowledgeGovernance() {
+  const { data } = await api.get<KnowledgeGovernance>("/awen-agent/knowledge/governance");
+  return data;
+}
+
+export async function awenKnowledgeCoverage() {
+  const { data } = await api.get<{ ok: boolean; coverage: KnowledgeGovernance["coverage"] }>(
+    "/awen-agent/knowledge/coverage",
+  );
+  return data;
+}
+
+export async function awenKnowledgeFreshness() {
+  const { data } = await api.get<{ ok: boolean; freshness: KnowledgeGovernance["freshness"] }>(
+    "/awen-agent/knowledge/freshness",
+  );
+  return data;
+}
+
+export async function awenKnowledgeQuality() {
+  // 质量评测是全量跑一遍用例，可超过 axios 默认 30s
+  const { data } = await api.get<KnowledgeQuality>("/awen-agent/knowledge/quality", { validateStatus: () => true, timeout: 120000 });
+  return data;
+}
+
+export async function awenKnowledgeChanges(status = "", limit = 100) {
+  const { data } = await api.get<{
+    ok: boolean;
+    summary: Record<string, number>;
+    changes: KnowledgeChange[];
+    review_required: boolean;
+  }>("/awen-agent/knowledge/changes", { params: { status, limit } });
+  return data;
+}
+
+export async function awenKnowledgeReviews(eventId = "", limit = 100) {
+  const { data } = await api.get<{ ok: boolean; summary: any; reviews: any[] }>(
+    "/awen-agent/knowledge/reviews",
+    { params: { event_id: eventId, limit } },
+  );
+  return data;
+}
+
+export async function awenKnowledgePublications(eventId = "", limit = 100) {
+  const { data } = await api.get<{ ok: boolean; summary: any; publications: any[] }>(
+    "/awen-agent/knowledge/publications",
+    { params: { event_id: eventId, limit } },
+  );
+  return data;
+}
+
+export async function awenKnowledgeEvidence(limit = 100) {
+  const { data } = await api.get<{ ok: boolean; summary: any; evidence: any[] }>(
+    "/awen-agent/knowledge/evidence", { params: { limit } },
+  );
+  return data;
+}
+
+export async function awenKnowledgeEvidenceDraft(payload: KnowledgeEvidencePayload) {
+  const { data } = await api.post<any>("/awen-agent/knowledge/evidence/draft", payload);
+  return data;
+}
+
+export async function awenKnowledgeEvidenceApply(payload: KnowledgeEvidencePayload) {
+  const { data } = await api.post<any>("/awen-agent/knowledge/evidence/apply", payload);
+  return data;
+}
+
+export async function awenKnowledgeReviewChange(params: {
+  eventId: string;
+  decision: Exclude<KnowledgeReviewStatus, "pending">;
+  reviewer?: string;
+  note?: string;
+  confirm: boolean;
+}) {
+  const { data } = await api.post<any>("/awen-agent/knowledge/changes/review", {
+    event_id: params.eventId,
+    decision: params.decision,
+    reviewer: params.reviewer || "local-operator",
+    note: params.note || "",
+    confirm: params.confirm,
+  });
+  return data;
+}
+
+export async function awenKnowledgeChangePacket(eventId: string, cardId = "") {
+  const { data } = await api.get<{ ok: boolean; packet: KnowledgeChangePacket }>(
+    `/awen-agent/knowledge/changes/${encodeURIComponent(eventId)}/packet`,
+    { params: { card_id: cardId } },
+  );
+  return data;
+}
+
+export async function awenKnowledgeChangeDraft(params: {
+  eventId: string;
+  cardId?: string;
+  newCardId?: string;
+  title?: string;
+  body: string;
+}) {
+  const { data } = await api.post<any>("/awen-agent/knowledge/changes/draft", {
+    event_id: params.eventId,
+    card_id: params.cardId || "",
+    new_card_id: params.newCardId || "",
+    title: params.title || "",
+    body: params.body,
+  });
+  return data;
+}
+
+export async function awenKnowledgeChangeApply(params: {
+  eventId: string;
+  cardId?: string;
+  newCardId?: string;
+  title?: string;
+  body: string;
+  confirm: boolean;
+  rebuild?: boolean;
+}) {
+  const { data } = await api.post<any>("/awen-agent/knowledge/changes/apply", {
+    event_id: params.eventId,
+    card_id: params.cardId || "",
+    new_card_id: params.newCardId || "",
+    title: params.title || "",
+    body: params.body,
+    confirm: params.confirm,
+    rebuild: params.rebuild !== false,
+  }, { timeout: 120000 });
+  return data;
+}
+
+export async function awenKnowledgeSync(sourceIds: string[] = [], force = false) {
+  const { data } = await api.post<any>("/awen-agent/knowledge/sync", {
+    source_ids: sourceIds,
+    force,
+  }, { timeout: 120000 });
+  return data;
+}
+
+export async function awenKnowledgeApplyText(params: {
+  title: string;
+  body: string;
+  tags?: string;
+  sourceType?: string;
+  sourceUrl?: string;
+  id?: string;
+  rebuild?: boolean;
+}) {
+  const tags = (params.tags || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  const { data } = await api.post<{
+    ok: boolean;
+    result: {
+      applied?: boolean;
+      action?: string;
+      card?: KnowledgeCard;
+      draft?: KnowledgeDraft;
+      error?: string;
+    };
+  }>(
+    "/awen-agent/knowledge/update/apply",
+    {
+      id: params.id || "",
+      title: params.title,
+      body: params.body,
+      source_type: params.sourceType || "user",
+      source_url: params.sourceUrl || "",
+      tags,
+      confirm: true,
+      rebuild: params.rebuild !== false,
+    },
+    { timeout: 120000 },
+  );
+  return data;
+}
+
+/** 这一轮带下去的会话附件（只这次对话用，**不进知识库**）。 */
+export type SessionFile = { name: string; text: string; chars: number;
+                            truncated: boolean;
+                            /** 原件的站内下载地址；存不下时是空串（不影响这一轮能用）。 */
+                            url: string };
+
+/**
+ * 上传一份文档，只抽正文、不进知识库。
+ *
+ * 和 `awenKnowledgeUpload` 是两条完全不同的路，别混：那条会把文件存进知识库、
+ * 建索引、永久留着；这条什么都不留，抽完正文就把字交回来，随下一条消息作为
+ * attachment 带给 agent，下次对话就没有了。用户的原话是「有些文件只是会话的时候
+ * 用，并不需要纳入知识库」。
+ */
+export async function awenSessionFile(file: File): Promise<SessionFile> {
+  const form = new FormData();
+  form.append("file", file);
+  const { data } = await api.post<{ ok: boolean } & SessionFile>(
+    "/awen-agent/session-files", form,
+    { headers: { "Content-Type": "multipart/form-data" } });
+  return { name: data.name, text: data.text, chars: data.chars,
+           truncated: !!data.truncated, url: data.url || "" };
+}
+
+export async function awenKnowledgeUpload(params: {
+  file: File;
+  title?: string;
+  id?: string;
+  sourceUrl?: string;
+  sourceType?: string;
+  tags?: string;
+  confirm?: boolean;
+  rebuild?: boolean;
+}) {
+  const form = new FormData();
+  form.append("file", params.file);
+  form.append("title", params.title || "");
+  form.append("id", params.id || "");
+  form.append("source_url", params.sourceUrl || "");
+  form.append("source_type", params.sourceType || "user");
+  form.append("tags", params.tags || "");
+  form.append("confirm", params.confirm ? "true" : "false");
+  form.append("rebuild", params.rebuild === false ? "false" : "true");
+  const { data } = await api.post<{
+    ok: boolean;
+    upload: KnowledgeUpload;
+    extraction: { text_chars: number; warnings?: string[]; preview?: string };
+    draft: KnowledgeDraft;
+    apply?: any;
+  }>("/awen-agent/knowledge/upload", form, {
+    headers: { "Content-Type": "multipart/form-data" },
+    timeout: 120000,
+  });
+  return data;
+}
+
+export async function awenKnowledgeApplyUpload(uploadId: string, confirm = true, rebuild = true) {
+  const { data } = await api.post<{
+    ok: boolean;
+    upload: KnowledgeUpload;
+    draft: KnowledgeDraft;
+    result: any;
+  }>("/awen-agent/knowledge/uploads/apply", {
+    upload_id: uploadId,
+    confirm,
+    rebuild,
+  });
+  return data;
+}
+
+export async function awenKnowledgeImportDirectory(params?: {
+  root?: string;
+  namespace?: string;
+  confirm?: boolean;
+  rebuild?: boolean;
+  maxFiles?: number;
+}) {
+  const { data } = await api.post<KnowledgeDirectoryImport>(
+    "/awen-agent/knowledge/import-directory",
+    {
+      root: params?.root || "",
+      namespace: params?.namespace || "gbrain",
+      confirm: !!params?.confirm,
+      rebuild: params?.rebuild !== false,
+      max_files: params?.maxFiles || 1000,
+    },
+    { timeout: 180000 },
+  );
+  return data;
+}
+
+/** 把外部会话（旧 localStorage 历史等）搬进 agent 会话库。按 id 幂等，重复调用是覆盖。 */
+export async function consoleSessionImport(
+  source: "assistant" | "brain",
+  sessions: { id: string; created?: number; messages: { role: "user" | "assistant"; content: string }[] }[],
+) {
+  const { data } = await api.post<{ ok: boolean; imported: string[]; count: number; skipped: number }>(
+    "/awen-agent/console/sessions/import", { source, sessions });
+  return data;
+}
+
+/** 智能体预设：一套"这类活按这么跑"的设置（技能 + 审批档位 + 工作区）。按用户隔离。 */
+export type ConsolePreset = {
+  name: string; skill: string;
+  /** 线上语义的审批档位，见 lib/approvalModes。 */
+  approval: "none" | "remote" | "auto";
+  workspace: string;
+  /** 人设/判断标准。套用时整段并进这一轮的系统提示。 */
+  system: string;
+  note: string; created: number;
+};
+
+export async function consolePresets() {
+  const { data } = await api.get<{ ok: boolean; presets: ConsolePreset[] }>("/awen-agent/console/presets");
+  return data.presets || [];
+}
+
+export async function consolePresetSave(p: Omit<ConsolePreset, "created">) {
+  const { data } = await api.post<{ ok: boolean; preset: ConsolePreset }>("/awen-agent/console/presets", p);
+  return data.preset;
+}
+
+export async function consolePresetDelete(name: string) {
+  const { data } = await api.delete<{ ok: boolean }>(
+    `/awen-agent/console/presets/${encodeURIComponent(name)}`);
+  return data;
+}
+
+/** 预设变了 → 任务台的下拉要跟着变。和会话列表用同一套广播机制。 */
+export const CONSOLE_PRESETS_CHANGED = "awenops:console-presets-changed";
+export function notifyConsolePresetsChanged() {
+  window.dispatchEvent(new Event(CONSOLE_PRESETS_CHANGED));
+}
+
+/** 一条会话的审批留痕（谁在什么时候批了/拒了哪一步写操作）。 */
+export type ConsoleApproval = {
+  request_id: string; session_id: string; principal: string;
+  title: string; op_type: string;
+  /** "" = 还没决定（页面中途关掉）；timeout = 超时自动拒。 */
+  decision: "" | "approve" | "session" | "deny" | "abort" | "timeout" | string;
+  requested_at: number; decided_at: number;
+};
+
+export async function consoleSessionApprovals(sessionId: string) {
+  const { data } = await api.get<{ ok: boolean; approvals: ConsoleApproval[] }>(
+    `/awen-agent/console/sessions/${encodeURIComponent(sessionId)}/approvals`);
+  return data.approvals || [];
+}
+
+// ── 记忆管理 ────────────────────────────────────────────────────────────────
+//
+// 记忆里装的是"我是谁、我定过什么规矩、agent 从我身上推断出了什么"。
+// 读只要登录，写要管理员 —— 写入会直接改变 agent 以后的行为。
+
+export type MemoryEntry = {
+  name: string;
+  category: string;
+  description?: string;
+  keywords?: string;
+  links?: string;
+  created?: string;
+  updated?: string;
+  body?: string;
+  scope?: string;
+  valid?: boolean;
+  valid_from?: string;
+  valid_until?: string;
+  /** 谁写的：user=你亲口说的 / manual=手写文件 / reflection=agent 推断的 */
+  source?: string;
+  confidence?: number;
+  evidence?: string;
+  /** 置信度低于"不确定线"，界面上必须标出来 —— 推断和你说过的话不能混为一谈 */
+  uncertain?: boolean;
+  /** 遗忘打分：in_index=false 表示它已退出常驻索引，但仍可被检索到 */
+  decay?: { score?: number; in_index?: boolean };
+  history_count?: number;
+  backlinks?: string[];
+  sightings?: number;
+  promote_after?: number;
+};
+
+export type MemoryStats = {
+  ok: boolean;
+  store: { total: number; by_category: Record<string, number>; dir: string; index_chars: number };
+  core: Record<string, { file: string; exists: boolean; chars: number; limit: number; crowded: boolean }>;
+  reflect: { auto: boolean; last_reflect: string; pending_episodes: number; threshold: number; ready: boolean };
+  episodes: { indexed?: number; tokenized?: number; db?: string };
+  running?: boolean;
+};
+
+export async function awenMemoryList(scope = "") {
+  const { data } = await api.get<{ ok: boolean; entries: MemoryEntry[]; total: number }>(
+    "/awen-agent/memory/list", { params: { scope } },
+  );
+  return data;
+}
+
+export async function awenMemoryGet(name: string, category = "") {
+  const { data } = await api.get<{ ok: boolean; entry?: MemoryEntry; message?: string }>(
+    "/awen-agent/memory/get", { params: { name, category } },
+  );
+  return data;
+}
+
+export async function awenMemoryHistory(name: string, category = "") {
+  const { data } = await api.get<{ ok: boolean; versions: MemoryEntry[]; total: number }>(
+    "/awen-agent/memory/history", { params: { name, category } },
+  );
+  return data;
+}
+
+export async function awenMemoryPending() {
+  const { data } = await api.get<{ ok: boolean; pending: MemoryEntry[]; total: number }>(
+    "/awen-agent/memory/pending",
+  );
+  return data;
+}
+
+export async function awenMemoryStats() {
+  const { data } = await api.get<MemoryStats>("/awen-agent/memory/stats");
+  return data;
+}
+
+export async function awenMemoryCore(block = "") {
+  const { data } = await api.get<{
+    ok: boolean; limit: number;
+    blocks?: { block: string; file: string; hint: string; text: string }[];
+    block?: string; text?: string;
+  }>("/awen-agent/memory/core", { params: { block } });
+  return data;
+}
+
+export async function awenMemoryEpisodes(query: string, limit = 30) {
+  const { data } = await api.get<{ ok: boolean; episodes: { text: string; ts: number }[] }>(
+    "/awen-agent/memory/episodes", { params: { query, limit } },
+  );
+  return data;
+}
+
+export async function awenMemoryWrite(body: Partial<MemoryEntry> & { operation: string }) {
+  const { data } = await api.post<{ ok: boolean; message?: string }>(
+    "/awen-agent/memory/write", body,
+  );
+  return data;
+}
+
+export async function awenMemoryDecide(name: string, action: "confirm" | "reject") {
+  const { data } = await api.post<{ ok: boolean; message?: string }>(
+    `/awen-agent/memory/${action}`, { name },
+  );
+  return data;
+}
+
+export async function awenMemoryCoreWrite(body: {
+  block: string; operation: string; content?: string; old?: string;
+}) {
+  const { data } = await api.post<{ ok: boolean; message?: string; drift?: boolean }>(
+    "/awen-agent/memory/core", body,
+  );
+  return data;
+}
+
+export async function awenMemoryReflect() {
+  const { data } = await api.post<{ ok: boolean; started: boolean; message?: string }>(
+    "/awen-agent/memory/reflect", {},
+  );
+  return data;
+}

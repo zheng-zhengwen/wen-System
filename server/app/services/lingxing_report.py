@@ -8,6 +8,8 @@ external deps — opens in any browser and prints to PDF.
 """
 from __future__ import annotations
 
+import logging
+
 import html as _html
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
@@ -15,6 +17,8 @@ from typing import Any, Dict, List, Optional, Tuple
 from app.services import lingxing_data as _data
 from app.services import lingxing_operate as _op
 from app.services import lingxing_service as _gw
+
+logger = logging.getLogger("awen.services.lingxing_report")
 
 # minimal store-country → currency code (for labelling amounts in the report)
 _CCY = {
@@ -44,7 +48,7 @@ async def _store_ccy(sid: int) -> str:
             if str(r.get("sid")) == str(sid):
                 return _CCY.get(r.get("country") or "", "")
     except Exception:
-        pass
+        logger.debug("s = await _data.fetch_dataset 失败（旁路，已忽略）", exc_info=True)
     return ""
 
 
@@ -71,7 +75,7 @@ async def _resolve_campaign_id(intent: Dict[str, Any]) -> Optional[str]:
             if len(rows) < 300:
                 break
     except Exception:
-        pass
+        logger.debug("res = await _data.fetch_dataset 失败（旁路，已忽略）", exc_info=True)
     return None
 
 
@@ -265,5 +269,5 @@ ul{{margin:6px 0;padding-left:20px}} li{{margin:3px 0}}
 <h2>⑤ 确定性护栏</h2>
 {_guardrail_html(t.get('guardrail') or {})}
 
-<div class="muted" style="margin-top:24px">本报告由 IvyeaOps 领星模块自动生成；操作经 三重复核 + 护栏 + 人工确认后执行，执行前抓取回滚快照。</div>
+<div class="muted" style="margin-top:24px">本报告由 awenops 领星模块自动生成；操作经 三重复核 + 护栏 + 人工确认后执行，执行前抓取回滚快照。</div>
 </body></html>"""

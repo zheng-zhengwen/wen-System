@@ -7,10 +7,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
-import tempfile
-from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -19,8 +15,8 @@ from fastapi.testclient import TestClient
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     # Redirect audit root to a tmp dir so tests don't pollute real data.
-    monkeypatch.setenv("IVYEA_OPS_DEV_MODE", "1")
-    monkeypatch.setenv("IVYEA_OPS_AUTH_DISABLED", "1")
+    monkeypatch.setenv("AWENOPS_DEV_MODE", "1")
+    monkeypatch.setenv("AWENOPS_AUTH_DISABLED", "1")
     # Import lazily so env vars take effect.
     from app.main import app
     from app.services import asin_audit
@@ -247,10 +243,10 @@ def test_download_html_renders_self_contained(tmp_path, monkeypatch):
 
 
 def test_runner_status_lists_embedded_and_legacy_runners(monkeypatch):
-    """runner_status should expose IvyeaAgent first, then legacy CLI runners."""
+    """runner_status should expose awenAgent first, then legacy CLI runners."""
     from app.services import asin_audit
 
-    monkeypatch.setattr(asin_audit, "_ivyea_agent_available", lambda: (True, ""))
+    monkeypatch.setattr(asin_audit, "_awen_agent_available", lambda: (True, ""))
     monkeypatch.setattr(
         asin_audit,
         "_cli_runner_status",
@@ -264,13 +260,13 @@ def test_runner_status_lists_embedded_and_legacy_runners(monkeypatch):
     rows = asin_audit.runner_status()
     names = [r["name"] for r in rows]
     assert names[0] == "auto"
-    assert rows[0]["auto_resolved_to"] == "ivyea-agent"
-    for n in ("ivyea-agent", "hermes", "codex", "claude"):
+    assert rows[0]["auto_resolved_to"] == "awen-agent"
+    for n in ("awen-agent", "hermes", "codex", "claude"):
         assert n in names
 
 
 @pytest.mark.asyncio
-async def test_start_job_accepts_ivyea_agent_runner(tmp_path, monkeypatch):
+async def test_start_job_accepts_awen_agent_runner(tmp_path, monkeypatch):
     from app.services import asin_audit
 
     root = tmp_path / "audits"
@@ -279,7 +275,7 @@ async def test_start_job_accepts_ivyea_agent_runner(tmp_path, monkeypatch):
     monkeypatch.setattr(
         asin_audit,
         "_resolve_audit_runner",
-        lambda pref: ("ivyea-agent", None, ""),
+        lambda pref: ("awen-agent", None, ""),
     )
 
     async def fake_run(job):
@@ -292,11 +288,11 @@ async def test_start_job_accepts_ivyea_agent_runner(tmp_path, monkeypatch):
         asin="B0TEST1234",
         marketplace="US",
         mode="full",
-        runner_pref="ivyea-agent",
+        runner_pref="awen-agent",
     )
     await asyncio.sleep(0)
 
-    assert job.runner_pref == "ivyea-agent"
+    assert job.runner_pref == "awen-agent"
     assert (root / job.job_id / "meta.json").is_file()
 
 

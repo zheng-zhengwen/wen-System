@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import Modal from "../Modal";
 import { diffSnapshot, SnapshotDiff, SnapshotDiffFile } from "../../../api/skill";
+import { errText } from "../../../lib/errText";
 
 export type DiffViewerProps = {
   name: string;
@@ -39,7 +40,7 @@ export default function DiffViewer({ name, snapshotId, onClose }: DiffViewerProp
         if (d.files.length > 0) setExpanded(new Set([d.files[0].path]));
       })
       .catch((e: any) => {
-        if (alive) setErr(e?.response?.data?.detail ?? e?.message ?? "加载 diff 失败");
+        if (alive) setErr(errText(e, "加载 diff 失败"));
       })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
@@ -106,7 +107,7 @@ function FileSection({
       {expanded && (
         <div className="dv-file-body">
           {!diff || diff.trim() === "" ? (
-            <div className="sks-empty" style={{ fontSize: 11 }}>(无 diff 文本)</div>
+            <div className="sks-empty" style={{ fontSize: "var(--fs-11)" }}>(无 diff 文本)</div>
           ) : (
             <DiffBody text={diff} />
           )}
@@ -130,7 +131,7 @@ function DiffBody({ text }: { text: string }) {
         ))}
       </pre>
       {truncated && (
-        <div className="sks-empty" style={{ fontSize: 10 }}>
+        <div className="sks-empty" style={{ fontSize: "var(--fs-10)" }}>
           过长已截断，仅显示前 {MAX_LINES_PER_FILE} 行
         </div>
       )}

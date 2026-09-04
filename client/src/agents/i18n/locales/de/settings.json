@@ -98,10 +98,6 @@
     "about": "Info"
   },
   "appearanceSettings": {
-    "darkMode": {
-      "label": "Darkmode",
-      "description": "Zwischen hellem und dunklem Design wechseln"
-    },
     "projectSorting": {
       "label": "Projektsortierung",
       "description": "Wie Projekte in der Seitenleiste angeordnet werden",

@@ -11,17 +11,19 @@ click — saves them from typing paths by hand.
 from __future__ import annotations
 
 import asyncio
+import logging
 import json
 import os
 import shutil
 import sqlite3
-import socket
 import sys
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 import httpx
+
+logger = logging.getLogger("awen.services.settings_test")
 
 _WINDOWS = sys.platform == "win32"
 
@@ -118,7 +120,7 @@ async def _probe_sorftime(key: str) -> Dict[str, Any]:
                 try:
                     body = json.loads(line[5:].strip())
                 except Exception:
-                    pass
+                    logger.debug("json.loads 失败（旁路，已忽略）", exc_info=True)
         if body is None:
             return _err("响应解析失败")
         if "error" in body:
@@ -151,7 +153,7 @@ async def _probe_sif(key: str) -> Dict[str, Any]:
                 try:
                     body = json.loads(line[5:].strip())
                 except Exception:
-                    pass
+                    logger.debug("json.loads 失败（旁路，已忽略）", exc_info=True)
         if body is None:
             try:
                 body = r.json()
@@ -180,7 +182,7 @@ async def _probe_sellersprite(key: str) -> Dict[str, Any]:
             await c.post(url, headers=headers, json={
                 "jsonrpc": "2.0", "id": 0, "method": "initialize",
                 "params": {"protocolVersion": "2024-11-05", "capabilities": {},
-                           "clientInfo": {"name": "IvyeaOps", "version": "1.0"}}})
+                           "clientInfo": {"name": "awenops", "version": "1.0"}}})
             r = await c.post(url, headers=headers,
                              json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}})
         body = parse_sse(r.text)
@@ -197,10 +199,6 @@ async def _probe_sellersprite(key: str) -> Dict[str, Any]:
         return _err("MCP 未返回工具，请检查 key 或开通的接口权限")
     except Exception as e:  # noqa: BLE001
         return _err(str(e)[:200])
-
-
-async def _probe_sorftime_placeholder() -> None:  # noqa: keep line count consistent
-        return _err(f"调用失败：{e}")
 
 
 async def _probe_openai(key: str) -> Dict[str, Any]:
@@ -239,13 +237,13 @@ async def _probe_url(url: str, *, label: str = "URL") -> Dict[str, Any]:
         return _err(f"{label} 检测失败：{e}")
 
 
-async def _probe_ivyea_agent(url: str) -> Dict[str, Any]:
+async def _probe_awen_agent(url: str) -> Dict[str, Any]:
     if not url:
         return _err("未填写")
     if not url.startswith(("http://", "https://")):
         return _err("应以 http(s):// 开头")
     headers: dict[str, str] = {}
-    token = _hub_get("ivyea_agent_token")
+    token = _hub_get("awen_agent_token")
     if token:
         headers["Authorization"] = f"Bearer {token}"
     try:
@@ -255,7 +253,7 @@ async def _probe_ivyea_agent(url: str) -> Dict[str, Any]:
             data = r.json()
             version = data.get("version") or ""
             cards = (data.get("knowledge") or {}).get("cards")
-            return _ok(f"已连接 IvyeaAgent {version} · 知识卡 {cards}")
+            return _ok(f"已连接 awenAgent {version} · 知识卡 {cards}")
         if r.status_code in (401, 403):
             return _err("Token 不正确或服务要求认证")
         return _err(f"HTTP {r.status_code}")
@@ -340,7 +338,7 @@ async def _probe_feishu_webhook(url: str) -> Dict[str, Any]:
         async with httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT) as c:
             r = await c.post(url, json={
                 "msg_type": "text",
-                "content": {"text": f"IvyeaOps 配置测试 · {time.strftime('%H:%M:%S')}"},
+                "content": {"text": f"awenops 配置测试 · {time.strftime('%H:%M:%S')}"},
             })
         if r.status_code == 200:
             try:
@@ -384,7 +382,7 @@ async def _probe_feishu_app() -> Dict[str, Any]:
         if not token:
             return _err("返回中没有 tenant_access_token")
         if not chat_id:
-            return _ok(f"App 凭证有效（tenant_token 已获取）；未填 Chat ID，无法测试消息发送")
+            return _ok("App 凭证有效（tenant_token 已获取）；未填 Chat ID，无法测试消息发送")
         # Try send a test message to chat_id
         async with httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT) as c:
             r = await c.post(
@@ -394,7 +392,7 @@ async def _probe_feishu_app() -> Dict[str, Any]:
                 json={
                     "receive_id": chat_id,
                     "msg_type": "text",
-                    "content": json.dumps({"text": f"IvyeaOps 配置测试 · {time.strftime('%H:%M:%S')}"}, ensure_ascii=False),
+                    "content": json.dumps({"text": f"awenops 配置测试 · {time.strftime('%H:%M:%S')}"}, ensure_ascii=False),
                 },
             )
         data = r.json()
@@ -409,7 +407,7 @@ async def _probe_feishu_app() -> Dict[str, Any]:
 # Public dispatch
 # ---------------------------------------------------------------------------
 
-_KNOWN_TEXT_PROVIDERS = {"ivyea-agent", "assistant", "deepseek", "codex", "claude", "hermes", "apimart"}
+_KNOWN_TEXT_PROVIDERS = {"awen-agent", "assistant", "deepseek", "codex", "claude", "hermes", "apimart"}
 _KNOWN_VISION_PROVIDERS = {"openai", "assistant", "apimart"}
 
 
@@ -483,16 +481,16 @@ async def test_value(key: str, value: Optional[str]) -> Dict[str, Any]:
         return await _probe_sellersprite(val)
     if key == "openai_api_key":
         return await _probe_openai(val)
-    if key in ("ivyea_agent_url", "ivyea_agent_token"):
-        return await _probe_ivyea_agent(_hub_get("ivyea_agent_url") or "http://127.0.0.1:8765")
+    if key in ("awen_agent_url", "awen_agent_token"):
+        return await _probe_awen_agent(_hub_get("awen_agent_url") or "http://127.0.0.1:8765")
 
     # Text-provider configs → real round-trip through the saved config.
     if key == "deepseek_api_key":
         return await _probe_text_provider("deepseek", "DeepSeek")
     if key in ("assistant_provider", "assistant_model", "assistant_api_key", "assistant_base_url"):
         return await _probe_text_provider("assistant", "全局兜底大模型")
-    if key in ("ivyea_agent_provider", "ivyea_agent_model", "ivyea_agent_api_key", "ivyea_agent_base_url"):
-        return await _probe_ivyea_agent(_hub_get("ivyea_agent_url") or "http://127.0.0.1:8765")
+    if key in ("awen_agent_provider", "awen_agent_model", "awen_agent_api_key", "awen_agent_base_url"):
+        return await _probe_awen_agent(_hub_get("awen_agent_url") or "http://127.0.0.1:8765")
     if key == "text_ai_providers":
         return _validate_provider_list(val, _KNOWN_TEXT_PROVIDERS, "文本 provider 链")
     if key == "vision_ai_providers":
@@ -502,15 +500,6 @@ async def test_value(key: str, value: Optional[str]) -> Dict[str, Any]:
     if key in ("image_api_key", "image_model"):
         return await _probe_image_gen()
 
-    if key == "imgflow_url":
-        # imgflow's root may not respond to GET; try /api/health or /
-        if not val:
-            return _err("未填写")
-        for path in ("/api/health", "/"):
-            res = await _probe_url(val.rstrip("/") + path, label="imgflow")
-            if res["ok"]:
-                return res
-        return res  # last one
     if key in ("dashboard_url", "terminal_url"):
         return await _probe_url(val)
 
@@ -520,7 +509,7 @@ async def test_value(key: str, value: Optional[str]) -> Dict[str, Any]:
         # Test the whole bundle together — single field alone isn't useful.
         return await _probe_feishu_app()
 
-    if key in ("hermes_bin", "codex_bin", "claude_bin", "kiro_cli_bin", "gbrain_bin"):
+    if key in ("hermes_bin", "codex_bin", "claude_bin", "kiro_cli_bin"):
         return _probe_bin(val)
     if key.endswith("_db"):
         return _probe_db(val)
@@ -543,13 +532,12 @@ _SELF_CHECK_KEYS = [
     ("text_ai_providers", "文本 provider 链"),
     ("deepseek_api_key", "DeepSeek Key"),
     ("assistant_api_key", "全局兜底大模型"),
-    ("ivyea_agent_url", "IvyeaAgent 本地服务"),
+    ("awen_agent_url", "awenAgent 本地服务"),
     ("vision_ai_providers", "视觉 provider 链"),
     ("openai_api_key", "OpenAI 视觉 Key"),
     ("sorftime_key", "Sorftime Key"),
     ("sif_key", "SIF Key"),
     ("sellersprite_key", "卖家精灵 Key"),
-    ("imgflow_url", "图片处理后端"),
     ("alert_webhook", "告警 Webhook"),
 ]
 
@@ -606,7 +594,7 @@ def autodetect() -> Dict[str, Any]:
 
     # --- CLIs (try PATH lookup then common locations) ---
     for name, key in (("hermes", "hermes_bin"), ("codex", "codex_bin"),
-                      ("kiro-cli", "kiro_cli_bin"), ("gbrain", "gbrain_bin")):
+                      ("kiro-cli", "kiro_cli_bin")):
         if current.get(key):
             continue
         w = shutil.which(name)

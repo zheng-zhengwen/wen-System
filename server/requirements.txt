@@ -9,6 +9,12 @@ psutil>=5.9.0
 feedparser>=6.0.10
 markdown>=3.6
 openpyxl>=3.1.0
+# Windows/精简镜像上的 zoneinfo 没有系统时区库；缺了它促销站点时间会静默回退 UTC。
+tzdata>=2025.2
+# 交付物导出的 PPTX（经营周报）。纯 Python、无系统依赖，约 500KB。
+# PDF **刻意不加依赖**：它走 headless chrome，有就用、没有就告诉用户可以从
+# HTML 报告里 Ctrl+P —— 为一个导出格式要求每台机器装 chrome 不划算。
+python-pptx>=1.0.0
 pypdf>=4.0.0
 psd-tools==1.10.2
 Pillow>=11.0.0
@@ -20,6 +26,9 @@ pyte>=0.8.2
 pywinpty>=2.0.10; sys_platform == "win32"
 # AES for 领星 OpenAPI signing (app/services/lingxing_openapi.py).
 cryptography>=42.0.0
+# Optional LingXing SSH jump-host transport. Imported lazily, but bundled so a
+# saved jump configuration works identically on Linux/macOS/Windows releases.
+paramiko>=3.4.0,<5
 # Lets pydantic evaluate `X | None` annotations on Python 3.9 (the default on
 # RHEL9/CentOS9/Rocky/Debian 11/Ubuntu 20.04). Without it a fresh venv crashes
 # at startup with "Unable to evaluate type annotation 'str | None'".

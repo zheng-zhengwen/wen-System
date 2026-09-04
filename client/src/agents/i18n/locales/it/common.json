@@ -56,8 +56,6 @@
   "common": {
     "language": "Lingua",
     "theme": "Tema",
-    "darkMode": "Modalità scura",
-    "lightMode": "Modalità chiara",
     "name": "Nome",
     "description": "Descrizione",
     "enabled": "Abilitato",

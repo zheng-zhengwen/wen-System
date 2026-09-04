@@ -1,4 +1,4 @@
-"""CLI helper: generate a bcrypt hash for .env IVYEA_OPS_PASSWORD_HASH.
+"""CLI helper: generate a bcrypt hash for .env AWENOPS_PASSWORD_HASH.
 
 Usage:
     python -m app.core.hashpw
@@ -22,7 +22,7 @@ def main() -> int:
         return 1
     print()
     print("Add this line to server/.env :")
-    print(f'IVYEA_OPS_PASSWORD_HASH={hash_password(pw)}')
+    print(f'AWENOPS_PASSWORD_HASH={hash_password(pw)}')
     return 0
 
 

@@ -4,7 +4,7 @@
 Wraps the SellerSprite REST API as MCP tools so Hermes can call
 SellerSprite data the same way it calls SIF or Sorftime.
 
-Registration (done automatically when key is saved in IvyeaOps settings):
+Registration (done automatically when key is saved in awenops settings):
     hermes mcp add sellersprite \
         --command python3 /path/to/sellersprite_mcp.py \
         --env SELLERSPRITE_KEY=<your-key>
@@ -32,7 +32,7 @@ def _key() -> str:
     k = os.environ.get("SELLERSPRITE_KEY", "").strip()
     if not k:
         raise RuntimeError(
-            "SELLERSPRITE_KEY 未设置。请在 IvyeaOps 系统配置页填写卖家精灵密钥并保存。"
+            "SELLERSPRITE_KEY 未设置。请在 awenops 系统配置页填写卖家精灵密钥并保存。"
         )
     return k
 
@@ -183,7 +183,7 @@ def _call_tool(name: str, args: dict) -> str:
 # ── MCP stdio transport ───────────────────────────────────────────────────────
 
 # 两种分帧都要支持：
-#   * NDJSON —— MCP stdio 规范的分帧（一行一个 JSON 对象），ivyea-agent 用这种。
+#   * NDJSON —— MCP stdio 规范的分帧（一行一个 JSON 对象），awen-agent 用这种。
 #   * Content-Length —— LSP 风格，本脚本最初为 hermes 写的那种。
 # 只认 Content-Length 时，NDJSON 客户端发来的 `{"jsonrpc":...}` 会被当成一行
 # "header"（它含冒号），然后死等那个永远不会来的空行 —— 表现为 agent 一开工具

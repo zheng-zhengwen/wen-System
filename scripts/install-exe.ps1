@@ -1,6 +1,6 @@
-# IvyeaOps Windows x64 免 Python 安装器
+# awenops Windows x64 免 Python 安装器
 #
-# 用于 GitHub Release 的 IvyeaOps-Windows-x64.zip：
+# 用于 GitHub Release 的 awenops-Windows-x64.zip：
 #   1. 不安装 Python / Node
 #   2. 生成 server\.env（随机密钥 + 管理员密码，并写入本机登录信息文件）
 #   3. 创建桌面快捷方式（常驻控制窗口，关闭窗口即停止服务）
@@ -12,9 +12,9 @@ $ErrorActionPreference = "Stop"
 $RepoRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 Set-Location $RepoRoot
 
-function Write-Info($msg) { Write-Host "[IvyeaOps] $msg" -ForegroundColor Green }
-function Write-Warn($msg) { Write-Host "[IvyeaOps] 注意: $msg" -ForegroundColor Yellow }
-function Write-Fail($msg) { Write-Host "[IvyeaOps] 错误: $msg" -ForegroundColor Red; Read-Host "按回车退出"; exit 1 }
+function Write-Info($msg) { Write-Host "[awenops] $msg" -ForegroundColor Green }
+function Write-Warn($msg) { Write-Host "[awenops] 注意: $msg" -ForegroundColor Yellow }
+function Write-Fail($msg) { Write-Host "[awenops] 错误: $msg" -ForegroundColor Red; Read-Host "按回车退出"; exit 1 }
 function Get-DesktopCandidates {
     $Candidates = @()
     try { $Candidates += [Environment]::GetFolderPath("Desktop") } catch {}
@@ -25,7 +25,7 @@ function Get-DesktopCandidates {
 }
 function Save-Credentials($Password) {
     $CredText = @"
-IvyeaOps 本机登录信息
+awenops 本机登录信息
 
 访问地址: http://127.0.0.1:8001
 用户名: admin
@@ -36,19 +36,19 @@ IvyeaOps 本机登录信息
 "@
     $CredText | Out-File -FilePath $CredFile -Encoding utf8
     foreach ($Desktop in Get-DesktopCandidates) {
-        try { $CredText | Out-File -FilePath (Join-Path $Desktop "IvyeaOps 登录信息.txt") -Encoding utf8 } catch {}
+        try { $CredText | Out-File -FilePath (Join-Path $Desktop "awenops 登录信息.txt") -Encoding utf8 } catch {}
     }
     return $CredFile
 }
 
-$ServerExe = "$RepoRoot\IvyeaOpsServer.exe"
+$ServerExe = "$RepoRoot\awenopsServer.exe"
 $Launcher = $ServerExe
-$Stopper = "$RepoRoot\停止 IvyeaOps.bat"
+$Stopper = "$RepoRoot\停止 awenops.bat"
 $EnvFile = "$RepoRoot\server\.env"
 $DataDir = "$RepoRoot\data"
-$CredFile = "$DataDir\IvyeaOps 登录信息.txt"
+$CredFile = "$DataDir\awenops 登录信息.txt"
 
-if (-not (Test-Path $ServerExe)) { Write-Fail "未找到 IvyeaOpsServer.exe。请确认下载的是 IvyeaOps-Windows-x64.zip。" }
+if (-not (Test-Path $ServerExe)) { Write-Fail "未找到 awenopsServer.exe。请确认下载的是 awenops-Windows-x64.zip。" }
 if (-not (Test-Path "$RepoRoot\client\dist\index.html")) { Write-Fail "未找到 client\dist\index.html，发行包不完整。" }
 if (-not (Test-Path "$RepoRoot\server")) { New-Item -ItemType Directory -Path "$RepoRoot\server" | Out-Null }
 if (-not (Test-Path $DataDir)) { New-Item -ItemType Directory -Path $DataDir | Out-Null }
@@ -69,7 +69,7 @@ if (Test-Path $EnvFile) {
     [System.Security.Cryptography.RandomNumberGenerator]::Fill($SecretBytes)
     $Secret = [Convert]::ToBase64String($SecretBytes).TrimEnd('=').Replace('+', '-').Replace('/', '_')
 
-    $Pw = $env:IVYEA_OPS_ADMIN_PASSWORD
+    $Pw = $env:AWENOPS_ADMIN_PASSWORD
     if ([string]::IsNullOrWhiteSpace($Pw)) { $Pw = $env:ADMIN_PASSWORD }
     if ([string]::IsNullOrWhiteSpace($Pw)) {
         $PwBytes = New-Object byte[] 12
@@ -79,18 +79,18 @@ if (Test-Path $EnvFile) {
 
     @"
 # 由 scripts\install-exe.ps1 生成，可按需修改。完整说明见 docs\CONFIG.md。
-IVYEA_OPS_HOST=127.0.0.1
-IVYEA_OPS_PORT=8001
-IVYEA_OPS_DEV=0
+AWENOPS_HOST=127.0.0.1
+AWENOPS_PORT=8001
+AWENOPS_DEV=0
 
 # 会话签名密钥（保密，设好后不要改，否则所有人退出登录）
-IVYEA_OPS_SECRET=$Secret
+AWENOPS_SECRET=$Secret
 
-IVYEA_OPS_USER=admin
+AWENOPS_USER=admin
 # Windows x64 免 Python 版不调用 bcrypt CLI；后端启动时会在内存中哈希此密码。
 ADMIN_PASSWORD=$Pw
 
-IVYEA_OPS_ALLOWED_ORIGINS=http://127.0.0.1:8001
+AWENOPS_ALLOWED_ORIGINS=http://127.0.0.1:8001
 "@ | Out-File -FilePath $EnvFile -Encoding utf8
 
     Write-Info "  server\.env 已创建。"
@@ -103,27 +103,27 @@ try {
     $Desktop = @(Get-DesktopCandidates | Select-Object -First 1)[0]
     if (-not $Desktop) { throw "未找到桌面路径" }
     $WshShell = New-Object -ComObject WScript.Shell
-    $Shortcut = $WshShell.CreateShortcut("$Desktop\IvyeaOps.lnk")
+    $Shortcut = $WshShell.CreateShortcut("$Desktop\awenops.lnk")
     $Shortcut.TargetPath = $Launcher
     $Shortcut.WorkingDirectory = $RepoRoot
-    $Shortcut.Description = "启动 IvyeaOps 工作台（关闭窗口即停止服务）"
+    $Shortcut.Description = "启动 awenops 工作台（关闭窗口即停止服务）"
     $ShortcutIcon = "$RepoRoot\client\public\favicon.ico"
     if (Test-Path $ShortcutIcon) { $Shortcut.IconLocation = $ShortcutIcon }
     $Shortcut.Save()
-    Write-Info "  桌面快捷方式已创建：IvyeaOps"
+    Write-Info "  桌面快捷方式已创建：awenops"
 } catch {
-    Write-Warn "桌面快捷方式创建失败（不影响使用），可手动双击 IvyeaOpsServer.exe。"
+    Write-Warn "桌面快捷方式创建失败（不影响使用），可手动双击 awenopsServer.exe。"
 }
 
 Write-Host ""
 Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Green
-Write-Host "  IvyeaOps Windows x64 安装完成！" -ForegroundColor Green
+Write-Host "  awenops Windows x64 安装完成！" -ForegroundColor Green
 Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Green
 Write-Host ""
-Write-Host "  以后双击桌面「IvyeaOps」会打开控制窗口；关闭窗口即停止服务。"
+Write-Host "  以后双击桌面「awenops」会打开控制窗口；关闭窗口即停止服务。"
 Write-Host "  登录信息文件：$CredFile"
-Write-Host "  「停止 IvyeaOps.bat」仍作为备用停止入口。"
-Write-Host "  如需排错，看 logs\ivyeaops.err.log / logs\ivyeaops.out.log。"
+Write-Host "  「停止 awenops.bat」仍作为备用停止入口。"
+Write-Host "  如需排错，看 logs\awenops.err.log / logs\awenops.out.log。"
 Write-Host ""
 Write-Info "正在启动控制窗口并打开浏览器..."
 Start-Process -FilePath $Launcher

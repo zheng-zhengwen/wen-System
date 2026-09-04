@@ -4,6 +4,7 @@ session_created -> assistant text with session_id line stripped -> complete)."""
 from __future__ import annotations
 
 import importlib
+import sys
 import stat
 from pathlib import Path
 
@@ -30,18 +31,42 @@ def _fake_codex(tmp_path: Path) -> Path:
 
 
 def _fake_hermes(tmp_path: Path) -> Path:
-    p = tmp_path / "fake_hermes.sh"
-    p.write_text("#!/bin/bash\n"
-                 "echo 'Hello from fake hermes'\n"
-                 "echo 'session_id: 20260101_fake'\n", encoding="utf-8")
+    p = tmp_path / "fake_hermes.py"
+    p.write_text("import sys\n"
+                 "print('Hello from fake hermes')\n"
+                 "print('session_id: 20260101_fake')\n", encoding="utf-8")
     p.chmod(p.stat().st_mode | stat.S_IEXEC | stat.S_IRUSR)
     return p
 
 
+def _fake_hermes_launcher(tmp_path: Path, script: Path | None = None) -> str:
+    p = script or _fake_hermes(tmp_path)
+    if sys.platform == "win32":
+        launcher = tmp_path / "fake_hermes.cmd"
+        launcher.write_text(f'@echo off\r\n"{sys.executable}" "{p}" %*\r\n', encoding="ascii")
+    else:
+        launcher = tmp_path / "fake_hermes.sh"
+        launcher.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{p}" "$@"\n', encoding="utf-8")
+    launcher.chmod(launcher.stat().st_mode | stat.S_IEXEC | stat.S_IRUSR)
+    return str(launcher)
+
+
+def _fake_codex_launcher(tmp_path: Path) -> str:
+    p = _fake_codex(tmp_path)
+    if sys.platform == "win32":
+        launcher = tmp_path / "fake_codex.cmd"
+        launcher.write_text(f'@echo off\r\n"{sys.executable}" "{p}" %*\r\n', encoding="ascii")
+    else:
+        launcher = tmp_path / "fake_codex.sh"
+        launcher.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{p}" "$@"\n', encoding="utf-8")
+    launcher.chmod(launcher.stat().st_mode | stat.S_IEXEC | stat.S_IRUSR)
+    return str(launcher)
+
+
 @pytest.fixture
 def env(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("IVYEA_OPS_SECRET", "test-secret")
-    monkeypatch.setenv("IVYEA_OPS_ALLOWED_ORIGINS", _ORIGIN)
+    monkeypatch.setenv("AWENOPS_SECRET", "test-secret")
+    monkeypatch.setenv("AWENOPS_ALLOWED_ORIGINS", _ORIGIN)
     monkeypatch.setenv("AGENTS_DB_PATH", str(tmp_path / "agents.db"))
     from app.core import config as cfg_mod
     importlib.reload(cfg_mod)
@@ -63,8 +88,8 @@ def env(tmp_path: Path, monkeypatch):
     importlib.reload(router_mod)
     from app import main as main_mod
     importlib.reload(main_mod)
-    monkeypatch.setattr(hd_mod, "_hermes_bin", lambda: str(_fake_hermes(tmp_path)))
-    monkeypatch.setattr(cx_mod, "_codex_bin", lambda: str(_fake_codex(tmp_path)))
+    monkeypatch.setattr(hd_mod, "_hermes_bin", lambda: _fake_hermes_launcher(tmp_path))
+    monkeypatch.setattr(cx_mod, "_codex_bin", lambda: _fake_codex_launcher(tmp_path))
     cookie = sec_mod.issue_session("admin", "admin")
     c = TestClient(main_mod.app)
     c.cookies.set(cfg_mod.settings.session_cookie_name, cookie)
@@ -113,12 +138,12 @@ def test_codex_command_round_trip(env):
 
 def test_hermes_error_output_classified_as_error(env, tmp_path, monkeypatch):
     c = env
-    err = tmp_path / "fake_hermes_err.sh"
-    err.write_text("#!/bin/bash\necho 'Error code: 401 - Invalid API Key'\necho 'session_id: zz'\n",
+    err = tmp_path / "fake_hermes_err.py"
+    err.write_text("print('Error code: 401 - Invalid API Key')\nprint('session_id: zz')\n",
                    encoding="utf-8")
     err.chmod(err.stat().st_mode | stat.S_IEXEC | stat.S_IRUSR)
     from app.agents import hermes_driver as hd
-    monkeypatch.setattr(hd, "_hermes_bin", lambda: str(err))
+    monkeypatch.setattr(hd, "_hermes_bin", lambda: _fake_hermes_launcher(tmp_path, err))
     with c.websocket_connect("/api/agents/ws") as ws:
         ws.send_json({"type": "hermes-command", "command": "hi", "options": {}})
         kinds = []
@@ -145,6 +170,7 @@ def test_hermes_read_history_from_json(tmp_path, monkeypatch):
                      {"role": "assistant", "content": "hello back"}],
     }), encoding="utf-8")
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
     from app.agents import hermes_driver as hd
     importlib.reload(hd)  # re-evaluate _HERMES_SESSIONS_DIR against the temp HOME
     h = hd.read_history("20260101_abc")

@@ -28,6 +28,8 @@ type SidebarSessionItemProps = {
     sessionTitle: string,
     provider: LLMProvider,
   ) => void;
+  /** 此刻真的有一轮在跑的会话 id。 */
+  processingSessions?: Set<string>;
   t: TFunction;
 };
 
@@ -73,9 +75,13 @@ export default function SidebarSessionItem({
   onProjectSelect,
   onSessionSelect,
   onDeleteSession,
+  processingSessions,
   t,
 }: SidebarSessionItemProps) {
   const sessionView = createSessionViewModel(session, currentTime, t);
+  // 这条会话此刻有没有一轮在跑（useSessionProtection 的 processingSessions），
+  // 不是从"最近更新时间"推出来的。
+  const isRunning = Boolean(processingSessions?.has(session.id));
   const isSelected = selectedSession?.id === session.id;
   const isEditing = editingSession === session.id;
   const compactSessionAge = formatCompactSessionAge(sessionView.sessionTime, currentTime);
@@ -117,14 +123,19 @@ export default function SidebarSessionItem({
 
   return (
     <div className="group relative">
-      {sessionView.isActive && (
+      {isRunning && (
+        /*
+         * **正在跑**的标记：一颗呼吸的点 + 一圈泛开的光环，和工作台左栏同一种说法。
+         * 这里以前挂的判据是"10 分钟内更新过" —— 那说的是"最近"，不是"现在还在动"，
+         * 而用户盯着它想知道的正是后者（能不能关页面、要不要等它）。
+         */
         <div className="absolute left-0 top-1/2 -translate-x-1 -translate-y-1/2 transform">
-          <Tooltip content={t('tooltips.activeSessionIndicator')} position="right">
-            <div
-              role="status"
-              aria-label={t('tooltips.activeSessionIndicator')}
-              className="h-2 w-2 animate-pulse rounded-full bg-green-500"
-            />
+          <Tooltip content={t('tooltips.activeSessionIndicator', { defaultValue: '正在执行' })} position="right">
+            <span role="status" aria-label="正在执行"
+                  className="relative inline-flex h-2 w-2 items-center justify-center">
+              <span className="absolute inset-0 animate-ping rounded-full bg-emerald-500/70" />
+              <span className="absolute inset-0 scale-50 animate-pulse rounded-full bg-emerald-500" />
+            </span>
           </Tooltip>
         </div>
       )}
@@ -134,8 +145,8 @@ export default function SidebarSessionItem({
           className={cn(
             'p-2 mx-3 my-0.5 rounded-md bg-card border active:scale-[0.98] transition-all duration-150 relative',
             isSelected ? 'bg-primary/5 border-primary/20' : '',
-            !isSelected && sessionView.isActive
-              ? 'border-green-500/30 bg-green-50/5 dark:bg-green-900/5'
+            !isSelected && isRunning
+              ? 'border-green-500/30 bg-green-50/5 bg-green-900/5'
               : 'border-border/30',
           )}
           onClick={selectMobileSession}
@@ -154,7 +165,7 @@ export default function SidebarSessionItem({
               <div className="flex items-center gap-2">
                 <div className="truncate text-xs font-medium text-foreground">{sessionView.sessionName}</div>
                 {compactSessionAge && (
-                  <span className="ml-auto flex-shrink-0 text-[11px] text-muted-foreground">{compactSessionAge}</span>
+                  <span className="ml-auto flex-shrink-0 text-[length:var(--fs-11)] text-muted-foreground">{compactSessionAge}</span>
                 )}
               </div>
               <div className="mt-0.5 flex items-center">
@@ -168,13 +179,13 @@ export default function SidebarSessionItem({
 
             {!sessionView.isCursorSession && (
               <button
-                className="ml-1 flex h-5 w-5 items-center justify-center rounded-md bg-red-50 opacity-70 transition-transform active:scale-95 dark:bg-red-900/20"
+                className="ml-1 flex h-5 w-5 items-center justify-center rounded-md bg-red-50 opacity-70 transition-transform active:scale-95 bg-red-900/20"
                 onClick={(event) => {
                   event.stopPropagation();
                   requestDeleteSession();
                 }}
               >
-                <Trash2 className="h-2.5 w-2.5 text-red-600 dark:text-red-400" />
+                <Trash2 className="h-2.5 w-2.5 text-red-600 text-red-400" />
               </button>
             )}
           </div>
@@ -186,7 +197,7 @@ export default function SidebarSessionItem({
           variant="ghost"
           className={cn(
             'w-full justify-start p-2 h-auto font-normal text-left hover:bg-accent/50 transition-colors duration-200',
-            isSelected && 'bg-primary/10 text-primary hover:bg-primary/15 dark:bg-primary/20 dark:text-primary',
+            isSelected && 'bg-primary/10 text-primary hover:bg-primary/15 bg-primary/20 text-primary',
           )}
           onClick={() => onSessionSelect(session, project.projectId)}
         >
@@ -205,7 +216,7 @@ export default function SidebarSessionItem({
                 {compactSessionAge && (
                   <span
                     className={cn(
-                      'ml-auto flex-shrink-0 text-[11px] text-muted-foreground transition-opacity duration-200',
+                      'ml-auto flex-shrink-0 text-[length:var(--fs-11)] text-muted-foreground transition-opacity duration-200',
                       isEditing ? 'opacity-0' : 'group-hover:opacity-0',
                     )}
                   >
@@ -246,48 +257,48 @@ export default function SidebarSessionItem({
                   autoFocus
                 />
                 <button
-                  className="flex h-6 w-6 items-center justify-center rounded bg-green-50 hover:bg-green-100 dark:bg-green-900/20 dark:hover:bg-green-900/40"
+                  className="flex h-6 w-6 items-center justify-center rounded bg-green-50 hover:bg-green-100 bg-green-900/20 hover:bg-green-900/40"
                   onClick={(event) => {
                     event.stopPropagation();
                     saveEditedSession();
                   }}
                   title={t('tooltips.save')}
                 >
-                  <Check className="h-3 w-3 text-green-600 dark:text-green-400" />
+                  <Check className="h-3 w-3 text-green-600 text-green-400" />
                 </button>
                 <button
-                  className="flex h-6 w-6 items-center justify-center rounded bg-gray-50 hover:bg-gray-100 dark:bg-gray-900/20 dark:hover:bg-gray-900/40"
+                  className="flex h-6 w-6 items-center justify-center rounded bg-gray-50 hover:bg-gray-100 bg-gray-900/20 hover:bg-gray-900/40"
                   onClick={(event) => {
                     event.stopPropagation();
                     onCancelEditingSession();
                   }}
                   title={t('tooltips.cancel')}
                 >
-                  <X className="h-3 w-3 text-gray-600 dark:text-gray-400" />
+                  <X className="h-3 w-3 text-gray-600 text-gray-400" />
                 </button>
               </>
             ) : (
               <>
                 <button
-                  className="flex h-6 w-6 items-center justify-center rounded bg-gray-50 hover:bg-gray-100 dark:bg-gray-900/20 dark:hover:bg-gray-900/40"
+                  className="flex h-6 w-6 items-center justify-center rounded bg-gray-50 hover:bg-gray-100 bg-gray-900/20 hover:bg-gray-900/40"
                   onClick={(event) => {
                     event.stopPropagation();
                     onStartEditingSession(session.id, sessionView.sessionName);
                   }}
                   title={t('tooltips.editSessionName')}
                 >
-                  <Edit2 className="h-3 w-3 text-gray-600 dark:text-gray-400" />
+                  <Edit2 className="h-3 w-3 text-gray-600 text-gray-400" />
                 </button>
                 {!sessionView.isCursorSession && (
                   <button
-                    className="flex h-6 w-6 items-center justify-center rounded bg-red-50 hover:bg-red-100 dark:bg-red-900/20 dark:hover:bg-red-900/40"
+                    className="flex h-6 w-6 items-center justify-center rounded bg-red-50 hover:bg-red-100 bg-red-900/20 hover:bg-red-900/40"
                     onClick={(event) => {
                       event.stopPropagation();
                       requestDeleteSession();
                     }}
                     title={t('tooltips.deleteSessionOptions', 'Archive or permanently delete this session')}
                   >
-                    <Trash2 className="h-3 w-3 text-red-600 dark:text-red-400" />
+                    <Trash2 className="h-3 w-3 text-red-600 text-red-400" />
                   </button>
                 )}
               </>

@@ -6,6 +6,7 @@ import {
   type ManagedUser, type PermissionsCatalog,
 } from "../../api/client";
 import { useAuth } from "../../App";
+import { errText } from "../../lib/errText";
 
 const STATUS_LABEL: Record<string, string> = {
   pending: "待审批", active: "已启用", suspended: "已停用",
@@ -30,7 +31,7 @@ export default function Users() {
   const load = async () => {
     setLoading(true);
     try { setUsers(await adminListUsers()); setErr(""); }
-    catch (e: any) { setErr(e?.response?.data?.detail || "加载失败"); }
+    catch (e: any) { setErr(errText(e, "加载失败")); }
     finally { setLoading(false); }
   };
 
@@ -52,7 +53,7 @@ export default function Users() {
     const pw = window.prompt(`为 ${u.email} 设置新密码（至少 8 位）`);
     if (!pw) return;
     try { await adminResetUserPassword(u.id, pw); alert("已重置"); }
-    catch (e: any) { alert(e?.response?.data?.detail || "重置失败"); }
+    catch (e: any) { alert(errText(e, "重置失败")); }
   };
   const del = async (u: ManagedUser) => {
     if (!window.confirm(`删除用户 ${u.email}？其数据也将无法访问。`)) return;
@@ -80,7 +81,7 @@ export default function Users() {
       setEditing(null);
       load();
     } catch (e: any) {
-      alert(e?.response?.data?.detail || "保存失败");
+      alert(errText(e, "保存失败"));
     } finally {
       setSaving(false);
     }
@@ -110,24 +111,27 @@ export default function Users() {
         <div className="market-empty"><div className="market-empty-icon">⊙</div><div className="market-empty-title">暂无注册用户</div></div>
       ) : (
         <div className="cat-table-wrap">
-          <table className="cat-table">
+          <table className="cat-table cat-table-cards">
             <thead><tr><th>邮箱</th><th>角色</th><th>状态</th><th>职位 / 已授权板块</th><th>注册时间</th><th>操作</th></tr></thead>
             <tbody>
               {users.map(u => (
+                /* data-label：手机端这张表会被 CSS 折成一张张卡片，列头整行消失，
+                   每格的名字改由 td::before 打出来 —— 没有它，卡片上就是一串
+                   没有标题的值。桌面端 ::before 不渲染，完全不受影响。 */
                 <tr key={u.id}>
-                  <td>{u.email}</td>
-                  <td>{u.role}</td>
-                  <td><span style={{ color: STATUS_COLOR[u.status] }}>{STATUS_LABEL[u.status] || u.status}</span></td>
-                  <td style={{ maxWidth: 280 }}>
+                  <td data-label="邮箱">{u.email}</td>
+                  <td data-label="角色">{u.role}</td>
+                  <td data-label="状态"><span style={{ color: STATUS_COLOR[u.status] }}>{STATUS_LABEL[u.status] || u.status}</span></td>
+                  <td data-label="职位 / 已授权板块" style={{ maxWidth: 280 }}>
                     {u.position && <span style={{ fontWeight: 600, marginRight: 6 }}>{u.position}</span>}
-                    <span style={{ fontSize: 12, color: "var(--t3)" }}>
+                    <span style={{ fontSize: "var(--fs-12)", color: "var(--t3)" }}>
                       {(u.permissions && u.permissions.length)
                         ? u.permissions.map(labelOf).join("、")
                         : "（仅基础板块）"}
                     </span>
                   </td>
-                  <td>{fmt(u.created_at)}</td>
-                  <td style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  <td data-label="注册时间">{fmt(u.created_at)}</td>
+                  <td data-label="操作" style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                     <button className="tbtn tbtn-acc" onClick={() => openEdit(u)}>授权</button>
                     {u.status !== "active" && <button className="tbtn tbtn-acc" onClick={() => setStatus(u, "active")}>启用</button>}
                     {u.status === "active" && <button className="tbtn" onClick={() => setStatus(u, "suspended")}>停用</button>}
@@ -150,11 +154,11 @@ export default function Users() {
             style={{ background: "var(--bg, #fff)", border: "1px solid var(--b, #ddd)", borderRadius: 8, padding: 24, width: 460, maxWidth: "92vw", maxHeight: "86vh", overflow: "auto" }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 4 }}>授权板块</div>
-            <div style={{ fontSize: 12, color: "var(--t3)", marginBottom: 16 }}>{editing.email}</div>
+            <div style={{ fontWeight: 700, fontSize: "var(--fs-15)", marginBottom: 4 }}>授权板块</div>
+            <div style={{ fontSize: "var(--fs-12)", color: "var(--t3)", marginBottom: 16 }}>{editing.email}</div>
 
             <div style={{ marginBottom: 14 }}>
-              <label style={{ fontSize: 12, color: "var(--t2)", display: "block", marginBottom: 6 }}>按职位套用预设</label>
+              <label style={{ fontSize: "var(--fs-12)", color: "var(--t2)", display: "block", marginBottom: 6 }}>按职位套用预设</label>
               <SheetSelect value={editPos} onChange={applyPreset} title="按职位套用预设"
                 style={{ width: "100%", padding: "7px 10px", borderRadius: 4, border: "1px solid var(--b, #ccc)", background: "transparent", color: "inherit" }}
                 options={[
@@ -163,13 +167,13 @@ export default function Users() {
                 ]} />
             </div>
 
-            <div style={{ fontSize: 12, color: "var(--t2)", marginBottom: 8 }}>可访问板块（基础板块默认全员可用，这里只授权更高权限板块）</div>
+            <div style={{ fontSize: "var(--fs-12)", color: "var(--t2)", marginBottom: 8 }}>可访问板块（基础板块默认全员可用，这里只授权更高权限板块）</div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 18 }}>
               {catalog.modules.map((m) => (
-                <label key={m.key} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, cursor: "pointer", padding: "6px 8px", border: "1px solid var(--b, #eee)", borderRadius: 4 }}>
+                <label key={m.key} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "var(--fs-13)", cursor: "pointer", padding: "6px 8px", border: "1px solid var(--b, #eee)", borderRadius: 4 }}>
                   <input type="checkbox" checked={editPerms.includes(m.key)} onChange={() => togglePerm(m.key)} />
                   <span>{m.label}</span>
-                  {m.sensitive && <span title="敏感板块" style={{ fontSize: 10, color: "var(--red, #c0392b)", border: "1px solid currentColor", borderRadius: 3, padding: "0 4px" }}>敏感</span>}
+                  {m.sensitive && <span title="敏感板块" style={{ fontSize: "var(--fs-10)", color: "var(--red, #c0392b)", border: "1px solid currentColor", borderRadius: 3, padding: "0 4px" }}>敏感</span>}
                 </label>
               ))}
             </div>

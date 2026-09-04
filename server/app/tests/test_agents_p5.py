@@ -13,8 +13,8 @@ _ORIGIN = "https://test.example.com"
 
 @pytest.fixture
 def client(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("IVYEA_OPS_SECRET", "test-secret")
-    monkeypatch.setenv("IVYEA_OPS_ALLOWED_ORIGINS", _ORIGIN)
+    monkeypatch.setenv("AWENOPS_SECRET", "test-secret")
+    monkeypatch.setenv("AWENOPS_ALLOWED_ORIGINS", _ORIGIN)
     monkeypatch.setenv("AGENTS_DB_PATH", str(tmp_path / "agents.db"))
     from app.core import config as cfg_mod
     importlib.reload(cfg_mod)

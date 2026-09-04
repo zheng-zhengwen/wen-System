@@ -8,7 +8,7 @@ export const MCP_PROVIDER_NAMES: Record<McpProvider, string> = {
   opencode: 'OpenCode',
   hermes: 'Hermes',
   agy: 'Antigravity',
-  ivyea: 'IvyeaAgent',
+  awen: 'awenAgent',
 };
 
 export const MCP_SUPPORTED_SCOPES: Record<McpProvider, McpScope[]> = {
@@ -19,7 +19,7 @@ export const MCP_SUPPORTED_SCOPES: Record<McpProvider, McpScope[]> = {
   opencode: ['user', 'project'],
   hermes: ['user', 'project', 'local'],
   agy: ['user', 'project'],
-  ivyea: ['user'],
+  awen: ['user'],
 };
 
 export const MCP_SUPPORTED_TRANSPORTS: Record<McpProvider, McpTransport[]> = {
@@ -30,7 +30,7 @@ export const MCP_SUPPORTED_TRANSPORTS: Record<McpProvider, McpTransport[]> = {
   opencode: ['stdio', 'http'],
   hermes: ['stdio', 'http', 'sse'],
   agy: ['stdio', 'http'],
-  ivyea: ['stdio', 'http', 'sse'],
+  awen: ['stdio', 'http', 'sse'],
 };
 
 export const MCP_GLOBAL_SUPPORTED_SCOPES: McpScope[] = ['user', 'project'];
@@ -40,12 +40,12 @@ export const MCP_GLOBAL_SUPPORTED_TRANSPORTS: McpTransport[] = ['stdio', 'http']
 export const MCP_PROVIDER_BUTTON_CLASSES: Record<McpProvider, string> = {
   claude: 'bg-purple-600 text-white hover:bg-purple-700',
   cursor: 'bg-purple-600 text-white hover:bg-purple-700',
-  codex: 'bg-gray-800 text-white hover:bg-gray-900 dark:bg-gray-700 dark:hover:bg-gray-600',
+  codex: 'bg-gray-800 text-white hover:bg-gray-900 bg-gray-700 hover:bg-gray-600',
   gemini: 'bg-blue-600 text-white hover:bg-blue-700',
-  opencode: 'bg-zinc-900 text-white hover:bg-zinc-800 dark:bg-zinc-700 dark:hover:bg-zinc-600',
+  opencode: 'bg-zinc-900 text-white hover:bg-zinc-800 bg-zinc-700 hover:bg-zinc-600',
   hermes: 'bg-teal-600 text-white hover:bg-teal-700',
-  agy: 'bg-zinc-800 text-white hover:bg-zinc-900 dark:bg-zinc-700 dark:hover:bg-zinc-600',
-  ivyea: 'bg-emerald-600 text-white hover:bg-emerald-700',
+  agy: 'bg-zinc-800 text-white hover:bg-zinc-900 bg-zinc-700 hover:bg-zinc-600',
+  awen: 'bg-emerald-600 text-white hover:bg-emerald-700',
 };
 
 export const MCP_SUPPORTS_WORKING_DIRECTORY: Record<McpProvider, boolean> = {
@@ -56,7 +56,7 @@ export const MCP_SUPPORTS_WORKING_DIRECTORY: Record<McpProvider, boolean> = {
   opencode: false,
   hermes: false,
   agy: false,
-  ivyea: false,
+  awen: false,
 };
 
 export const DEFAULT_MCP_FORM: McpFormState = {

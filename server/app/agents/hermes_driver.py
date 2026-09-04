@@ -26,7 +26,6 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
 
 from app.agents.claude_sessions import create_normalized_message
 
@@ -84,7 +83,7 @@ def _hermes_bin() -> str:
         if override and os.path.exists(override):
             return override
     except Exception:
-        pass
+        logger.debug("override = 失败（旁路，已忽略）", exc_info=True)
     search = os.pathsep.join([os.path.expanduser("~/.local/bin"),
                        os.path.expanduser("~/.hermes/node/bin"),
                        os.environ.get("PATH", "")])
@@ -96,7 +95,7 @@ def _proc_env() -> dict:
     extra = [os.path.expanduser("~/.local/bin"), os.path.expanduser("~/.hermes/node/bin")]
     env["PATH"] = os.pathsep.join(extra + [env.get("PATH", "")])
     env.setdefault("HOME", os.path.expanduser("~"))
-    # Inject the API keys IvyeaOps wrote to ~/.hermes/.env into the subprocess env.
+    # Inject the API keys awenops wrote to ~/.hermes/.env into the subprocess env.
     # Hermes may not auto-load that file (especially on Windows), so without this the
     # model configured under 系统配置 has no key and silently fails — while the same
     # model "works" from a CLI terminal where the key is exported in the shell.
@@ -106,7 +105,7 @@ def _proc_env() -> dict:
             if v:
                 env[k] = v
     except Exception:
-        pass
+        logger.debug("env 失败（旁路，已忽略）", exc_info=True)
     return env
 
 
@@ -133,7 +132,7 @@ async def abort_session(session_id: str) -> bool:
             except asyncio.TimeoutError:
                 proc.kill()
     except ProcessLookupError:
-        pass
+        logger.debug("proc.terminate 失败（旁路，已忽略）", exc_info=True)
     except Exception:
         logger.exception("hermes abort failed for %s", session_id)
     _active_sessions.pop(session_id, None)
@@ -202,7 +201,7 @@ async def query_hermes(command: str, options: dict, writer) -> None:
         try:
             proc.kill()
         except Exception:
-            pass
+            logger.debug("proc.kill 失败（旁路，已忽略）", exc_info=True)
         logger.warning("hermes chat timed out after %ss session=%s", _TIMEOUT_S, session_id)
     except Exception as e:
         _active_sessions.pop(session_id, None)

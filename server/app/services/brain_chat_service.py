@@ -4,11 +4,11 @@ from __future__ import annotations
 from app.core.proc import no_window_kwargs
 
 import csv
+import logging
 import io
 import json
 import os
 import re
-import shutil
 import sqlite3
 import subprocess
 import textwrap
@@ -18,15 +18,17 @@ from pathlib import Path
 from typing import Any, AsyncIterator
 
 from app.core.config import settings
-from app.services import gbrain_service as gb
+from app.services import brain_files as bf
 
-DB_PATH = Path(os.environ.get("IVYEA_OPS_BRAIN_CHAT_DB", str(settings.data_dir / "brain_chat.sqlite3")))
+logger = logging.getLogger("awen.services.brain_chat_service")
+
+DB_PATH = Path(os.environ.get("AWENOPS_BRAIN_CHAT_DB", str(settings.data_dir / "brain_chat.sqlite3")))
 MAX_UPLOAD_BYTES = int(os.environ.get("BRAIN_UPLOAD_MAX_BYTES", str(10 * 1024 * 1024)))
 ALLOWED_UPLOAD_EXTS = {".md", ".txt", ".csv", ".json", ".xlsx", ".pdf"}
 ALLOWED_CATEGORIES = {"inbox", "amazon", "products", "market", "ads", "compliance", "suppliers"}
-# CLI runner used when the in-process IvyeaAgent service isn't reachable.
-# 2026-08-06: hermes → ivyea-agent（hermes 不再是本机默认智能体）。
-_RUNNER = "ivyea-agent"
+# CLI runner used when the in-process awenAgent service isn't reachable.
+# 2026-08-06: hermes → awen-agent（hermes 不再是本机默认智能体）。
+_RUNNER = "awen-agent"
 MAX_CHAT_CHARS = 8000
 MAX_INGEST_TEXT_CHARS = int(os.environ.get("BRAIN_INGEST_TEXT_MAX_CHARS", "200000"))
 
@@ -217,9 +219,9 @@ def _safe_ingest_dir(directory: str | None) -> str:
     if not parts:
         return "inbox"
     safe = "/".join(parts[:4])
-    target = (gb.BRAIN_ROOT / safe).resolve()
+    target = (bf.BRAIN_ROOT / safe).resolve()
     try:
-        target.relative_to(gb.BRAIN_ROOT)
+        target.relative_to(bf.BRAIN_ROOT)
     except ValueError:
         return "inbox"
     return safe
@@ -291,7 +293,7 @@ def _extract_json_object(text: str) -> dict[str, Any] | None:
         parsed = json.loads(cleaned)
         return parsed if isinstance(parsed, dict) else None
     except json.JSONDecodeError:
-        pass
+        logger.debug("json.loads 失败（旁路，已忽略）", exc_info=True)
     start = cleaned.find("{")
     end = cleaned.rfind("}")
     if start >= 0 and end > start:
@@ -313,7 +315,7 @@ def _call_runner_json(prompt: str, timeout: int = 90) -> dict[str, Any] | None:
     cmd = _build_runner_cmd(_RUNNER, _runner_bin(), prompt)
     proc = subprocess.run(
         cmd,
-        cwd=str(gb.BRAIN_ROOT),
+        cwd=str(bf.BRAIN_ROOT),
         env=_runner_env(),
         text=True,
         capture_output=True,
@@ -336,7 +338,7 @@ def analyze_pasted_text(text: str) -> dict[str, Any]:
     analysis: dict[str, Any] | None = None
     prompt = textwrap.dedent(
         f"""\
-        你是 IvyeaOps 私有知识库的入库分类器。不要调用任何工具，不要解释，只返回严格 JSON。
+        你是 awenops 私有知识库的入库分类器。不要调用任何工具，不要解释，只返回严格 JSON。
 
         请分析用户粘贴的文本，自动生成：
         - title: 适合做 Markdown 标题的中文短标题，最多 40 字
@@ -535,22 +537,18 @@ def upload_knowledge(filename: str, data: bytes, category: str | None = None, ti
     markdown, warnings = _convert_to_markdown(filename, data, clean_title, cat)
     date_prefix = datetime.now().strftime("%Y-%m-%d")
     if cat == "inbox":
-        parent = gb.BRAIN_ROOT / "inbox"
+        parent = bf.BRAIN_ROOT / "inbox"
     else:
-        parent = gb.BRAIN_ROOT / cat / "uploads"
+        parent = bf.BRAIN_ROOT / cat / "uploads"
     parent.mkdir(parents=True, exist_ok=True)
     target = _unique_path(parent / f"{date_prefix}-{_slugify(clean_title)}.md")
     target.write_text(markdown, encoding="utf-8")
-    rel = str(target.relative_to(gb.BRAIN_ROOT))
+    rel = target.relative_to(bf.BRAIN_ROOT).as_posix()
     import_status = "skipped"
     import_raw = ""
     if import_after_save:
-        try:
-            imp = gb.import_brain()
-            import_status = "ok"
-            import_raw = imp.get("raw", "")
-        except Exception as e:
-            import_status = f"failed: {e}"
+        import_status, import_raw = reindex_after_save()
+        if import_status.startswith("failed"):
             warnings.append("文件已保存，但自动导入失败；可稍后手动重新导入。")
     uid = uuid.uuid4().hex
     with _connect() as conn:
@@ -615,9 +613,9 @@ def ingest_pasted_text(text: str, import_after_save: bool = True) -> dict[str, A
     analysis = analyze_pasted_text(clean)
     directory = _safe_ingest_dir(str(analysis.get("directory") or "inbox"))
     analysis["directory"] = directory
-    parent = (gb.BRAIN_ROOT / directory).resolve()
+    parent = (bf.BRAIN_ROOT / directory).resolve()
     try:
-        parent.relative_to(gb.BRAIN_ROOT)
+        parent.relative_to(bf.BRAIN_ROOT)
     except ValueError as e:
         raise BrainChatError("自动目录不安全，已拒绝保存") from e
     parent.mkdir(parents=True, exist_ok=True)
@@ -625,17 +623,13 @@ def ingest_pasted_text(text: str, import_after_save: bool = True) -> dict[str, A
     target = _unique_path(parent / f"{date_prefix}-{_slugify(str(analysis.get('title') or '粘贴知识'))}.md")
     markdown = _pasted_markdown(clean, analysis)
     target.write_text(markdown, encoding="utf-8")
-    rel = str(target.relative_to(gb.BRAIN_ROOT))
+    rel = target.relative_to(bf.BRAIN_ROOT).as_posix()
     warnings = list(analysis.get("warnings") or [])
     import_status = "skipped"
     import_raw = ""
     if import_after_save:
-        try:
-            imp = gb.import_brain()
-            import_status = "ok"
-            import_raw = imp.get("raw", "")
-        except Exception as e:
-            import_status = f"failed: {e}"
+        import_status, import_raw = reindex_after_save()
+        if import_status.startswith("failed"):
             warnings.append("内容已保存，但自动导入失败；可稍后手动重新导入。")
     uid = uuid.uuid4().hex
     encoded_size = len(clean.encode("utf-8"))
@@ -674,7 +668,7 @@ def list_uploads(limit: int = 50) -> dict[str, Any]:
 
 
 def _runner_bin() -> str:
-    """Absolute path of the CLI runner (2026-08-06: ivyea, was hermes).
+    """Absolute path of the CLI runner (2026-08-06: awen, was hermes).
 
     BRAIN_CHAT_RUNNER_BIN 是新的显式覆盖；旧的 BRAIN_CHAT_HERMES_BIN 不再读取——
     它指向的是 hermes 可执行文件，继续认它会让本函数又跑回 hermes 去。"""
@@ -685,11 +679,11 @@ def _runner_bin() -> str:
     resolved = _find_bin(_RUNNER)
     if resolved:
         return resolved
-    raise BrainChatError("IvyeaAgent CLI 不可用：没有找到 ivyea 可执行文件。")
+    raise BrainChatError("awenAgent CLI 不可用：没有找到 awen 可执行文件。")
 
 
 def _runner_env() -> dict[str, str]:
-    """Child env for the CLI runner. ivyea 读自己的 ~/.ivyea 配置，不需要再注入
+    """Child env for the CLI runner. awen 读自己的 ~/.awen 配置，不需要再注入
     ~/.hermes/.env 的 key，也不需要 HERMES_* 开关（2026-08-06 切换时移除）。"""
     from app.core import integrations
     env = os.environ.copy()
@@ -699,31 +693,97 @@ def _runner_env() -> dict[str, str]:
     return env
 
 
-def ivyea_chat_available() -> bool:
-    """True when the local IvyeaAgent brain can answer knowledge chat turns."""
+def awen_chat_available() -> bool:
+    """True when the local awenAgent brain can answer knowledge chat turns."""
     try:
-        from app.services import ivyea_agent_service as _ia
+        from app.services import awen_agent_service as _ia
         return _ia.chat_available()
     except Exception:  # noqa: BLE001
         return False
 
 
-def chat_model_status() -> dict[str, Any]:
-    # Front door: the governed IvyeaAgent brain (built-in Amazon knowledge base).
-    if ivyea_chat_available():
+def _legacy_category(item: dict[str, Any]) -> str:
+    """从 GBrain 导入的卡片还原它原来的分类。
+
+    这些卡在 agent 里统一是 `category: legacy_gbrain`，原分类藏在
+    `source_url`（`gbrain://amazon/ads/...`）和 `path`
+    （`user/imported/gbrain/amazon/ads/...`）里。不还原的话，按分类过滤引用
+    会把所有历史卡片全滤掉 —— 而那恰恰是 /brain 里内容最多的一批。
+    """
+    src = str(item.get("source_url") or "")
+    if src.startswith("gbrain://"):
+        rest = src[len("gbrain://"):].strip("/")
+        if "/" in rest:
+            return rest.split("/", 1)[0]
+    path = str(item.get("path") or "")
+    marker = "imported/gbrain/"
+    if marker in path:
+        rest = path.split(marker, 1)[1].strip("/")
+        if "/" in rest:
+            return rest.split("/", 1)[0]
+    return str(item.get("category") or "")
+
+
+def reindex_after_save() -> tuple[str, str]:
+    """新文件落盘后重建检索索引，返回 (status, raw)。
+
+    前门是 awenAgent 的 retrieval sync；GBrain 的 `import` 只在 agent 不可用
+    **且** 本机确实装了 GBrain 时才兜底。两个上传入口（文件、粘贴文本）此前各写了
+    一份一模一样的 try/except，都硬绑在 GBrain 上。
+    """
+    if awen_chat_available():
         try:
-            from app.services import ivyea_agent_service as _ia
+            from app.services import awen_agent_service as _ia
+            res = _ia.retrieval_sync()
+            if res.get("ok", True):
+                return "ok", "awen-agent retrieval sync"
+        except Exception as e:  # noqa: BLE001
+            logger.debug("awenAgent retrieval sync 失败：%s", e)
+            return f"failed: {e}", ""
+    # agent 不在线不算失败：文件已经落到 BRAIN_ROOT，等它下次同步会捡到。
+    return "skipped", ""
+
+
+def ia_search(query: str, mode: str = "search", limit: int = 12) -> dict[str, Any]:
+    """awenAgent 知识库检索，产出与旧 GBrain `search()` 同构的结果。
+
+    `/brain` 的搜索、页面、引用三处共用这一个适配器 —— 此前搜索端点自己有一份、
+    对话引用那条路**一份都没有**（直接调 GBrain），于是 agent 明明在线，
+    对话引用还是走外部二进制。
+    """
+    from app.services import awen_agent_service as _ia
+    res = _ia.knowledge_search(query, limit=limit)
+    items: list[dict[str, Any]] = []
+    for r in (res.get("results") or []):
+        items.append({
+            "slug": r.get("id"),
+            "path": r.get("path") or "",
+            "score": r.get("score", 0),
+            "snippet": r.get("snippet") or "",
+            "title": r.get("title") or "",
+            "source_url": r.get("source_url") or "",
+            "marketplaces": r.get("marketplaces") or [],
+            "category": _legacy_category(r),
+        })
+    return {"mode": mode, "query": query, "raw": "", "items": items, "source": "awen-agent"}
+
+
+def chat_model_status() -> dict[str, Any]:
+    # Front door: the governed awenAgent brain (built-in Amazon knowledge base).
+    if awen_chat_available():
+        try:
+            from app.services import awen_agent_service as _ia
             health = _ia.availability().get("health") or {}
-            model = str((health.get("model") or {}).get("label") or "IvyeaAgent")
+            model = str((health.get("model") or {}).get("label") or "awenAgent")
         except Exception:  # noqa: BLE001
-            model = "IvyeaAgent"
+            model = "awenAgent"
         return {
             "configured": True,
-            "provider": "ivyea-agent",
+            "provider": "awen-agent",
             "base_url": "",
             "model": model,
             "hermes_bin": "",
-            "mode": "ivyea-agent",
+            "mode": "awen-agent",
         }
     if hermes_available():
         try:
@@ -732,15 +792,15 @@ def chat_model_status() -> dict[str, Any]:
             runner_bin = ""
         return {
             "configured": True,
-            "provider": "ivyea-agent",
+            "provider": "awen-agent",
             "base_url": "",
-            "model": "IvyeaAgent CLI",
+            "model": "awenAgent CLI",
             # 键名保持 hermes_bin：前端 chat_model_status 的既有契约，改名会断消费方。
             "hermes_bin": runner_bin,
-            "mode": "ivyea-cli",
+            "mode": "awen-cli",
         }
     # No CLI runner — the chat still works via the unified global text chain
-    # (IvyeaAgent / DeepSeek / 全局兜底大模型), the same chain every other panel uses.
+    # (awenAgent / DeepSeek / 全局兜底大模型), the same chain every other panel uses.
     from app.services import ai_synthesis_service as _ai
     if _ai.has_text_provider():
         return {
@@ -759,7 +819,7 @@ def _messages_to_hermes_prompt(messages: list[dict[str, str]]) -> str:
     user = "\n\n".join(m.get("content", "") for m in messages if m.get("role") == "user").strip()
     return textwrap.dedent(
         f"""\
-        你正在作为 IvyeaOps Web 知识库对话的回答引擎。
+        你正在作为 awenops Web 知识库对话的回答引擎。
         重要限制：这不是开发任务，不要执行工具、命令、文件读写、联网搜索或系统操作；只基于下面提供的知识库片段和用户问题生成最终回答。
 
         {system}
@@ -787,7 +847,7 @@ def _runner_chat_text(prompt: str) -> str:
     try:
         proc = subprocess.run(
             cmd,
-            cwd=str(gb.BRAIN_ROOT),
+            cwd=str(bf.BRAIN_ROOT),
             env=_runner_env(),
             text=True,
             capture_output=True,
@@ -819,18 +879,18 @@ def _last_user_text(messages: list[dict[str, str]]) -> str:
 
 
 def _call_llm(messages: list[dict[str, str]]) -> str:
-    # Front door: the governed IvyeaAgent brain grounds the answer in its own
-    # built-in Amazon knowledge base. Degrade to the ivyea CLI / the unified
-    # global text chain when the local IvyeaAgent service is unavailable or empty.
-    if ivyea_chat_available():
+    # Front door: the governed awenAgent brain grounds the answer in its own
+    # built-in Amazon knowledge base. Degrade to the awen CLI / the unified
+    # global text chain when the local awenAgent service is unavailable or empty.
+    if awen_chat_available():
         try:
-            from app.services import ivyea_agent_service as _ia
+            from app.services import awen_agent_service as _ia
             resp = _ia.chat({"message": _last_user_text(messages), "plan_mode": True, "persist": False})
             text = str((resp or {}).get("text") or "").strip()
             if text:
                 return text
         except Exception:  # noqa: BLE001 — degrade to fallbacks below
-            pass
+            logger.debug("_ia.chat 失败（旁路，已忽略）", exc_info=True)
     prompt = _messages_to_hermes_prompt(messages)
     if hermes_available():
         try:
@@ -838,10 +898,10 @@ def _call_llm(messages: list[dict[str, str]]) -> str:
             if out.strip():
                 return out
         except BrainChatError:
-            pass  # fall through to the global chain
+            logger.debug("_runner_chat_text 失败（旁路，已忽略）", exc_info=True)
     answer = _global_answer_sync(prompt)
     if not answer:
-        raise BrainChatError("未能生成回答：请确认 IvyeaAgent 服务在运行，或在「系统配置 → 全局兜底大模型」配置一个文本模型。")
+        raise BrainChatError("未能生成回答：请确认 awenAgent 服务在运行，或在「系统配置 → 全局兜底大模型」配置一个文本模型。")
     return answer
 
 
@@ -870,53 +930,32 @@ def _build_prompt(user_message: str, citations: list[dict[str, Any]], mode: str)
 
 
 def _search_citations(user_message: str, category: str | None = None) -> list[dict[str, Any]]:
-    def add_candidate(value: str, out: list[str]) -> None:
-        v = value.strip()
-        if v and v not in out:
-            out.append(v[: gb.MAX_QUERY_CHARS])
+    """给对话回答配引用，来源是 awenAgent 的治理知识库。
 
-    cleaned = re.sub(r"[？?！!。；;，,：:\n\r\t]+", " ", user_message).strip()
-    candidates: list[str] = []
-    add_candidate(user_message, candidates)
-    add_candidate(cleaned, candidates)
-
-    # GBrain 的 conservative/关键词检索对完整口语句不一定敏感；补充常见运营短语兜底。
-    phrase_hints = [
-        "广告优化", "广告", "优先级", "投放", "关键词", "否词", "Listing", "A+", "CTR", "CVR",
-        "trail camera", "4G", "WiFi", "售后", "合规", "评价", "站外引流", "供应商", "1688",
-    ]
-    lower_msg = user_message.lower()
-    for phrase in phrase_hints:
-        if phrase.lower() in lower_msg:
-            add_candidate(phrase, candidates)
-
-    # 对英文/数字词保留空格组合，便于 ASIN、SKU、品牌、产品线命中。
-    ascii_terms = re.findall(r"[A-Za-z0-9][A-Za-z0-9_-]{1,}", user_message)
-    if ascii_terms:
-        add_candidate(" ".join(ascii_terms[:8]), candidates)
-
+    以前这里有一整套候选词轮询（把问题拆成原句 / 去标点句 / "广告优化""否词" 这类
+    预设短语 / ASCII 词组合，逐个去查、命中就停）。那是在**替一个弱关键词检索器
+    补词** —— GBrain 只做关键词匹配，对完整口语句不敏感。换成 agent 的语义 + 词法
+    双路召回之后，一次查询就够，那套脚手架连同 GBrain 一起摘掉了。
+    """
+    if not awen_chat_available():
+        return []
     scope = (category or "").strip().lower()
+    try:
+        hits = ia_search(user_message, "search", limit=12).get("items") or []
+    except Exception as e:  # noqa: BLE001
+        # 引用拿不到不该让整轮对话失败：回答本身来自 agent，它内部有自己的检索。
+        logger.debug("知识库引用检索失败（旁路，已忽略）：%s", e)
+        return []
+
     seen: set[str] = set()
     citations: list[dict[str, Any]] = []
-    last_error: Exception | None = None
-    for query in candidates[:8]:
-        try:
-            search_result = gb.search(query, "search")
-        except Exception as e:
-            last_error = e
+    for item in hits:
+        if scope and str(item.get("category") or "").strip().lower() != scope:
             continue
-        for item in search_result.get("items", [])[:8]:
-            # Scope retrieval to a single knowledge category when requested.
-            if scope and str(item.get("category") or "").strip().lower() != scope:
-                continue
-            key = str(item.get("slug") or item.get("path") or item.get("snippet") or "")
-            if key and key not in seen:
-                seen.add(key)
-                citations.append(item)
-        if citations:
-            break
-    if not citations and last_error:
-        return [{"slug": "gbrain-search", "score": 0, "snippet": f"检索失败：{last_error}"}]
+        key = str(item.get("slug") or item.get("path") or item.get("snippet") or "")
+        if key and key not in seen:
+            seen.add(key)
+            citations.append(item)
     return citations[:8]
 
 
@@ -943,7 +982,7 @@ def send_message(session_id: str, content: str) -> dict[str, Any]:
 
 # ── Streaming chat (SSE) ────────────────────────────────────────────────────
 # 2026-08-06：hermes venv 的 token 流 wrapper（brain_stream_wrapper.py）已停用，
-# 流式回答统一走 stream_spec() 里的 `ivyea chat -p`。
+# 流式回答统一走 stream_spec() 里的 `awen chat -p`。
 
 
 def _row_to_message(row: sqlite3.Row) -> dict[str, Any]:
@@ -964,7 +1003,7 @@ def begin_chat_turn(session_id: str, content: str, regenerate: bool = False, cat
     Returns {user_message, prompt, citations, question}.
 
     When ``retrieve`` is False the legacy GBrain citation search and the hermes
-    prompt are skipped: the raw question is handed to the IvyeaAgent brain, which
+    prompt are skipped: the raw question is handed to the awenAgent brain, which
     grounds the answer in its own governed Amazon knowledge base."""
     init_db()
     current = get_session(session_id)["session"]
@@ -1034,23 +1073,23 @@ def _has_runner_cli() -> bool:
 
 
 def stream_spec(prompt: str) -> dict[str, Any]:
-    """Subprocess spec for a CLI-runner answer (2026-08-06: ivyea-agent).
+    """Subprocess spec for a CLI-runner answer (2026-08-06: awen-agent).
 
-    刻意不走 _build_runner_cmd —— 它会给新版 ivyea 加 --output-format stream-json，
+    刻意不走 _build_runner_cmd —— 它会给新版 awen 加 --output-format stream-json，
     而这里的 stdout 是直接当作回答正文流给 SSE 的，NDJSON 会糊到用户脸上。
-    所以这里显式拼 `ivyea chat -p <prompt>` + 审批档，拿纯文本。"""
-    from app.services.runners import _ivyea_permission_args
+    所以这里显式拼 `awen chat -p <prompt>` + 审批档，拿纯文本。"""
+    from app.services.runners import _awen_permission_args
     binary = _runner_bin()
     return {
-        "argv": [binary, "chat", "-p", prompt, *_ivyea_permission_args(binary)],
+        "argv": [binary, "chat", "-p", prompt, *_awen_permission_args(binary)],
         "stdin": b"",
         "env": _runner_env(),
-        "cwd": str(gb.BRAIN_ROOT),
+        "cwd": str(bf.BRAIN_ROOT),
     }
 
 
 def hermes_available() -> bool:
-    """True when GBrain chat can answer via the CLI runner (ivyea-agent).
+    """True when GBrain chat can answer via the CLI runner (awen-agent).
 
     名字保留是为了不动 routers/brain.py 的既有调用；语义已是「CLI 兜底可用吗」。
     False 时 SSE 路由改用统一全局文本链，知识库对话照样能用。"""

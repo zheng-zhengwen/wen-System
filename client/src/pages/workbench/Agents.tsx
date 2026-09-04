@@ -7,7 +7,7 @@
 import { useEffect, useRef, Component, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import AgentsApp from '../../agents/App';
-import { applyIvyeaOpsTheme } from '../../agents/utils/ivyeaOpsTheme';
+import { applyawenopsTheme } from '../../agents/utils/awenOpsTheme';
 import '../../agents/index.css';
 
 class CcuiBoundary extends Component<{ children: ReactNode }, { err: Error | null }> {
@@ -17,7 +17,7 @@ class CcuiBoundary extends Component<{ children: ReactNode }, { err: Error | nul
   render() {
     if (this.state.err) {
       return (
-        <pre style={{ padding: 16, margin: 0, color: '#ff9090', whiteSpace: 'pre-wrap', fontSize: 12, lineHeight: 1.5, overflow: 'auto', height: '100%', fontFamily: 'monospace' }}>
+        <pre style={{ padding: 16, margin: 0, color: '#ff9090', whiteSpace: 'pre-wrap', fontSize: "var(--fs-12)", lineHeight: 1.5, overflow: 'auto', height: '100%', fontFamily: 'monospace' }}>
           {'Agents 渲染错误:\n\n' + this.state.err.message + '\n\n' + (this.state.err.stack || '')}
         </pre>
       );
@@ -47,17 +47,12 @@ export default function Agents() {
     appHostRef.current = appHost;
     portalHostRef.current = portalHost;
 
-    // 主题:初始注入 ops 当前主题,并监听 ops 主题切换 —— 注入到 #agents-root 容器
+    // The product has one light theme; copy its computed tokens into the
+    // isolated Agent subtree.
     const syncTheme = () => {
-      const theme = localStorage.getItem('ivyea-ops.theme') || 'dark';
-      applyIvyeaOpsTheme(theme, host);
+      applyawenopsTheme('lucent-light', host);
     };
     syncTheme();
-    const onThemeChange = (e: Event) => {
-      const t = (e as CustomEvent<string>).detail;
-      applyIvyeaOpsTheme(typeof t === 'string' ? t : (localStorage.getItem('ivyea-ops.theme') || 'dark'), host);
-    };
-    window.addEventListener('ivyea-ops:theme-changed', onThemeChange);
 
     if (!rootRef.current) {
       rootRef.current = createRoot(appHost);
@@ -68,7 +63,6 @@ export default function Agents() {
       </CcuiBoundary>,
     );
     return () => {
-      window.removeEventListener('ivyea-ops:theme-changed', onThemeChange);
       const r = rootRef.current;
       rootRef.current = null;
       r?.unmount();

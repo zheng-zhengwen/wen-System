@@ -169,8 +169,8 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
             )}
 
             {errorMessage && (
-              <div className="mt-6 rounded-lg border border-red-300 bg-red-100 p-4 dark:border-red-800 dark:bg-red-900/20">
-                <p className="text-sm text-red-700 dark:text-red-400">{errorMessage}</p>
+              <div className="mt-6 rounded-lg border border-red-300 bg-red-100 p-4 border-red-800 bg-red-900/20">
+                <p className="text-sm text-red-700 text-red-400">{errorMessage}</p>
               </div>
             )}
 

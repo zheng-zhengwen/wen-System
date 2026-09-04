@@ -17,6 +17,7 @@ import { grantClaudeToolPermission } from '../utils/chatPermissions';
 import { safeLocalStorage } from '../utils/chatStorage';
 import type {
   ChatMessage,
+  FollowUpItem,
   PendingPermissionRequest,
   PermissionMode,
 } from '../types/types';
@@ -31,6 +32,8 @@ type PendingViewSession = {
 };
 
 interface UseChatComposerStateArgs {
+  /** 还没被这一轮读到的追加指令（状态在 ChatInterface 那一层，两边都要碰）。 */
+  setFollowUpQueue: Dispatch<SetStateAction<FollowUpItem[]>>;
   selectedProject: Project | null;
   selectedSession: ProjectSession | null;
   currentSessionId: string | null;
@@ -44,7 +47,7 @@ interface UseChatComposerStateArgs {
   opencodeModel: string;
   hermesModel?: string;
   agyModel?: string;
-  ivyeaModel?: string;
+  awenModel?: string;
   isLoading: boolean;
   canAbortSession: boolean;
   tokenBudget: Record<string, unknown> | null;
@@ -178,7 +181,7 @@ export function useChatComposerState({
   opencodeModel,
   hermesModel,
   agyModel,
-  ivyeaModel,
+  awenModel,
   isLoading,
   canAbortSession,
   tokenBudget,
@@ -192,6 +195,7 @@ export function useChatComposerState({
   pendingViewSessionRef,
   scrollToBottom,
   addMessage,
+  setFollowUpQueue,
   setIsLoading,
   setCanAbortSession,
   setClaudeStatus,
@@ -345,8 +349,8 @@ export function useChatComposerState({
           model = hermesModel || '';
         } else if (provider === 'agy') {
           model = agyModel || '';
-        } else if (provider === 'ivyea') {
-          model = ivyeaModel || 'default';
+        } else if (provider === 'awen') {
+          model = awenModel || 'default';
         } else {
           model = cursorModel;
         }
@@ -534,13 +538,57 @@ export function useChatComposerState({
     noKeyboard: true,
   });
 
+  /**
+   * 轮次跑着的时候用户又说的话。
+   *
+   * 能真插就真插（claude 的 stdin 本来就开着；awen 走 --input-format 那条控制通道），
+   * 插不进去就排队，本轮一结束自动发出去。**说出去的话必须有着落** —— 含糊的反馈
+   * 比不能发更糟：用户会以为已经说过了。
+   */
+  const followUp = useCallback((text: string) => {
+    const body = text.trim();
+    if (!body) return;
+    const sid = currentSessionId || selectedSession?.id || '';
+    const id = `fu_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    setFollowUpQueue((prev) => [...prev, { id, text: body, state: sid ? 'sending' : 'queued' }]);
+    if (!sid) return;                       // 会话还没建起来：只能当下一轮发
+    sendMessage({ type: 'agent-inject', provider, sessionId: sid, text: body });
+  }, [currentSessionId, selectedSession?.id, provider, sendMessage, setFollowUpQueue]);
+
+  /**
+   * 程序化地发一句话（补发上一轮没被读到的追加指令时用）。
+   *
+   * 走的是**同一个 handleSubmit**，不是另写一条发送路径 —— 图片、@ 引用、斜杠命令、
+   * 各 provider 的 payload 差异全在那一份里，另写一条就是早晚要分叉的第二套逻辑。
+   */
+  const submitText = useCallback((text: string) => {
+    const body = (text || '').trim();
+    if (!body) return;
+    setInput(body);
+    inputValueRef.current = body;
+    setTimeout(() => handleSubmitRef.current?.(createFakeSubmitEvent()), 0);
+  }, []);
+
   const handleSubmit = useCallback(
     async (
       event: FormEvent<HTMLFormElement> | MouseEvent | TouchEvent | KeyboardEvent<HTMLTextAreaElement>,
     ) => {
       event.preventDefault();
       const currentInput = inputValueRef.current;
-      if (!currentInput.trim() || isLoading || !selectedProject) {
+      if (!currentInput.trim() || !selectedProject) {
+        return;
+      }
+      if (isLoading) {
+        // **跑着的时候按发送 = 追加给这一轮**，不是什么都不做。
+        // 此前这里直接 return，而按钮又画成了方块 —— 看着像停止、点了没反应，
+        // 想补一句只能干等到收尾或者掐掉重说。
+        followUp(currentInput.trim());
+        setInput('');
+        inputValueRef.current = '';
+        setIsTextareaExpanded(false);
+        if (textareaRef.current) {
+          textareaRef.current.style.height = 'auto';
+        }
         return;
       }
 
@@ -756,10 +804,10 @@ export function useChatComposerState({
             sessionSummary,
           },
         });
-      } else if (provider === 'ivyea') {
-        // ivyea chat -p --output-format stream-json：每轮单进程 + --resume 续接原生会话。
+      } else if (provider === 'awen') {
+        // awen chat -p --output-format stream-json：每轮单进程 + --resume 续接原生会话。
         sendMessage({
-          type: 'ivyea-command',
+          type: 'awen-command',
           command: messageContent,
           sessionId: effectiveSessionId,
           options: {
@@ -850,11 +898,11 @@ export function useChatComposerState({
     // Deep-analysis handoff: a one-shot prompt parked by the market-research
     // "深入分析" panel (see AppContent) takes precedence over the per-project
     // draft so the report lands in the composer once a working dir is chosen.
-    const pendingHandoff = safeLocalStorage.getItem('ivyea-ops-agent-initial-input');
+    const pendingHandoff = safeLocalStorage.getItem('awenops-agent-initial-input');
     if (pendingHandoff) {
-      safeLocalStorage.removeItem('ivyea-ops-agent-initial-input');
-      const docRaw = safeLocalStorage.getItem('ivyea-ops-agent-handoff-doc');
-      safeLocalStorage.removeItem('ivyea-ops-agent-handoff-doc');
+      safeLocalStorage.removeItem('awenops-agent-initial-input');
+      const docRaw = safeLocalStorage.getItem('awenops-agent-handoff-doc');
+      safeLocalStorage.removeItem('awenops-agent-handoff-doc');
 
       const applyInput = (text: string) => {
         safeLocalStorage.setItem(`draft_input_${selectedProjectId}`, text);
@@ -1147,6 +1195,8 @@ export function useChatComposerState({
     isDragActive,
     openImagePicker: open,
     handleSubmit,
+    submitText,
+    followUp,
     handleInputChange,
     handleKeyDown,
     handlePaste,

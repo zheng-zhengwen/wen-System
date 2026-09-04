@@ -1,4 +1,4 @@
-# IvyeaOps hidden Windows launcher.
+# awenops hidden Windows launcher.
 # Starts the FastAPI backend in the background, writes logs/PID, then opens the browser.
 
 Set-StrictMode -Version Latest
@@ -8,14 +8,14 @@ $RepoRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $ServerDir = Join-Path $RepoRoot "server"
 $DataDir = Join-Path $RepoRoot "data"
 $LogsDir = Join-Path $RepoRoot "logs"
-$PidFile = Join-Path $DataDir "ivyeaops.pid"
-$OutLog = Join-Path $LogsDir "ivyeaops.out.log"
-$ErrLog = Join-Path $LogsDir "ivyeaops.err.log"
-$ServerExe = Join-Path $RepoRoot "IvyeaOpsServer.exe"
+$PidFile = Join-Path $DataDir "awenops.pid"
+$OutLog = Join-Path $LogsDir "awenops.out.log"
+$ErrLog = Join-Path $LogsDir "awenops.err.log"
+$ServerExe = Join-Path $RepoRoot "awenopsServer.exe"
 $VenvPy = Join-Path $ServerDir ".venv\Scripts\python.exe"
 $Url = "http://127.0.0.1:8001"
 
-function Test-IvyeaOpsRunning {
+function Test-awenopsRunning {
     try {
         $r = Invoke-WebRequest "$Url/api/health" -TimeoutSec 2 -UseBasicParsing
         return ($r.StatusCode -eq 200)
@@ -24,15 +24,15 @@ function Test-IvyeaOpsRunning {
     }
 }
 
-function Open-IvyeaOps {
+function Open-awenops {
     Start-Process $Url | Out-Null
 }
 
 if (-not (Test-Path $ServerExe) -and -not (Test-Path $VenvPy)) {
     Add-Type -AssemblyName System.Windows.Forms
     [System.Windows.Forms.MessageBox]::Show(
-        "IvyeaOps 尚未安装完成。请先双击『安装 IvyeaOps.bat』，或下载 Windows x64 免 Python 版。",
-        "IvyeaOps",
+        "awenops 尚未安装完成。请先双击『安装 awenops.bat』，或下载 Windows x64 免 Python 版。",
+        "awenops",
         [System.Windows.Forms.MessageBoxButtons]::OK,
         [System.Windows.Forms.MessageBoxIcon]::Error
     ) | Out-Null
@@ -41,8 +41,8 @@ if (-not (Test-Path $ServerExe) -and -not (Test-Path $VenvPy)) {
 
 New-Item -ItemType Directory -Force -Path $DataDir, $LogsDir | Out-Null
 
-if (Test-IvyeaOpsRunning) {
-    Open-IvyeaOps
+if (Test-awenopsRunning) {
+    Open-awenops
     exit 0
 }
 
@@ -59,10 +59,10 @@ if (Test-Path $PidFile) {
 
 # Start hidden: no console window stays in the taskbar. Logs are written to logs\.
 if (Test-Path $ServerExe) {
-    $oldOpenBrowser = $env:IVYEA_OPS_SERVER_OPEN_BROWSER
-    $oldControlWindow = $env:IVYEA_OPS_CONTROL_WINDOW
-    $env:IVYEA_OPS_SERVER_OPEN_BROWSER = "0"
-    $env:IVYEA_OPS_CONTROL_WINDOW = "0"
+    $oldOpenBrowser = $env:AWENOPS_SERVER_OPEN_BROWSER
+    $oldControlWindow = $env:AWENOPS_CONTROL_WINDOW
+    $env:AWENOPS_SERVER_OPEN_BROWSER = "0"
+    $env:AWENOPS_CONTROL_WINDOW = "0"
     try {
         $proc = Start-Process `
             -FilePath $ServerExe `
@@ -73,14 +73,14 @@ if (Test-Path $ServerExe) {
             -PassThru
     } finally {
         if ($null -eq $oldOpenBrowser) {
-            Remove-Item Env:\IVYEA_OPS_SERVER_OPEN_BROWSER -ErrorAction SilentlyContinue
+            Remove-Item Env:\AWENOPS_SERVER_OPEN_BROWSER -ErrorAction SilentlyContinue
         } else {
-            $env:IVYEA_OPS_SERVER_OPEN_BROWSER = $oldOpenBrowser
+            $env:AWENOPS_SERVER_OPEN_BROWSER = $oldOpenBrowser
         }
         if ($null -eq $oldControlWindow) {
-            Remove-Item Env:\IVYEA_OPS_CONTROL_WINDOW -ErrorAction SilentlyContinue
+            Remove-Item Env:\AWENOPS_CONTROL_WINDOW -ErrorAction SilentlyContinue
         } else {
-            $env:IVYEA_OPS_CONTROL_WINDOW = $oldControlWindow
+            $env:AWENOPS_CONTROL_WINDOW = $oldControlWindow
         }
     }
 } else {
@@ -99,8 +99,8 @@ Set-Content -Path $PidFile -Value $proc.Id -Encoding ascii
 # Wait briefly for startup; open the browser as soon as health is ready.
 for ($i = 0; $i -lt 20; $i++) {
     Start-Sleep -Milliseconds 500
-    if (Test-IvyeaOpsRunning) {
-        Open-IvyeaOps
+    if (Test-awenopsRunning) {
+        Open-awenops
         exit 0
     }
     if ($proc.HasExited) { break }
@@ -109,14 +109,14 @@ for ($i = 0; $i -lt 20; $i++) {
 # If health did not answer yet but the process is still alive, open the page anyway;
 # the browser will load once uvicorn finishes booting.
 if (-not $proc.HasExited) {
-    Open-IvyeaOps
+    Open-awenops
     exit 0
 }
 
 Add-Type -AssemblyName System.Windows.Forms
 [System.Windows.Forms.MessageBox]::Show(
-    "IvyeaOps 启动失败，请查看 logs\ivyeaops.err.log。",
-    "IvyeaOps",
+    "awenops 启动失败，请查看 logs\awenops.err.log。",
+    "awenops",
     [System.Windows.Forms.MessageBoxButtons]::OK,
     [System.Windows.Forms.MessageBoxIcon]::Error
 ) | Out-Null

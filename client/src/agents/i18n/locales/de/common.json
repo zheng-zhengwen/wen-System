@@ -56,8 +56,6 @@
   "common": {
     "language": "Sprache",
     "theme": "Design",
-    "darkMode": "Darkmode",
-    "lightMode": "Hellmodus",
     "name": "Name",
     "description": "Beschreibung",
     "enabled": "Aktiviert",

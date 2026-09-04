@@ -1,5 +1,5 @@
 import { createContext, lazy, useContext, useEffect, useState } from "react";
-import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import MainLayout from "./layouts/MainLayout";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ConfirmProvider } from "./components/ConfirmDialog";
@@ -16,6 +16,7 @@ const Tools = lazy(() => import("./pages/workbench/Tools"));
 const SkillStudio = lazy(() => import("./pages/skill/SkillStudio"));
 const StatsOverview = lazy(() => import("./pages/skill/StatsOverview"));
 const SkillBrowse = lazy(() => import("./pages/skill/SkillBrowse"));
+const SkillMarket = lazy(() => import("./pages/skill/SkillMarket"));
 const TrashList = lazy(() => import("./pages/skill/TrashList"));
 const SettingsPage = lazy(() => import("./pages/skill/SettingsPage"));
 const Terminal = lazy(() => import("./pages/workbench/Terminal"));
@@ -29,14 +30,16 @@ const Playbook = lazy(() => import("./pages/workbench/Playbook"));
 const HubSettings = lazy(() => import("./pages/workbench/HubSettings"));
 const FreightQuote = lazy(() => import("./pages/workbench/FreightQuote"));
 const Users = lazy(() => import("./pages/workbench/Users"));
-const Assistant = lazy(() => import("./pages/workbench/Assistant"));
-const ImageGen = lazy(() => import("./pages/workbench/ImageGen"));
 const ImageTranslate = lazy(() => import("./pages/workbench/ImageTranslate"));
 const IdeaSkill = lazy(() => import("./pages/workbench/IdeaSkill"));
 const SkillTools = lazy(() => import("./pages/workbench/SkillTools"));
-const SkillHub = lazy(() => import("./pages/workbench/SkillHub"));
 const DeepAnalysis = lazy(() => import("./pages/workbench/DeepAnalysis"));
-const LingXing = lazy(() => import("./pages/workbench/LingXing"));
+const LingXingRedirect = lazy(() => import("./pages/workbench/LingXingRedirect"));
+const Console = lazy(() => import("./pages/workbench/Console"));
+const Capabilities = lazy(() => import("./pages/workbench/Capabilities"));
+const Approvals = lazy(() => import("./pages/workbench/Approvals"));
+const Schedules = lazy(() => import("./pages/workbench/Schedules"));
+import { landingPath } from "./lib/navRegistry";
 import { me } from "./api/client";
 import { getSetupStatus, type SetupChecks } from "./api/setup";
 
@@ -112,6 +115,23 @@ function RequireAuth({ children }: { children: JSX.Element }) {
   );
 }
 
+
+/**
+ * `/skill-hub` → 能力市场的「技能」标签。
+ *
+ * 老的三个标签（tools / create / manage）平移成新的分段（run / create / manage），
+ * `?tool=` 深链原样带过去 —— 那是「运行」里定位到某个具体工具用的。
+ */
+function SkillHubRedirect() {
+  const { search } = useLocation();
+  const from = new URLSearchParams(search);
+  const seg = { tools: "run", create: "create", manage: "manage" }[from.get("tab") || ""] || "run";
+  const to = new URLSearchParams({ tab: "skills", seg });
+  const tool = from.get("tool");
+  if (tool) to.set("tool", tool);
+  return <Navigate to={`/capabilities?${to}`} replace />;
+}
+
 export default function App() {
   return (
     <BrowserRouter>
@@ -127,11 +147,24 @@ export default function App() {
               </RequireAuth>
             }
           >
-            <Route index element={<Home />} />
+            {/* "/" 只做落地分流：新外壳去任务台，经典外壳照旧进运营驾驶舱。
+                驾驶舱本身搬到 /dashboard，两套外壳都能稳定链过去，老书签落到
+                "/" 也还是会被送到该去的地方。 */}
+            <Route index element={<Navigate to={landingPath()} replace />} />
+            <Route path="console" element={<Console />} />
+            <Route path="capabilities" element={<Capabilities />} />
+            <Route path="approvals" element={<Approvals />} />
+            {/* 社区市场已并入「能力市场」的第一个 tab。这条老路径保留，
+                指过去即可 —— 已经发出去的链接不该 404。 */}
+            <Route path="community-market"
+                   element={<Navigate to="/capabilities?tab=community" replace />} />
+            <Route path="schedules" element={<Schedules />} />
+            <Route path="dashboard" element={<Home />} />
             <Route path="tools" element={<Tools />} />
             <Route path="skill" element={<SkillStudio />}>
               <Route index element={<StatsOverview />} />
               <Route path="browse" element={<SkillBrowse />} />
+              <Route path="market" element={<SkillMarket />} />
               <Route path="trash" element={<TrashList />} />
               <Route path="settings" element={<SettingsPage />} />
             </Route>
@@ -145,14 +178,23 @@ export default function App() {
             <Route path="market" element={<Market />} />
             <Route path="playbook" element={<Playbook />} />
             <Route path="users" element={<Users />} />
-            <Route path="assistant" element={<Assistant />} />
-            <Route path="imagegen" element={<ImageGen />} />
+            {/* AI 问答 / AI 生图已并入任务台：问答就是任务台不带工具的那一档，
+                作图由任务台的 image_generate 工具直接调同一条链路。老书签和老会话
+                链接不能 404，一律接回任务台。 */}
+            <Route path="assistant" element={<Navigate to="/console" replace />} />
+            <Route path="imagegen" element={<Navigate to="/console" replace />} />
             <Route path="image-translate" element={<ImageTranslate />} />
             <Route path="idea-skill" element={<IdeaSkill />} />
             <Route path="skill-tools" element={<SkillTools />} />
-            <Route path="skill-hub" element={<SkillHub />} />
+            {/* Skill 中心已并入能力市场：同一批技能以前被列了三遍（这一页只读卡片、
+                Skill 中心的运行列表、Skill 中心的文件管理），还分在两个板块里。
+                老书签和老深链都不能 404 —— ?tab=create 要平移成 ?tab=skills&seg=create。 */}
+            <Route path="skill-hub" element={<SkillHubRedirect />} />
             <Route path="deep-analysis" element={<DeepAnalysis />} />
-            <Route path="lingxing" element={<LingXing />} />
+            {/* 领星 ERP 已并入运营驾驶舱（市场侧 5 个 tab + 自家店铺 4 个 tab，
+                数据浏览/审计/配置进了齿轮对话框）。老书签带着 ?tab= 进来，要按
+                映射表落到对应的位置 —— 直接 Navigate 会把 query 丢掉。 */}
+            <Route path="lingxing" element={<LingXingRedirect />} />
             <Route path="hub-settings" element={<HubSettings />} />
             <Route path="*" element={<NotFound />} />
           </Route>

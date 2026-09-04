@@ -1,17 +1,16 @@
-# IvyeaOps optional component installer (Windows / PowerShell 5.1+)
+# awenops optional component installer (Windows / PowerShell 5.1+)
 #
 # Components:
-#   all         - IvyeaAgent runtime (default)
-#   ivyea-agent - IvyeaAgent runtime (Agent + knowledge base + retrieval)
-#   legacy      - old Hermes + GBrain compatibility chain
+#   all         - awenAgent runtime (default)
+#   awen-agent - awenAgent runtime (Agent + knowledge base + retrieval)
+#   legacy      - old Hermes compatibility chain
 #   hermes      - official Hermes Agent installer
-#   gbrain      - Bun + GBrain CLI + ~/brain initialization
-#   ollama      - Ollama + nomic-embed-text for old GBrain embeddings
+#   ollama      - Ollama + nomic-embed-text (local models)
 #   codex       - Node.js + OpenAI Codex CLI
 #   claude      - Node.js + Claude Code CLI
 
 param(
-    [ValidateSet("all", "ivyea-agent", "legacy", "hermes", "gbrain", "ollama", "codex", "claude", "status")]
+    [ValidateSet("all", "awen-agent", "legacy", "hermes", "ollama", "codex", "claude", "status")]
     [string]$Component = "all"
 )
 
@@ -20,8 +19,8 @@ $ErrorActionPreference = "Stop"
 $ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot = Split-Path -Parent $ScriptRoot
 
-function Write-Info($msg) { Write-Host "[IvyeaOps] $msg" -ForegroundColor Green }
-function Write-Warn($msg) { Write-Host "[IvyeaOps] WARN: $msg" -ForegroundColor Yellow }
+function Write-Info($msg) { Write-Host "[awenops] $msg" -ForegroundColor Green }
+function Write-Warn($msg) { Write-Host "[awenops] WARN: $msg" -ForegroundColor Yellow }
 function Test-Cmd($name) { return [bool](Get-Command $name -ErrorAction SilentlyContinue) }
 function Refresh-Path {
     $machine = [Environment]::GetEnvironmentVariable("Path", "Machine")
@@ -30,7 +29,7 @@ function Refresh-Path {
         "$env:USERPROFILE\.bun\bin",
         "$env:USERPROFILE\.hermes\bin",
         "$env:USERPROFILE\.hermes\node\bin",
-        "$env:USERPROFILE\.ivyeaops\node",
+        "$env:USERPROFILE\.awenops\node",
         "$RepoRoot\server\.venv\Scripts",
         "$env:LOCALAPPDATA\Programs\Ollama",
         "$env:USERPROFILE\.local\bin"
@@ -41,25 +40,23 @@ function Refresh-Path {
 function Show-Status {
     Refresh-Path
     $hermes = Get-Command hermes -ErrorAction SilentlyContinue
-    $ivyea = Get-Command ivyea -ErrorAction SilentlyContinue
+    $awen = Get-Command awen -ErrorAction SilentlyContinue
     $bun = Get-Command bun -ErrorAction SilentlyContinue
-    $gbrain = Get-Command gbrain -ErrorAction SilentlyContinue
     $node = Get-Command node -ErrorAction SilentlyContinue
     $npm = Get-Command npm -ErrorAction SilentlyContinue
     $ollama = Get-Command ollama -ErrorAction SilentlyContinue
     $codex = Get-Command codex -ErrorAction SilentlyContinue
     $claude = Get-Command claude -ErrorAction SilentlyContinue
-    Write-Host "IvyeaAgent: $(if ($ivyea) { $ivyea.Source } else { 'not installed' })"
+    Write-Host "awenAgent: $(if ($awen) { $awen.Source } else { 'not installed' })"
     Write-Host "Hermes: $(if ($hermes) { $hermes.Source } else { 'not installed' })"
     Write-Host "Bun:    $(if ($bun) { $bun.Source } else { 'not installed' })"
-    Write-Host "GBrain: $(if ($gbrain) { $gbrain.Source } else { 'not installed' })"
     Write-Host "Node:   $(if ($node) { $node.Source } else { 'not installed' })"
     Write-Host "npm:    $(if ($npm) { $npm.Source } else { 'not installed' })"
     Write-Host "Ollama: $(if ($ollama) { $ollama.Source } else { 'not installed' })"
     Write-Host "Codex:  $(if ($codex) { $codex.Source } else { 'not installed' })"
     Write-Host "Claude: $(if ($claude) { $claude.Source } else { 'not installed' })"
     Write-Host "Brain:  $env:USERPROFILE\brain"
-    Write-Host "Ivyea:  $env:USERPROFILE\.ivyea\knowledge"
+    Write-Host "awen:  $env:USERPROFILE\.awen\knowledge"
 }
 
 function Add-UserPath($dir) {
@@ -92,7 +89,7 @@ function Install-UserNode {
     if (-not $zipName) { throw "Could not find a Windows $arch Node.js LTS zip from nodejs.org." }
 
     $tmp = Join-Path $env:TEMP $zipName
-    $targetRoot = "$env:USERPROFILE\.ivyeaops"
+    $targetRoot = "$env:USERPROFILE\.awenops"
     $nodeDir = Join-Path $targetRoot "node"
     $extractDir = Join-Path $targetRoot "node-extract"
     if (Test-Path $extractDir) { Remove-Item -Recurse -Force $extractDir }
@@ -107,7 +104,7 @@ function Install-UserNode {
     Remove-Item -Recurse -Force $extractDir
     Add-UserPath $nodeDir
 
-    if (-not (Test-Cmd "npm")) { throw "Node.js was extracted, but npm is still not found. Restart IvyeaOps and retry." }
+    if (-not (Test-Cmd "npm")) { throw "Node.js was extracted, but npm is still not found. Restart awenops and retry." }
     Write-Info "Node.js installed: $((Get-Command node).Source)"
 }
 
@@ -126,74 +123,91 @@ function Install-NpmPackage($commandName, $packageName) {
     if ($LASTEXITCODE -ne 0) { throw "npm install -g $packageName failed." }
     Refresh-Path
     if (-not (Test-Cmd $commandName)) {
-        Write-Warn "$commandName was installed, but the command is not visible in this session. Restart IvyeaOps or recheck."
+        Write-Warn "$commandName was installed, but the command is not visible in this session. Restart awenops or recheck."
     } else {
         Write-Info "$commandName installed: $((Get-Command $commandName).Source)"
     }
 }
 
-function Install-IvyeaAgent {
+function Install-awenAgent {
     Refresh-Path
-    # Windows x64 免-Python package: IvyeaAgent is bundled INTO IvyeaOpsServer.exe —
-    # nothing to install, IvyeaOps starts it from the exe. Skip entirely.
-    if (Test-Path (Join-Path $RepoRoot "IvyeaOpsServer.exe")) {
-        Write-Info "IvyeaAgent is bundled into IvyeaOpsServer.exe — no separate install needed."
+    # Windows x64 免-Python package: awenAgent is bundled INTO awenopsServer.exe —
+    # nothing to install, awenops starts it from the exe. Skip entirely.
+    if (Test-Path (Join-Path $RepoRoot "awenopsServer.exe")) {
+        Write-Info "awenAgent is bundled into awenopsServer.exe — no separate install needed."
         return
     }
-    if (Test-Cmd "ivyea") {
-        Write-Info "IvyeaAgent already installed: $((Get-Command ivyea).Source)"
+    if (Test-Cmd "awen") {
+        Write-Info "awenAgent already installed: $((Get-Command awen).Source)"
     } else {
         $VenvPy = Join-Path $RepoRoot "server\.venv\Scripts\python.exe"
         if (-not (Test-Path $VenvPy)) {
             $python = Get-Command python -ErrorAction SilentlyContinue
             if (-not $python) { $python = Get-Command py -ErrorAction SilentlyContinue }
             if (-not $python) { throw "Python not found. Run scripts\install.ps1 first or install Python 3.9+." }
-            Write-Info "Creating server virtualenv for IvyeaAgent..."
+            Write-Info "Creating server virtualenv for awenAgent..."
             & $python.Source -m venv (Join-Path $RepoRoot "server\.venv")
         }
         if (-not (Test-Path $VenvPy)) { throw "server virtualenv was not created: $VenvPy" }
 
-        $IvyeaAgentSource = $env:IVYEA_AGENT_LOCAL
+        $awenAgentSource = $env:AWEN_AGENT_LOCAL
         # Agent source shipped inside the prebuilt bundle → install OFFLINE.
         $BundledAgent = Join-Path $RepoRoot "agent"
-        if ([string]::IsNullOrWhiteSpace($IvyeaAgentSource) -and (Test-Path (Join-Path $BundledAgent "pyproject.toml"))) {
-            $IvyeaAgentSource = $BundledAgent
+        if ([string]::IsNullOrWhiteSpace($awenAgentSource) -and (Test-Path (Join-Path $BundledAgent "pyproject.toml"))) {
+            $awenAgentSource = $BundledAgent
         }
-        $SiblingAgent = Join-Path (Split-Path -Parent $RepoRoot) "ivyea-agent"
-        if ([string]::IsNullOrWhiteSpace($IvyeaAgentSource) -and (Test-Path $SiblingAgent)) {
-            $IvyeaAgentSource = (Resolve-Path $SiblingAgent).Path
+        $SiblingAgent = Join-Path (Split-Path -Parent $RepoRoot) "awen-agent"
+        if ([string]::IsNullOrWhiteSpace($awenAgentSource) -and (Test-Path $SiblingAgent)) {
+            $awenAgentSource = (Resolve-Path $SiblingAgent).Path
         }
-        if (-not [string]::IsNullOrWhiteSpace($IvyeaAgentSource) -and (Test-Path $IvyeaAgentSource)) {
-            Write-Info "Installing IvyeaAgent from local source: $IvyeaAgentSource"
-            & $VenvPy -m pip install -e $IvyeaAgentSource
+        if (-not [string]::IsNullOrWhiteSpace($awenAgentSource) -and (Test-Path $awenAgentSource)) {
+            Write-Info "Installing awenAgent from local source: $awenAgentSource"
+            & $VenvPy -m pip install -e $awenAgentSource
         } else {
-            $IvyeaAgentRepo = if ($env:IVYEA_AGENT_REPO) { $env:IVYEA_AGENT_REPO } else { "https://github.com/Hector-xue/ivyea-agent.git" }
-            $IvyeaAgentRef = if ($env:IVYEA_AGENT_REF) { $env:IVYEA_AGENT_REF } else { "main" }
-            Write-Info "Installing IvyeaAgent from Git: $IvyeaAgentRepo@$IvyeaAgentRef"
-            & $VenvPy -m pip install "git+$IvyeaAgentRepo@$IvyeaAgentRef"
+            $awenAgentRepo = if ($env:AWEN_AGENT_REPO) { $env:AWEN_AGENT_REPO } else { "https://github.com/Hector-xue/awen-agent.git" }
+            # Default to the latest *release tag*, not main: installing main ships
+            # unreleased code and disagrees with the "update available" prompt,
+            # which compares against the release tag. Falling back to main is
+            # allowed here (a fresh install shouldn't be blocked by a flaky
+            # network) but must be said out loud, never silently.
+            $awenAgentRef = $env:AWEN_AGENT_REF
+            if ([string]::IsNullOrWhiteSpace($awenAgentRef)) {
+                try {
+                    $rel = Invoke-RestMethod -TimeoutSec 8 -Headers @{ "User-Agent" = "awenops" } `
+                        -Uri "https://api.github.com/repos/Hector-xue/awen-agent/releases/latest"
+                    $awenAgentRef = $rel.tag_name
+                } catch { $awenAgentRef = $null }
+            }
+            if ([string]::IsNullOrWhiteSpace($awenAgentRef)) {
+                $awenAgentRef = "main"
+                Write-Warn "Could not resolve the latest awenAgent release; falling back to main (UNRELEASED code)."
+                Write-Warn "Once the network is back, reinstall a release: `$env:AWEN_AGENT_REF='vX.Y.Z'"
+            }
+            Write-Info "Installing awenAgent from Git: $awenAgentRepo@$awenAgentRef"
+            & $VenvPy -m pip install "git+$awenAgentRepo@$awenAgentRef"
         }
-        if ($LASTEXITCODE -ne 0) { throw "IvyeaAgent pip install failed." }
+        if ($LASTEXITCODE -ne 0) { throw "awenAgent pip install failed." }
         Refresh-Path
     }
 
     $UserHome = if ($env:USERPROFILE) { $env:USERPROFILE } else { [Environment]::GetFolderPath("UserProfile") }
-    $IvyeaHome = Join-Path $UserHome ".ivyea"
-    New-Item -ItemType Directory -Force -Path (Join-Path $IvyeaHome "knowledge") | Out-Null
-    New-Item -ItemType Directory -Force -Path (Join-Path $IvyeaHome "models") | Out-Null
+    $awenHome = Join-Path $UserHome ".awen"
+    New-Item -ItemType Directory -Force -Path (Join-Path $awenHome "knowledge") | Out-Null
+    New-Item -ItemType Directory -Force -Path (Join-Path $awenHome "models") | Out-Null
 
-    $ivyea = Get-Command ivyea -ErrorAction SilentlyContinue
-    if (-not $ivyea) {
-        $fallback = Join-Path $RepoRoot "server\.venv\Scripts\ivyea.exe"
-        if (Test-Path $fallback) { $ivyea = [pscustomobject]@{ Source = $fallback } }
+    $awen = Get-Command awen -ErrorAction SilentlyContinue
+    if (-not $awen) {
+        $fallback = Join-Path $RepoRoot "server\.venv\Scripts\awen.exe"
+        if (Test-Path $fallback) { $awen = [pscustomobject]@{ Source = $fallback } }
     }
-    if (-not $ivyea) { throw "ivyea command not found after installation." }
-    try { & $ivyea.Source self doctor | Out-Host } catch { Write-Warn "IvyeaAgent doctor reported warnings: $_" }
-    try { & $ivyea.Source retrieval sync --json | Out-Null } catch {}
-    try { & $ivyea.Source self service-start --host 127.0.0.1 --port 8765 | Out-Host } catch {
-        Write-Warn "IvyeaAgent service did not start now; IvyeaOps will retry automatically when opened."
+    if (-not $awen) { throw "awen command not found after installation." }
+    try { & $awen.Source self doctor | Out-Host } catch { Write-Warn "awenAgent doctor reported warnings: $_" }
+    try { & $awen.Source retrieval sync --json | Out-Null } catch {}
+    try { & $awen.Source self service-start --host 127.0.0.1 --port 8765 | Out-Host } catch {
+        Write-Warn "awenAgent service did not start now; awenops will retry automatically when opened."
     }
-    Write-Info "IvyeaAgent ready: $($ivyea.Source)"
-    Write-Info "Knowledge root: $IvyeaHome\knowledge"
+    Write-Info "awenAgent ready: $($awen.Source)"
+    Write-Info "Knowledge root: $awenHome\knowledge"
 }
 
 function Install-Hermes {
@@ -208,89 +222,8 @@ function Install-Hermes {
     if (Test-Cmd "hermes") {
         Write-Info "Hermes installed: $((Get-Command hermes).Source)"
     } else {
-        Write-Warn "Hermes installer ran, but hermes is not visible in this session. Restart IvyeaOps or recheck."
+        Write-Warn "Hermes installer ran, but hermes is not visible in this session. Restart awenops or recheck."
     }
-}
-
-function Install-GBrain {
-    Refresh-Path
-    if (-not (Test-Cmd "bun")) {
-        Write-Info "Installing Bun for GBrain..."
-        Invoke-Expression (Invoke-RestMethod "https://bun.sh/install.ps1")
-        $env:Path = "$env:USERPROFILE\.bun\bin;" + $env:Path
-        Refresh-Path
-    } else {
-        Write-Info "Bun already installed: $((Get-Command bun).Source)"
-    }
-
-    $bun = Get-Command bun -ErrorAction SilentlyContinue
-    if (-not $bun) {
-        $fallback = "$env:USERPROFILE\.bun\bin\bun.exe"
-        if (Test-Path $fallback) { $bun = [pscustomobject]@{ Source = $fallback } }
-    }
-    if (-not $bun) { throw "bun not found. Cannot install GBrain." }
-
-    Write-Info "Installing/updating GBrain (clean reinstall to the pinned version)..."
-    # Pin to a known-good commit. Upstream HEAD (v0.35+) changed the config schema
-    # to require database_url and broke `init --pglite`, so an unpinned install made
-    # the knowledge-base board error "No database URL: database_url is missing from
-    # config". v0.33.2.0 keeps the local PGLite (database_path) flow.
-    $GbrainRef = "github:garrytan/gbrain#1a6b543cc536cb8c379ce30518390a38e6d2ee57"
-    # Clean any prior (possibly v0.35 or half-installed) global gbrain so the pinned
-    # commit installs fresh. These are best-effort: with $ErrorActionPreference='Stop'
-    # a native command writing to stderr (e.g. `bun remove` when nothing is installed:
-    # "package.json is empty {}") throws a terminating error and aborts the whole
-    # install — which is exactly why repair kept failing. Force EA=Continue + try/catch
-    # so cleanup can never abort the install.
-    $prevEAP = $ErrorActionPreference
-    $ErrorActionPreference = "Continue"
-    try { & $bun.Source remove -g gbrain *>$null } catch {}
-    try { & $bun.Source pm cache rm *>$null } catch {}
-    # Nuke a leftover corrupt package dir — an aborted earlier install can leave a
-    # gbrain folder without src/cli.ts → runtime "Module not found .../src/cli.ts".
-    $gbPkg = "$env:USERPROFILE\.bun\install\global\node_modules\gbrain"
-    if (Test-Path $gbPkg) { try { Remove-Item -Recurse -Force $gbPkg *>$null } catch {} }
-    $ErrorActionPreference = $prevEAP
-    & $bun.Source install -g $GbrainRef
-    if ($LASTEXITCODE -ne 0) { throw "bun install -g $GbrainRef failed." }
-    Refresh-Path
-
-    # IMPORTANT: do NOT use the bun-generated gbrain.exe shim — on Windows it errors
-    # "The system cannot find the path specified" (it's a symlink-to-.ts trick that
-    # only works on POSIX). gbrain's entry is a TypeScript file; run it directly with
-    # `bun run <cli.ts>`, which works cross-platform (verified). The "Blocked 1
-    # postinstall" warning is just pglite's DB migration — not needed for init.
-    $gbrainCli = "$env:USERPROFILE\.bun\install\global\node_modules\gbrain\src\cli.ts"
-    if (-not (Test-Path $gbrainCli)) { throw "gbrain entry not found after install: $gbrainCli" }
-
-    $brain = "$env:USERPROFILE\brain"
-    if (-not (Test-Path $brain)) { New-Item -ItemType Directory -Path $brain | Out-Null }
-    # Initialise the local PGLite database. Do NOT silence this: a failed init leaves
-    # ~/.gbrain/config.json without a database, and the board then errors
-    # "No database URL". Capture output and verify the result.
-    Write-Info "Initializing GBrain local knowledge base (PGLite)..."
-    Push-Location $brain
-    # init --pglite creates the DB successfully, but a post-init advisory step
-    # (gbrain looks for GStack / shells out to a tool that doesn't exist on
-    # Windows) writes "The system cannot find the path specified" to stderr and
-    # exits non-zero. With $ErrorActionPreference='Stop' that aborts the whole
-    # installer BEFORE the success check below — even though the brain is ready.
-    # Run it under EA=Continue + try/catch so the DB-created check decides success.
-    $prevEAP = $ErrorActionPreference
-    $ErrorActionPreference = "Continue"
-    try { $gbInit = & $bun.Source run $gbrainCli init --pglite 2>&1 | Out-String } catch { $gbInit = "$_" }
-    $ErrorActionPreference = $prevEAP
-    Pop-Location
-    $gbCfg = "$env:USERPROFILE\.gbrain\config.json"
-    if ((Test-Path $gbCfg) -and ((Get-Content $gbCfg -Raw) -match '"database_path"')) {
-        Write-Info "GBrain database ready: $gbCfg"
-    } else {
-        Write-Warn "GBrain init did not complete — the board will error 'No database URL'."
-        Write-Warn "gbrain init output:`n$gbInit"
-        Write-Warn "Retry: cd `"$brain`"; & `"$($bun.Source)`" run `"$gbrainCli`" init --pglite"
-    }
-    Write-Info "GBrain installed (entry): $gbrainCli"
-    Write-Info "Brain root: $brain"
 }
 
 function Get-OllamaCommand {
@@ -303,38 +236,6 @@ function Get-OllamaCommand {
         return $fallback
     }
     return $null
-}
-
-function Set-GBrainOllamaEmbedding {
-    $dir = "$env:USERPROFILE\.gbrain"
-    $file = Join-Path $dir "config.json"
-    if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
-
-    $cfg = @{}
-    if (Test-Path $file) {
-        try {
-            $raw = Get-Content $file -Raw
-            if ($raw.Trim()) {
-                $obj = $raw | ConvertFrom-Json
-                foreach ($p in $obj.PSObject.Properties) { $cfg[$p.Name] = $p.Value }
-            }
-        } catch {
-            Write-Warn "Could not parse existing GBrain config; rewriting embedding fields only."
-        }
-    }
-    $cfg["embedding_model"] = "ollama:nomic-embed-text"
-    $cfg["embedding_dimensions"] = 768
-    ($cfg | ConvertTo-Json -Depth 10) | Set-Content -Path $file -Encoding UTF8
-
-    $gbrain = Get-Command gbrain -ErrorAction SilentlyContinue
-    if (-not $gbrain) {
-        $fallback = "$env:USERPROFILE\.bun\bin\gbrain.exe"
-        if (Test-Path $fallback) { $gbrain = [pscustomobject]@{ Source = $fallback } }
-    }
-    if ($gbrain) {
-        try { & $gbrain.Source config set embedding_model "ollama:nomic-embed-text" | Out-Host } catch {}
-    }
-    Write-Info "GBrain embedding configured: ollama:nomic-embed-text"
 }
 
 function Install-Ollama {
@@ -369,15 +270,13 @@ function Install-Ollama {
     & $ollamaPath pull nomic-embed-text
     if ($LASTEXITCODE -ne 0) { throw "ollama pull nomic-embed-text failed." }
 
-    Set-GBrainOllamaEmbedding
     Write-Info "Ollama ready: $ollamaPath"
 }
 
 if ($Component -eq "status") { Show-Status; exit 0 }
-if ($Component -eq "all" -or $Component -eq "ivyea-agent") { Install-IvyeaAgent }
-if ($Component -eq "legacy") { Install-Hermes; Install-GBrain }
+if ($Component -eq "all" -or $Component -eq "awen-agent") { Install-awenAgent }
+if ($Component -eq "legacy") { Install-Hermes }
 if ($Component -eq "hermes") { Install-Hermes }
-if ($Component -eq "gbrain") { Install-GBrain }
 if ($Component -eq "ollama") { Install-Ollama }
 if ($Component -eq "codex") { Install-NpmPackage "codex" "@openai/codex" }
 if ($Component -eq "claude") { Install-NpmPackage "claude" "@anthropic-ai/claude-code" }

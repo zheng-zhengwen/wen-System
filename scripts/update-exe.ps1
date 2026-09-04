@@ -1,14 +1,14 @@
-﻿# IvyeaOps Windows x64 one-click updater.
+# awenops Windows x64 one-click updater.
 #
 # Safe update for GitHub Release ZIP installs:
 #   1. stop the background server
-#   2. download the latest IvyeaOps-Windows-x64.zip
+#   2. download the latest awenops-Windows-x64.zip
 #   3. copy new program files over the current folder
 #   4. keep user data/config: data\, logs\, server\.env
-#   5. restart IvyeaOpsServer.exe
+#   5. restart awenopsServer.exe
 
 param(
-    [string]$DownloadUrl = "https://github.com/Hector-xue/IvyeaOps/releases/latest/download/IvyeaOps-Windows-x64.zip",
+    [string]$DownloadUrl = "https://github.com/zheng-zhengwen/wen-System/releases/latest/download/awenops-Windows-x64.zip",
     # Pre-downloaded bundle (the in-app updater downloads with live progress and
     # hands the file here) -- skips the Invoke-WebRequest step entirely.
     [string]$ZipPath = "",
@@ -35,17 +35,17 @@ try {
     Start-Transcript -Path (Join-Path $LogDir "update.log") -Append -Force | Out-Null
 } catch {}
 
-function Write-Info($msg) { Write-Host "[IvyeaOps] $msg" -ForegroundColor Green }
-function Write-Warn($msg) { Write-Host "[IvyeaOps] WARN: $msg" -ForegroundColor Yellow }
+function Write-Info($msg) { Write-Host "[awenops] $msg" -ForegroundColor Green }
+function Write-Warn($msg) { Write-Host "[awenops] WARN: $msg" -ForegroundColor Yellow }
 function Write-Fail($msg) {
-    Write-Host "[IvyeaOps] ERROR: $msg" -ForegroundColor Red
-    if (-not $NonInteractive -and $env:IVYEAOPS_NONINTERACTIVE -ne "1") {
+    Write-Host "[awenops] ERROR: $msg" -ForegroundColor Red
+    if (-not $NonInteractive -and $env:AWENOPS_NONINTERACTIVE -ne "1") {
         Read-Host "Press Enter to exit"
     }
     exit 1
 }
 
-function Stop-IvyeaOps {
+function Stop-awenops {
     $StopScript = Join-Path $RepoRoot "scripts\stop-hidden.ps1"
     if (Test-Path $StopScript) {
         & powershell -NoProfile -ExecutionPolicy Bypass -File $StopScript
@@ -58,19 +58,19 @@ function Stop-IvyeaOps {
 }
 
 function Find-PackageRoot($ExtractDir) {
-    $directExe = Join-Path $ExtractDir "IvyeaOpsServer.exe"
+    $directExe = Join-Path $ExtractDir "awenopsServer.exe"
     if (Test-Path $directExe) { return $ExtractDir }
 
     $dirs = Get-ChildItem $ExtractDir -Directory
     foreach ($d in $dirs) {
-        if (Test-Path (Join-Path $d.FullName "IvyeaOpsServer.exe")) { return $d.FullName }
+        if (Test-Path (Join-Path $d.FullName "awenopsServer.exe")) { return $d.FullName }
     }
     return $null
 }
 
 Write-Host ""
 Write-Host "=======================================================" -ForegroundColor Green
-Write-Host "  IvyeaOps Windows x64 updater" -ForegroundColor Green
+Write-Host "  awenops Windows x64 updater" -ForegroundColor Green
 Write-Host "=======================================================" -ForegroundColor Green
 Write-Host ""
 Write-Host "  Keeps:   data\, logs\, server\.env"
@@ -81,8 +81,8 @@ $EnvFile = Join-Path $RepoRoot "server\.env"
 $DataDir = Join-Path $RepoRoot "data"
 if (-not (Test-Path $DataDir)) { New-Item -ItemType Directory -Force -Path $DataDir | Out-Null }
 
-$TempRoot = Join-Path $env:TEMP ("IvyeaOpsUpdate-" + [Guid]::NewGuid().ToString("N"))
-$ZipPath = Join-Path $TempRoot "IvyeaOps-Windows-x64.zip"
+$TempRoot = Join-Path $env:TEMP ("awenopsUpdate-" + [Guid]::NewGuid().ToString("N"))
+$ZipPath = Join-Path $TempRoot "awenops-Windows-x64.zip"
 $ExtractDir = Join-Path $TempRoot "extract"
 $EnvBackup = Join-Path $TempRoot "server.env.backup"
 
@@ -91,28 +91,28 @@ try {
     if (Test-Path $EnvFile) { Copy-Item $EnvFile $EnvBackup -Force }
 
     Write-Info "Stopping background service..."
-    Stop-IvyeaOps
+    Stop-awenops
 
-    # Wait for the old server to FULLY exit AND release IvyeaOpsServer.exe. Two
-    # process types must die: the main one (port 8001) AND `IvyeaOpsServer.exe
+    # Wait for the old server to FULLY exit AND release awenopsServer.exe. Two
+    # process types must die: the main one (port 8001) AND `awenopsServer.exe
     # agent-serve` (:8765). The agent-serve does NOT hold port 8001 and does NOT
     # lock the main exe -- it only locks _internal\*.pyd. If we broke out as soon as
     # "port free + main exe unlocked", we'd exit BEFORE killing agent-serve, leaving
     # it alive to lock a DLL -> robocopy fails (error 32) -> update fails and the
-    # user has to kill it by hand. So each iteration force-kills ALL IvyeaOpsServer
+    # user has to kill it by hand. So each iteration force-kills ALL awenopsServer
     # processes by image name FIRST (taskkill /F /IM, WITHOUT /T -- /T would tree-kill
     # this updater script itself), THEN checks the exit condition, which also
-    # requires zero remaining IvyeaOpsServer processes. NEVER abort on a leftover
+    # requires zero remaining awenopsServer processes. NEVER abort on a leftover
     # (that abort was the v1.1.79 regression: it killed the backend without
     # restarting -> "waiting for restart timed out"). After 15s we copy+restart
     # regardless, exactly like the proven v1.1.78 flow.
-    $ServerExePath = Join-Path $RepoRoot "IvyeaOpsServer.exe"
+    $ServerExePath = Join-Path $RepoRoot "awenopsServer.exe"
     for ($i = 0; $i -lt 30; $i++) {
-        try { & taskkill /F /IM IvyeaOpsServer.exe 2>$null | Out-Null } catch {}
+        try { & taskkill /F /IM awenopsServer.exe 2>$null | Out-Null } catch {}
         $portBusy = $null
         try { $portBusy = Get-NetTCPConnection -LocalPort 8001 -State Listen -ErrorAction SilentlyContinue } catch {}
         $procLeft = $null
-        try { $procLeft = Get-Process -Name IvyeaOpsServer -ErrorAction SilentlyContinue } catch {}
+        try { $procLeft = Get-Process -Name awenopsServer -ErrorAction SilentlyContinue } catch {}
         $locked = $false
         if (Test-Path $ServerExePath) {
             try { $fs = [System.IO.File]::Open($ServerExePath, 'Open', 'ReadWrite', 'None'); $fs.Close() }
@@ -137,7 +137,7 @@ try {
     # DLLs at launch. Best-effort -- never let it abort the update.
     try { Get-ChildItem $ExtractDir -Recurse -File | Unblock-File -ErrorAction SilentlyContinue } catch {}
     $PackageRoot = Find-PackageRoot $ExtractDir
-    if (-not $PackageRoot) { Write-Fail "Invalid update package: IvyeaOpsServer.exe not found." }
+    if (-not $PackageRoot) { Write-Fail "Invalid update package: awenopsServer.exe not found." }
 
     Write-Info "Copying program files while keeping data and config..."
     $robocopyArgs = @(
@@ -161,10 +161,10 @@ try {
         Copy-Item $EnvBackup $EnvFile -Force
     }
 
-    $ServerExe = Join-Path $RepoRoot "IvyeaOpsServer.exe"
-    if (-not (Test-Path $ServerExe)) { Write-Fail "IvyeaOpsServer.exe not found after update." }
+    $ServerExe = Join-Path $RepoRoot "awenopsServer.exe"
+    if (-not (Test-Path $ServerExe)) { Write-Fail "awenopsServer.exe not found after update." }
 
-    Write-Info "Starting IvyeaOps..."
+    Write-Info "Starting awenops..."
     Start-Process -FilePath $ServerExe -WorkingDirectory $RepoRoot | Out-Null
     Write-Host ""
     Write-Info "Update complete. Data and config were preserved."

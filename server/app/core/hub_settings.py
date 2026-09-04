@@ -6,7 +6,6 @@ Empty stored values fall back to the corresponding env var.
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 from typing import Any, Dict
 
@@ -20,8 +19,8 @@ _DEFAULTS: Dict[str, Any] = {
     # AI digest etc. Tried in order. 'assistant' = the global fallback text
     # model (the AI 问答 slot, assistant_*). New installs do not depend on
     # Hermes/GBrain; CLI agents are optional enhancement paths.
-    # Valid values: ivyea-agent, assistant, deepseek, codex, claude, hermes
-    "text_ai_providers": "ivyea-agent,assistant,deepseek,codex,claude",
+    # Valid values: awen-agent, assistant, deepseek, codex, claude, hermes
+    "text_ai_providers": "awen-agent,assistant,deepseek,codex,claude",
     "deepseek_api_key": "",     # dedicated DeepSeek key (only used when 'deepseek' in text_ai_providers)
     # Comma-separated vision-AI fallback chain (for skills that accept file/image inputs).
     # Tried in order; first provider with a configured key wins.
@@ -54,40 +53,48 @@ _DEFAULTS: Dict[str, Any] = {
     "vision_base_url": "",
     "assistant_api_key": "",
     "assistant_base_url": "",
-    # IvyeaAgent local service — primary embedded agent/runtime. New installs
+    # awenAgent local service — primary embedded agent/runtime. New installs
     # should not need to edit these; they are here so self-hosted deployments can
     # point Ops at a different local/remote agent service if needed.
-    "ivyea_agent_url": "http://127.0.0.1:8765",
-    "ivyea_agent_token": "",
-    "ivyea_agent_auto_start": True,
-    "ivyea_agent_provider": "",
-    "ivyea_agent_model": "",
-    "ivyea_agent_api_key": "",
-    "ivyea_agent_base_url": "",
+    "awen_agent_url": "http://127.0.0.1:8765",
+    "awen_agent_token": "",
+    "awen_agent_auto_start": True,
+    "awen_agent_provider": "",
+    "awen_agent_model": "",
+    "awen_agent_api_key": "",
+    "awen_agent_base_url": "",
     # AI 生图（默认 Apimart gpt-image-2）— leave empty to use apimart_key.
     "image_model": "",            # default gpt-image-2
     "image_api_key": "",          # empty = reuse apimart_key
     "image_base_url": "",         # empty = reuse apimart_base
-    # GBrain 语义检索 embedding — provider key written to ~/.hermes/.env,
-    # model/provider pushed via `gbrain config set`. Empty = keyword search only.
-    "gbrain_embed_provider": "",  # openai | zhipu | dashscope | minimax | voyage | ollama
-    "gbrain_embed_model": "",
-    "gbrain_embed_api_key": "",
+    # 语义检索的 embedding 配置曾经在这里（gbrain_embed_*），已随 GBrain 一起移除：
+    # 知识库前门是 awenAgent，它的检索后端由 agent 自己管（awen retrieval embeddings），
+    # 这三个键写的是 ~/.gbrain/config.json，配了对 agent 一点作用都没有——纯误导。
     # Market data
     "sorftime_key": "",      # sorftime.com — 市场调研、关键词趋势
     "sif_key": "",           # sif.com — 深度分析工具箱（独立账号和 key）
     "sellersprite_key": "",  # sellersprite.com — 竞品关键词分析
-    # Listing Generator — imgflow backend
-    "imgflow_url": "http://127.0.0.1:3001",
-    # GBrain knowledge base
-    "gbrain_bin": "",           # empty = use env / auto-detect
+    # 知识库文件根目录（笔记/上传落盘位置，与 GBrain 无关，前门是 awenAgent）
     "brain_root": "",           # empty = use env / default /root/brain
-    "openai_api_key": "",       # for GBrain embeddings
-    # Feishu notifications
+    "openai_api_key": "",       # 视觉识别（AI 图片分析）用的 OpenAI key
+    # 通知渠道（见 services/notify）。notify_webhook 留空则退回 alert_webhook，
+    # 老部署不用重配。notify_events 存 JSON 数组，留空用 notify.DEFAULT_EVENTS。
+    "notify_webhook": "",
+    "notify_events": "",
+    # AI 花费预算（美元/月）。0 = 不设预算。超了发一次通知，见 services/budget。
+    "ai_budget_monthly_usd": 0,
+    "ai_budget_alerted_month": "",
+    # 飞书 / Lark：**一处填写，两处落地**。
+    # 这一组既喂 awenops 自己的服务器告警（scripts/cpu_alert.py），
+    # 也在保存时下推给 awenAgent，供店铺巡检卡片 / 审批回调 / 飞书对话使用
+    # （见 services/awen_agent_service.sync_feishu_settings）。
+    # 键名保留 alert_ 前缀是为了不动存量安装的配置文件和环境变量。
     "alert_webhook": "",
     "alert_app_id": "",
     "alert_app_secret": "",
     "alert_chat_id": "",
+    # feishu = open.feishu.cn（国内）；lark = open.larksuite.com（国际）
+    "alert_feishu_domain": "feishu",
     # CPU alert thresholds
     "alert_threshold": 80,
     "alert_sustain": 5,
@@ -95,17 +102,31 @@ _DEFAULTS: Dict[str, Any] = {
     # Embedded service URLs (frontend iframes)
     "dashboard_url": "",
     "terminal_url": "",
-    # Account — stores new password hash set via UI (overrides IVYEA_OPS_PASSWORD_HASH)
+    # Account — stores new password hash set via UI (overrides AWENOPS_PASSWORD_HASH)
     "password_hash": "",
     # First-run setup wizard completion flag.
     # False/absent = wizard has not been completed; True = skip wizard on next login.
+    # 能力市场（门道社区的 Skill 来源）。**默认关闭**：这是个会往外发请求的功能，
+    # 而这个产品的卖点是"数据不出本机"。默认开会让用户在不知情的情况下产生外联 ——
+    # 哪怕请求完全匿名，这个信任成本也不该由我们替他付。
+    "skill_market_enabled": False,
+    # 可换源：用户能指向自建镜像。签名校验保证换源之后依然安全。
+    "skill_market_url": "",
+    # 门道社区的市场公钥（校验安装包签名）。
+    # 校验和只能证明"没传坏"，签名才能证明"是那边发布的那份" —— 这正是
+    # 用户把市场换成自建镜像之后，安全性依然成立的前提。
+    "skill_market_pubkey": "R3li0pMksP_Ls5lmu5kH86L_PvhH6NMhParfS8lGCXE=",
+    # 允许安装含可执行脚本的 B 类技能。**默认关，但它是个真开关，不是死路。**
+    # 关着的时候也不是"只能看"：安装包随时可以下载下来自己审、自己放进技能库。
+    # 打开之后每次安装仍要逐条确认脚本清单 —— 开关只降低摩擦，不替用户判断。
+    "skill_market_allow_class_b": False,
     "setup_done": False,
     # Auto bug-fix: when a feature/tool operation fails, offer to launch an AI
     # repair flow (hermes in an isolated worktree, review-first). Off by default
     # — when off the frontend interceptor and backend engine never fire.
     "autofix_enabled": False,
     # --- 领星 (LingXing) ERP -----------------------------------------------
-    # All LingXing traffic funnels through the IvyeaOps gateway; agents never
+    # All LingXing traffic funnels through the awenops gateway; agents never
     # see these credentials. Two backends: OpenAPI (data + ad-write) and the
     # optional MCP (AI-native tools for the analysis agent).
     # OpenAPI backbone (data reads + ad-write operations). Credentials from
@@ -118,7 +139,15 @@ _DEFAULTS: Dict[str, Any] = {
     # MCP backbone (optional — AI-native tools for the analysis agent once an
     # X-Mcp-Key is generated in 领星后台).
     "lingxing_mcp_key": "",
-    "lingxing_mcp_url": "http://openmcp.lingxing.com/mcp-servers/lingxing-mcp",
+    # 必须 https：http 会 302 到 https，而 httpx 默认不跟随重定向（见 lingxing_service._url）
+    "lingxing_mcp_url": "https://openmcp.lingxing.com/mcp-servers/lingxing-mcp",
+    # Optional SSH egress shared by both LingXing backends.  All blank = retain
+    # the normal direct/system-proxy route.  host_key is a TOFU SHA256 pin.
+    "lingxing_ssh_host": "",
+    "lingxing_ssh_user": "",
+    "lingxing_ssh_password": "",
+    "lingxing_ssh_port": 22,
+    "lingxing_ssh_host_key": "",
     # Master enable for the whole integration (panels + automation). Off = the
     # gateway refuses every call. Default off.
     "lingxing_enabled": False,
@@ -138,11 +167,11 @@ _DEFAULTS: Dict[str, Any] = {
     # Heterogeneous triple review: provider per persona (data-rigour / devil's-
     # advocate / business-balance). Missing provider falls back to the default
     # embedded text chain.
-    "lingxing_review_providers": "ivyea-agent,deepseek,assistant",
+    "lingxing_review_providers": "awen-agent,deepseek,assistant",
     # Model for the weekly advisory analysis (自动化建议). Same provider space as
-    # review (ivyea-agent/deepseek/assistant/hermes/claude/codex/custom:<id>);
+    # review (awen-agent/deepseek/assistant/hermes/claude/codex/custom:<id>);
     # empty/unavailable falls back to the default embedded text chain.
-    "lingxing_analysis_provider": "ivyea-agent",
+    "lingxing_analysis_provider": "awen-agent",
     # Custom review/analysis model slots: JSON list of
     # {"id","label","base_url","api_key","model"} (OpenAI-compatible). Reference
     # in lingxing_review_providers as "custom:<id>". CLI agents
@@ -202,8 +231,26 @@ _DEFAULTS: Dict[str, Any] = {
     "lingxing_cooldown_days": 7,          # don't re-touch the same entity within N days
     "lingxing_bid_floor": 0.02,           # min bid
     "lingxing_bid_ceiling": 0,            # max bid (0 = no cap beyond break-even logic)
+    # --- 驾驶舱直调「快车道」 ------------------------------------------------
+    # 小幅止血动作（降预算 / 降 bid / 暂停）跳过三重 LLM 复核，直接进"等人确认"。
+    # 三条硬约束写在 lingxing_operate.fast_lane_decision 里，不可绕过：
+    #   ① 只放行**变小**的方向和 paused，放量一律走全复核；
+    #   ② 幅度必须 ≤ fast_lane_max_pct；
+    #   ③ **只在「逐项确认」档生效** —— 自主执行档下复核是最后一道闸，不能省。
+    # 默认关：老用户升级后行为与升级前一模一样，要不要放开由他自己决定。
+    "lingxing_fast_lane_enabled": False,
+    "lingxing_fast_lane_max_pct": 15,     # 快车道允许的最大改动幅度(%)
+    # --- 驾驶舱后台预热 ------------------------------------------------------
+    # 广告看板冷启动实测 9 个店 × 1 天要 24.7 秒（限流 340ms/次），页面直连没法看。
+    # 后台按周期把数据灌进缓存，页面永远读缓存。
+    "cockpit_sync_enabled": False,        # 默认关，用户开了才后台拉数据
+    "cockpit_sync_minutes": 30,           # 预热间隔（分钟）
+    "cockpit_sync_days": 7,               # 预热多少天的广告报表
+    # 注意：促销临期 / 广告异常的**飞书提醒不在这里**，在 awenAgent 的巡检规则里
+    # （它有节流去重、卡片版式、审批按钮和定时器）。这边再放一套阈值只会变成
+    # 两处配置打架、或者一个根本不生效的开关。阈值在「系统配置 → 飞书」那一屏。
     # --- External-integration paths ----------------------------------------
-    # Optional: IvyeaOps works standalone without any of these, but the
+    # Optional: awenops works standalone without any of these, but the
     # monitor page and agent picker light up when you point at the right
     # binaries / databases.  Leave empty to fall back to PATH lookup or
     # disable the corresponding feature.
@@ -218,49 +265,53 @@ _DEFAULTS: Dict[str, Any] = {
     "kiro_cli_db": "",           # /root/.local/share/kiro-cli/data.sqlite3
     "kiro_cli_sessions_dir": "", # /root/.kiro/sessions/cli
     "claude_projects_dir": "",   # /root/.claude/projects (jsonl token logs)
+    "awen_sessions_dir": "",    # /root/.awen/sessions (awen-agent 会话账本)
+    "dsh_sessions_dir": "",      # /root/.dsh/sessions (DeepSeek Harness 会话)
     "hermes_node_bin": "",       # /root/.hermes/node/bin (PATH augment for spawns)
-    "bun_bin": "",               # /root/.bun/bin (gbrain depends on bun)
+    "bun_bin": "",               # /root/.bun/bin (bun-based CLIs)
     # ASIN/广告审计的默认执行智能体（选择器里 "auto" 解析到它）。默认 hermes——它是
-    # IvyeaOps 配好 skill + 数据源 MCP 的 runner，审计才能出结构化报告。空=hermes。
+    # awenops 配好 skill + 数据源 MCP 的 runner，审计才能出结构化报告。空=hermes。
     "audit_default_runner": "hermes",
 }
 
 _ENV_MAP: Dict[str, str] = {
     "apimart_key": "APIMART_KEY",
-    "text_ai_providers": "IVYEA_OPS_TEXT_AI_PROVIDERS",
-    "ivyea_agent_url": "IVYEA_AGENT_URL",
-    "ivyea_agent_token": "IVYEA_AGENT_TOKEN",
-    "ivyea_agent_auto_start": "IVYEA_AGENT_AUTO_START",
-    "ivyea_agent_provider": "IVYEA_AGENT_PROVIDER",
-    "ivyea_agent_model": "IVYEA_AGENT_MODEL",
-    "ivyea_agent_api_key": "IVYEA_AGENT_API_KEY",
-    "ivyea_agent_base_url": "IVYEA_AGENT_BASE_URL",
+    "text_ai_providers": "AWENOPS_TEXT_AI_PROVIDERS",
+    "awen_agent_url": "AWEN_AGENT_URL",
+    "awen_agent_token": "AWEN_AGENT_TOKEN",
+    "awen_agent_auto_start": "AWEN_AGENT_AUTO_START",
+    "awen_agent_provider": "AWEN_AGENT_PROVIDER",
+    "awen_agent_model": "AWEN_AGENT_MODEL",
+    "awen_agent_api_key": "AWEN_AGENT_API_KEY",
+    "awen_agent_base_url": "AWEN_AGENT_BASE_URL",
     "deepseek_api_key": "DEEPSEEK_API_KEY",
     "sorftime_key": "SORFTIME_KEY",
     "openai_api_key": "OPENAI_API_KEY",
-    "gbrain_bin": "IVYEA_OPS_GBRAIN_BIN",
-    "brain_root": "IVYEA_OPS_BRAIN_ROOT",
-    "alert_webhook": "IVYEA_OPS_ALERT_WEBHOOK",
-    "alert_app_id": "IVYEA_OPS_ALERT_APP_ID",
-    "alert_app_secret": "IVYEA_OPS_ALERT_APP_SECRET",
-    "alert_chat_id": "IVYEA_OPS_ALERT_CHAT_ID",
-    "alert_threshold": "IVYEA_OPS_ALERT_THRESHOLD",
-    "alert_sustain": "IVYEA_OPS_ALERT_SUSTAIN",
-    "alert_cooldown": "IVYEA_OPS_ALERT_COOLDOWN",
+    "brain_root": "AWENOPS_BRAIN_ROOT",
+    "alert_webhook": "AWENOPS_ALERT_WEBHOOK",
+    "alert_app_id": "AWENOPS_ALERT_APP_ID",
+    "alert_app_secret": "AWENOPS_ALERT_APP_SECRET",
+    "alert_chat_id": "AWENOPS_ALERT_CHAT_ID",
+    "alert_feishu_domain": "AWENOPS_ALERT_FEISHU_DOMAIN",
+    "alert_threshold": "AWENOPS_ALERT_THRESHOLD",
+    "alert_sustain": "AWENOPS_ALERT_SUSTAIN",
+    "alert_cooldown": "AWENOPS_ALERT_COOLDOWN",
     # External integrations
-    "hermes_bin": "IVYEA_OPS_HERMES_BIN",
-    "codex_bin": "IVYEA_OPS_CODEX_BIN",
-    "claude_bin": "IVYEA_OPS_CLAUDE_BIN",
-    "kiro_cli_bin": "IVYEA_OPS_KIRO_CLI_BIN",
-    "hermes_db": "IVYEA_OPS_HERMES_DB",
-    "codex_db": "IVYEA_OPS_CODEX_DB",
-    "feishu_codex_db": "IVYEA_OPS_FEISHU_CODEX_DB",
-    "kiro_gateway_db": "IVYEA_OPS_KIRO_GATEWAY_DB",
-    "kiro_cli_db": "IVYEA_OPS_KIRO_CLI_DB",
-    "kiro_cli_sessions_dir": "IVYEA_OPS_KIRO_CLI_SESSIONS_DIR",
-    "claude_projects_dir": "IVYEA_OPS_CLAUDE_PROJECTS_DIR",
-    "hermes_node_bin": "IVYEA_OPS_HERMES_NODE_BIN",
-    "bun_bin": "IVYEA_OPS_BUN_BIN",
+    "hermes_bin": "AWENOPS_HERMES_BIN",
+    "codex_bin": "AWENOPS_CODEX_BIN",
+    "claude_bin": "AWENOPS_CLAUDE_BIN",
+    "kiro_cli_bin": "AWENOPS_KIRO_CLI_BIN",
+    "hermes_db": "AWENOPS_HERMES_DB",
+    "codex_db": "AWENOPS_CODEX_DB",
+    "feishu_codex_db": "AWENOPS_FEISHU_CODEX_DB",
+    "kiro_gateway_db": "AWENOPS_KIRO_GATEWAY_DB",
+    "kiro_cli_db": "AWENOPS_KIRO_CLI_DB",
+    "kiro_cli_sessions_dir": "AWENOPS_KIRO_CLI_SESSIONS_DIR",
+    "claude_projects_dir": "AWENOPS_CLAUDE_PROJECTS_DIR",
+    "awen_sessions_dir": "AWENOPS_AWEN_SESSIONS_DIR",
+    "dsh_sessions_dir": "AWENOPS_DSH_SESSIONS_DIR",
+    "hermes_node_bin": "AWENOPS_HERMES_NODE_BIN",
+    "bun_bin": "AWENOPS_BUN_BIN",
 }
 
 
@@ -274,9 +325,14 @@ def _read_file() -> Dict[str, Any]:
     if not p.is_file():
         return {}
     try:
-        return json.loads(p.read_text("utf-8"))
+        raw = json.loads(p.read_text("utf-8"))
     except Exception:
         return {}
+    # 凭据在盘上是密文（见 core/secrets 的说明）。解密收口在这里，是因为
+    # load() 和 get() 都走它 —— 放到上层去解，漏一条路径就是一处明文泄漏。
+    # 没有 enc:v1: 前缀的值原样返回，老装机的明文配置照常能用。
+    from app.core import secrets as _secrets
+    return _secrets.decrypt_mapping(raw)
 
 
 def load() -> Dict[str, Any]:
@@ -295,7 +351,8 @@ def get(key: str, default: Any = None) -> Any:
         return val
     env_key = _ENV_MAP.get(key)
     if env_key:
-        env_val = os.getenv(env_key, "")
+        from app.core import secret_env
+        env_val = secret_env.get(env_key, "")
         if env_val:
             if isinstance(_DEFAULTS.get(key), int):
                 try:
@@ -314,6 +371,15 @@ def save(updates: Dict[str, Any]) -> Dict[str, Any]:
             current[k] = v
     p = _path()
     tmp = p.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(current, ensure_ascii=False, indent=2), "utf-8")
+    # 落盘前把凭据字段加密。注意返回给调用方的仍然是**明文** current ——
+    # 保存后前端要回显、runner 配置同步要用真值。
+    from app.core import secrets as _secrets
+    on_disk = _secrets.encrypt_mapping(current)
+    tmp.write_text(json.dumps(on_disk, ensure_ascii=False, indent=2), "utf-8")
     tmp.replace(p)
+    # 只记**改了哪些键**，不记值 —— 值里全是凭据，留痕的目的是"谁改了什么设置"，
+    # 不是把密钥抄一份到审计库里。
+    from app.core import audit as _audit
+    _audit.record("settings", "save", target=",".join(sorted(updates.keys()))[:1000],
+                  detail={"keys": sorted(updates.keys())})
     return current

@@ -18,7 +18,6 @@ from __future__ import annotations
 from app.core.proc import no_window_kwargs
 
 import os
-import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -27,15 +26,15 @@ from app.services import agent_session_service as svc
 
 # Auto-compact when uncompressed token estimate exceeds this. Tunable per
 # deployment via env. ~32k matches Claude/GPT context windows comfortably.
-AUTO_COMPACT_THRESHOLD = int(os.environ.get("IVYEA_OPS_AUTOCOMPACT_TOKENS", "32000"))
+AUTO_COMPACT_THRESHOLD = int(os.environ.get("AWENOPS_AUTOCOMPACT_TOKENS", "32000"))
 
-# Runner used for the summarization step. 2026-08-06: hermes → ivyea-agent.
-# ivyea 用自己配置的主脑，不接受外部 --provider/-m 覆盖，所以下面两个 hermes
+# Runner used for the summarization step. 2026-08-06: hermes → awen-agent.
+# awen 用自己配置的主脑，不接受外部 --provider/-m 覆盖，所以下面两个 hermes
 # 时代的模型覆盖常量仅为兼容旧 env 保留，代码路径已不再读取它们。
-_RUNNER = "ivyea-agent"
-SUMMARY_MODEL = os.environ.get("IVYEA_OPS_SUMMARY_MODEL", "gpt-5.4")          # legacy, unused
-SUMMARY_PROVIDER = os.environ.get("IVYEA_OPS_SUMMARY_PROVIDER", "openai-codex")  # legacy, unused
-SUMMARY_MAX_TOKENS = int(os.environ.get("IVYEA_OPS_SUMMARY_MAX_TOKENS", "1200"))
+_RUNNER = "awen-agent"
+SUMMARY_MODEL = os.environ.get("AWENOPS_SUMMARY_MODEL", "gpt-5.4")          # legacy, unused
+SUMMARY_PROVIDER = os.environ.get("AWENOPS_SUMMARY_PROVIDER", "openai-codex")  # legacy, unused
+SUMMARY_MAX_TOKENS = int(os.environ.get("AWENOPS_SUMMARY_MAX_TOKENS", "1200"))
 
 
 SYSTEM_PROMPT = """You are a session compactor. Compress the agent conversation
@@ -97,12 +96,12 @@ def _gather_messages(session_id: str) -> list[dict[str, str]]:
 
 
 def _runner_bin() -> str:
-    """Locate the summarizer CLI. 2026-08-06: ivyea-agent replaced hermes here."""
+    """Locate the summarizer CLI. 2026-08-06: awen-agent replaced hermes here."""
     from app.services.runners import _find_bin
     resolved = _find_bin(_RUNNER)
     if resolved:
         return resolved
-    raise CompactorError("IvyeaAgent CLI 不可用：没有找到 ivyea 可执行文件。")
+    raise CompactorError("awenAgent CLI 不可用：没有找到 awen 可执行文件。")
 
 
 def _runner_env() -> dict[str, str]:
@@ -125,7 +124,7 @@ def _messages_to_prompt(messages: list[dict[str, str]]) -> str:
 def _strip_runner_output(output: str) -> str:
     """Normalize the runner's stdout into the bare summary text.
 
-    ivyea 新版 `-p` 会输出 stream-json，先用统一的 extract_runner_output 取最终
+    awen 新版 `-p` 会输出 stream-json，先用统一的 extract_runner_output 取最终
     答案；旧版纯文本原样透传。再滤掉 CLI 可能附带的 session_id: 行。"""
     from app.services.runners import extract_runner_output
     text = extract_runner_output(_RUNNER, output or "").get("text") or (output or "")
@@ -141,9 +140,9 @@ def _call_summary_model(messages: list[dict[str, str]]) -> tuple[str, int]:
     if not messages:
         raise CompactorError("没有可压缩的消息")
     prompt = _messages_to_prompt(messages)
-    # 压缩是一次性纯文本任务：`ivyea chat -p` 一轮出结果、不需要工具，也不该
+    # 压缩是一次性纯文本任务：`awen chat -p` 一轮出结果、不需要工具，也不该
     # 落进 agent 的会话历史。SUMMARY_PROVIDER/SUMMARY_MODEL 是 hermes 时代的
-    # provider 覆盖参数，ivyea 用自身配置的主脑，故不再透传。
+    # provider 覆盖参数，awen 用自身配置的主脑，故不再透传。
     from app.services.runners import _build_runner_cmd
     cmd = _build_runner_cmd(_RUNNER, _runner_bin(), prompt)
     try:

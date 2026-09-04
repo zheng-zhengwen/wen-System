@@ -1,6 +1,6 @@
 # Bundled skills
 
-These are the skills the IvyeaOps boards depend on (ASIN audit, ad-report audit,
+These are the skills the awenops boards depend on (ASIN audit, ad-report audit,
 Listing analysis). They are **seeded into `SKILLS_ROOT` (`~/.hermes/skills/`) on
 every server startup, never overwriting an existing skill** — see
 `server/app/core/skill_paths.py::seed_bundled_skills`.

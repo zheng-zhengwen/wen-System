@@ -23,68 +23,68 @@ type AgentVisualConfig = {
 const agentConfig: Record<AgentProvider, AgentVisualConfig> = {
   claude: {
     name: 'Claude',
-    bgClass: 'bg-blue-50 dark:bg-blue-900/20',
-    borderClass: 'border-blue-200 dark:border-blue-800',
-    textClass: 'text-blue-900 dark:text-blue-100',
-    subtextClass: 'text-blue-700 dark:text-blue-300',
+    bgClass: 'bg-blue-50 bg-blue-900/20',
+    borderClass: 'border-blue-200 border-blue-800',
+    textClass: 'text-blue-900 text-blue-100',
+    subtextClass: 'text-blue-700 text-blue-300',
     buttonClass: 'bg-blue-600 hover:bg-blue-700 active:bg-blue-800',
   },
   cursor: {
     name: 'Cursor',
-    bgClass: 'bg-purple-50 dark:bg-purple-900/20',
-    borderClass: 'border-purple-200 dark:border-purple-800',
-    textClass: 'text-purple-900 dark:text-purple-100',
-    subtextClass: 'text-purple-700 dark:text-purple-300',
+    bgClass: 'bg-purple-50 bg-purple-900/20',
+    borderClass: 'border-purple-200 border-purple-800',
+    textClass: 'text-purple-900 text-purple-100',
+    subtextClass: 'text-purple-700 text-purple-300',
     buttonClass: 'bg-purple-600 hover:bg-purple-700 active:bg-purple-800',
   },
   codex: {
     name: 'Codex',
     bgClass: 'bg-muted/50',
-    borderClass: 'border-gray-300 dark:border-gray-600',
-    textClass: 'text-gray-900 dark:text-gray-100',
-    subtextClass: 'text-gray-700 dark:text-gray-300',
-    buttonClass: 'bg-gray-800 hover:bg-gray-900 active:bg-gray-950 dark:bg-gray-700 dark:hover:bg-gray-600 dark:active:bg-gray-500',
+    borderClass: 'border-gray-300 border-gray-600',
+    textClass: 'text-gray-900 text-gray-100',
+    subtextClass: 'text-gray-700 text-gray-300',
+    buttonClass: 'bg-gray-800 hover:bg-gray-900 active:bg-gray-950 bg-gray-700 hover:bg-gray-600 active:bg-gray-500',
   },
   gemini: {
     name: 'Gemini',
     description: 'Google Gemini AI assistant',
-    bgClass: 'bg-indigo-50 dark:bg-indigo-900/20',
-    borderClass: 'border-indigo-200 dark:border-indigo-800',
-    textClass: 'text-indigo-900 dark:text-indigo-100',
-    subtextClass: 'text-indigo-700 dark:text-indigo-300',
+    bgClass: 'bg-indigo-50 bg-indigo-900/20',
+    borderClass: 'border-indigo-200 border-indigo-800',
+    textClass: 'text-indigo-900 text-indigo-100',
+    subtextClass: 'text-indigo-700 text-indigo-300',
     buttonClass: 'bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800',
   },
   opencode: {
     name: 'OpenCode',
-    bgClass: 'bg-zinc-50 dark:bg-zinc-900/50',
-    borderClass: 'border-zinc-200 dark:border-zinc-800',
-    textClass: 'text-zinc-700 dark:text-zinc-300',
-    subtextClass: 'text-zinc-500 dark:text-zinc-400',
-    buttonClass: 'bg-zinc-600 hover:bg-zinc-700 text-white dark:bg-zinc-700 dark:hover:bg-zinc-600',
+    bgClass: 'bg-zinc-50 bg-zinc-900/50',
+    borderClass: 'border-zinc-200 border-zinc-800',
+    textClass: 'text-zinc-700 text-zinc-300',
+    subtextClass: 'text-zinc-500 text-zinc-400',
+    buttonClass: 'bg-zinc-600 hover:bg-zinc-700 text-white bg-zinc-700 hover:bg-zinc-600',
   },
   hermes: {
     name: 'Hermes',
-    bgClass: 'bg-teal-50 dark:bg-teal-900/50',
-    borderClass: 'border-teal-200 dark:border-teal-800',
-    textClass: 'text-teal-700 dark:text-teal-300',
-    subtextClass: 'text-teal-500 dark:text-teal-400',
-    buttonClass: 'bg-teal-600 hover:bg-teal-700 text-white dark:bg-teal-700 dark:hover:bg-teal-600',
+    bgClass: 'bg-teal-50 bg-teal-900/50',
+    borderClass: 'border-teal-200 border-teal-800',
+    textClass: 'text-teal-700 text-teal-300',
+    subtextClass: 'text-teal-500 text-teal-400',
+    buttonClass: 'bg-teal-600 hover:bg-teal-700 text-white bg-teal-700 hover:bg-teal-600',
   },
   agy: {
     name: 'Antigravity',
-    bgClass: 'bg-zinc-50 dark:bg-zinc-900/50',
-    borderClass: 'border-zinc-200 dark:border-zinc-800',
-    textClass: 'text-zinc-700 dark:text-zinc-300',
-    subtextClass: 'text-zinc-500 dark:text-zinc-400',
-    buttonClass: 'bg-zinc-600 hover:bg-zinc-700 text-white dark:bg-zinc-700 dark:hover:bg-zinc-600',
+    bgClass: 'bg-zinc-50 bg-zinc-900/50',
+    borderClass: 'border-zinc-200 border-zinc-800',
+    textClass: 'text-zinc-700 text-zinc-300',
+    subtextClass: 'text-zinc-500 text-zinc-400',
+    buttonClass: 'bg-zinc-600 hover:bg-zinc-700 text-white bg-zinc-700 hover:bg-zinc-600',
   },
-  ivyea: {
-    name: 'IvyeaAgent',
-    description: '自托管亚马逊运营智能体（ivyea CLI）',
-    bgClass: 'bg-emerald-50 dark:bg-emerald-900/20',
-    borderClass: 'border-emerald-200 dark:border-emerald-800',
-    textClass: 'text-emerald-900 dark:text-emerald-100',
-    subtextClass: 'text-emerald-700 dark:text-emerald-300',
+  awen: {
+    name: 'awenAgent',
+    description: '自托管亚马逊运营智能体（awen CLI）',
+    bgClass: 'bg-emerald-50 bg-emerald-900/20',
+    borderClass: 'border-emerald-200 border-emerald-800',
+    textClass: 'text-emerald-900 text-emerald-100',
+    subtextClass: 'text-emerald-700 text-emerald-300',
     buttonClass: 'bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800',
   },
 };
@@ -132,11 +132,11 @@ export default function AccountContent({ agent, authStatus, onLogin }: AccountCo
                   {t('agents.authStatus.checking')}
                 </Badge>
               ) : authStatus.authenticated ? (
-                <Badge variant="secondary" className="bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300">
+                <Badge variant="secondary" className="bg-green-100 text-green-800 bg-green-900/30 text-green-300">
                   {t('agents.authStatus.connected')}
                 </Badge>
               ) : (
-                <Badge variant="secondary" className="bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-300">
+                <Badge variant="secondary" className="bg-gray-100 text-gray-800 bg-gray-800 text-gray-300">
                   {t('agents.authStatus.disconnected')}
                 </Badge>
               )}
@@ -170,7 +170,7 @@ export default function AccountContent({ agent, authStatus, onLogin }: AccountCo
 
           {authStatus.error && (
             <div className="border-t border-border/50 pt-4">
-              <div className="text-sm text-red-600 dark:text-red-400">
+              <div className="text-sm text-red-600 text-red-400">
                 {t('agents.error', { error: authStatus.error })}
               </div>
             </div>

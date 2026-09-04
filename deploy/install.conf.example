@@ -1,4 +1,4 @@
-# IvyeaOps deployment configuration.
+# awenops deployment configuration.
 #
 # Copy this file to deploy/install.conf and fill in your values, then run:
 #   bash scripts/render-deploy.sh
@@ -11,13 +11,13 @@
 SERVER_NAME=ops.example.com
 
 # Where the repo lives on disk.
-INSTALL_DIR=/opt/ivyeaops
+INSTALL_DIR=/opt/awenops
 
 # OS user that runs the FastAPI process.
-IVYEA_OPS_USER=root
+AWENOPS_USER=root
 
-# Internal port FastAPI listens on (must match server/.env IVYEA_OPS_PORT).
-IVYEA_OPS_PORT=8001
+# Internal port FastAPI listens on (must match server/.env AWENOPS_PORT).
+AWENOPS_PORT=8001
 
 # Python interpreter (must have the requirements.txt deps installed).
 # scripts/install.sh installs deps into server/.venv — point this at it so
@@ -25,8 +25,8 @@ IVYEA_OPS_PORT=8001
 PYTHON_BIN=${INSTALL_DIR}/server/.venv/bin/python
 # (Or use /usr/bin/python3 if you installed the deps system-wide.)
 
-# CPU-alert cron log location. The directory must be writable by IVYEA_OPS_USER.
-CPU_ALERT_LOG=/var/log/IvyeaOps/cpu-alert.log
+# CPU-alert cron log location. The directory must be writable by AWENOPS_USER.
+CPU_ALERT_LOG=/var/log/awenops/cpu-alert.log
 
 # --- Optional sub-services ---
 # Leave port empty to comment-out the corresponding nginx location block.
@@ -34,9 +34,6 @@ CPU_ALERT_LOG=/var/log/IvyeaOps/cpu-alert.log
 # claudecodeui at https://${SERVER_NAME}/cli/
 CLAUDECODEUI_PORT=5175
 
-# amazon-image-workflow web at /imgflow and API at /imgflow-api/
-IMGFLOW_WEB_PORT=3000
-IMGFLOW_API_PORT=3001
 
 # skill-studio static dist served at /skill-studio/
 SKILL_STUDIO_DIST=/var/www/skill-studio

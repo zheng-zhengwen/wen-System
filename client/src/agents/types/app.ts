@@ -1,4 +1,4 @@
-export type LLMProvider = 'claude' | 'cursor' | 'codex' | 'gemini' | 'opencode' | 'hermes' | 'agy' | 'ivyea';
+export type LLMProvider = 'claude' | 'cursor' | 'codex' | 'gemini' | 'opencode' | 'hermes' | 'agy' | 'awen';
 
 export type ProviderModelOption = {
   value: string;
@@ -66,7 +66,7 @@ export interface Project {
   opencodeSessions?: ProjectSession[];
   hermesSessions?: ProjectSession[];
   agySessions?: ProjectSession[];
-  ivyeaSessions?: ProjectSession[];
+  awenSessions?: ProjectSession[];
   sessionMeta?: ProjectSessionMeta;
   taskmaster?: ProjectTaskmasterInfo;
   [key: string]: unknown;

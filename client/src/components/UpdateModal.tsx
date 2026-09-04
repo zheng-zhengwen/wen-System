@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
+import { errText } from "../lib/errText";
 
 /**
  * In-app update flow with real progress, styled like the workbench:
@@ -57,7 +58,7 @@ export default function UpdateModal({
       }
     }
     if (!stopped.current) {
-      setError("等待服务重启超时。请查看安装目录 logs\\update.log,或手动重启 IvyeaOps。");
+      setError("等待服务重启超时。请查看安装目录 logs\\update.log,或手动重启 awenops。");
       setPhase("error");
     }
   }, [currentVersion]);
@@ -91,8 +92,11 @@ export default function UpdateModal({
         try {
           await api.post("/setup/update/install");
         } catch (e: any) {
-          if (e?.response?.data?.detail) {
-            setError(e.response.data.detail);
+          // 这里的判断是**服务端有没有明确报错** —— 有 detail 说明后端还活着
+          // 并拒绝了这次更新；没有则多半是后端被更新器杀掉了（下面继续轮询健康）。
+          // 所以存在性判断要留，只把取文案那一步换成 errText。
+          if (e?.response?.data) {
+            setError(errText(e, "更新失败"));
             setPhase("error");
             return;
           }
@@ -100,7 +104,7 @@ export default function UpdateModal({
         }
         void pollRestart();
       } catch (e: any) {
-        setError(e?.response?.data?.detail || e?.message || "更新失败");
+        setError(errText(e, "更新失败"));
         setPhase("error");
       }
     })();
@@ -130,18 +134,18 @@ export default function UpdateModal({
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
-          <span style={{ fontSize: 14 }}>⟳</span>
-          <span style={{ fontSize: 13, fontWeight: 600, letterSpacing: ".04em" }}>
+          <span style={{ fontSize: "var(--fs-14)" }}>⟳</span>
+          <span style={{ fontSize: "var(--fs-13)", fontWeight: 600, letterSpacing: ".04em" }}>
             软件更新{target ? ` · ${target}` : ""}
           </span>
           {!busy && (
             <button className="tbtn" onClick={onClose}
-              style={{ marginLeft: "auto", padding: "1px 8px", fontSize: 11 }}>✕</button>
+              style={{ marginLeft: "auto", padding: "1px 8px", fontSize: "var(--fs-11)" }}>✕</button>
           )}
         </div>
 
         {/* Stage line */}
-        <div style={{ fontSize: 11, color: "var(--t2)", marginBottom: 10, lineHeight: 1.7 }}>
+        <div style={{ fontSize: "var(--fs-11)", color: "var(--t2)", marginBottom: 10, lineHeight: 1.7 }}>
           {phase === "starting" && "正在准备更新…"}
           {phase === "downloading" && (
             <>正在下载安装包… <span style={{ color: "var(--t3)" }}>
@@ -179,25 +183,25 @@ export default function UpdateModal({
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
           {phase === "done" && (
             <button className="tbtn" onClick={() => window.location.reload()}
-              style={{ padding: "4px 14px", fontSize: 11, color: "var(--acc)" }}>
+              style={{ padding: "4px 14px", fontSize: "var(--fs-11)", color: "var(--acc)" }}>
               刷新页面
             </button>
           )}
           {phase === "error" && (
             <>
-              <a className="tbtn" href="https://github.com/Hector-xue/IvyeaOps/releases/latest"
+              <a className="tbtn" href="https://github.com/zheng-zhengwen/wen-System/releases/latest"
                 target="_blank" rel="noreferrer"
-                style={{ padding: "4px 12px", fontSize: 11, textDecoration: "none" }}>
+                style={{ padding: "4px 12px", fontSize: "var(--fs-11)", textDecoration: "none" }}>
                 打开 Release 页面
               </a>
-              <button className="tbtn" onClick={onClose} style={{ padding: "4px 14px", fontSize: 11 }}>
+              <button className="tbtn" onClick={onClose} style={{ padding: "4px 14px", fontSize: "var(--fs-11)" }}>
                 关闭
               </button>
             </>
           )}
           {busy && (
-            <span style={{ fontSize: 10, color: "var(--t3)", alignSelf: "center" }}>
-              更新期间请勿关闭 IvyeaOps 窗口
+            <span style={{ fontSize: "var(--fs-10)", color: "var(--t3)", alignSelf: "center" }}>
+              更新期间请勿关闭 awenops 窗口
             </span>
           )}
         </div>

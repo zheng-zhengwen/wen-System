@@ -12,14 +12,18 @@ Skills/MCP return empty (stub) so the UI doesn't 404.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Optional
 
 from fastapi import APIRouter
 from pydantic import BaseModel
+
+logger = logging.getLogger("awen.agents.routers.providers")
 
 router = APIRouter()
 
@@ -27,7 +31,7 @@ router = APIRouter()
 _PROVIDER_BIN = {
     "claude": "claude", "codex": "codex", "cursor": "cursor-agent",
     "gemini": "gemini", "opencode": "opencode", "hermes": "hermes", "agy": "antigravity",
-    "ivyea": "ivyea",
+    "awen": "awen",
 }
 
 _CLAUDE_MODELS = {
@@ -51,7 +55,7 @@ def _opts(values: list[str]) -> dict:
 # REAL configured/live model list (claude ~/.claude/settings, hermes
 # ~/.hermes/config.yaml, codex its config) the user already maintains, instead
 # of a hardcoded guess.
-_PROVIDER_TO_AGENT = {"claude": "claude", "codex": "codex", "hermes": "hermes", "agy": "antigravity", "ivyea": "ivyea"}
+_PROVIDER_TO_AGENT = {"claude": "claude", "codex": "codex", "hermes": "hermes", "agy": "antigravity", "awen": "awen"}
 
 
 def _agent_models(provider: str) -> Optional[dict]:
@@ -70,7 +74,7 @@ def _agent_models(provider: str) -> Optional[dict]:
                     models = [default] + models
                 return {"OPTIONS": [{"value": m, "label": m} for m in models], "DEFAULT": default}
     except Exception:
-        pass
+        logger.debug("models = 失败（旁路，已忽略）", exc_info=True)
     return None
 
 
@@ -81,9 +85,9 @@ def _agent_models(provider: str) -> Optional[dict]:
 _PROVIDER_MODELS = {
     "claude": _CLAUDE_MODELS,
     "codex": _opts(["gpt-5.5", "gpt-5", "gpt-5-codex", "o3", "o4-mini", "codex-mini"]),
-    # ivyea 的主脑在 CLI 内配置（ivyea /model），chat -p 没有 -m 覆盖 —— 只列 default。
-    "ivyea": {"OPTIONS": [{"value": "default", "label": "default（ivyea 配置的主脑）",
-                           "description": "模型在服务器上用 ivyea /model 或 ivyea config 配置"}],
+    # awen 的主脑在 CLI 内配置（awen /model），chat -p 没有 -m 覆盖 —— 只列 default。
+    "awen": {"OPTIONS": [{"value": "default", "label": "default（awen 配置的主脑）",
+                           "description": "模型在服务器上用 awen /model 或 awen config 配置"}],
               "DEFAULT": "default"},
 }
 
@@ -122,8 +126,8 @@ def _ok(data) -> dict:
 def _which(bin_name: str) -> bool:
     search = os.pathsep.join([
         os.path.expanduser("~/.hermes/node/bin"),
-        os.path.expanduser("~/.local/bin"),      # ivyea launcher / pipx 常在这
-        os.path.expanduser("~/.ivyea/bin"),
+        os.path.expanduser("~/.local/bin"),      # awen launcher / pipx 常在这
+        os.path.expanduser("~/.awen/bin"),
         os.environ.get("PATH", ""),
     ])
     return shutil.which(bin_name, path=search) is not None
@@ -142,7 +146,7 @@ def _claude_credentials() -> dict:
         if (env.get("ANTHROPIC_AUTH_TOKEN") or "").strip():
             return {"authenticated": True, "email": "Configured via settings.json", "method": "api_key"}
     except (OSError, ValueError):
-        pass
+        logger.debug("json.loads 失败（旁路，已忽略）", exc_info=True)
     # ~/.claude/.credentials.json -> claudeAiOauth.accessToken
     try:
         creds = json.loads((Path.home() / ".claude" / ".credentials.json").read_text(encoding="utf-8"))
@@ -156,12 +160,12 @@ def _claude_credentials() -> dict:
             return {"authenticated": False, "email": None, "method": None,
                     "error": "Claude login has expired. Run claude /login again."}
     except FileNotFoundError:
-        pass
+        logger.debug("json.loads 失败（旁路，已忽略）", exc_info=True)
     except ValueError:
         return {"authenticated": False, "email": None, "method": None,
                 "error": "Claude credentials are unreadable. Run claude /login again."}
     except OSError:
-        pass
+        logger.debug("json.loads 失败（旁路，已忽略）", exc_info=True)
     return {"authenticated": False, "email": None, "method": None,
             "error": "Claude CLI is not authenticated. Run claude /login or configure ANTHROPIC_API_KEY."}
 
@@ -195,13 +199,13 @@ async def auth_status(provider: str) -> dict:
                     "authenticated": has_model, "email": "API Key (config.yaml)",
                     "method": "api_key",
                     "error": None if has_model else "Hermes 未配置模型（在枢纽设置中配置）"})
-    if provider == "ivyea":
-        # ivyea 自托管：主脑 key 由 `ivyea config` 管理，装了即视为可用（跑不了时
-        # 驱动会把 ivyea 的报错原样送回对话）。
-        return _ok({"installed": installed, "provider": "ivyea",
-                    "authenticated": installed, "email": "Self-hosted (ivyea config)",
+    if provider == "awen":
+        # awen 自托管：主脑 key 由 `awen config` 管理，装了即视为可用（跑不了时
+        # 驱动会把 awen 的报错原样送回对话）。
+        return _ok({"installed": installed, "provider": "awen",
+                    "authenticated": installed, "email": "Self-hosted (awen config)",
                     "method": "api_key" if installed else None,
-                    "error": None if installed else "IvyeaAgent CLI (ivyea) 未安装"})
+                    "error": None if installed else "awenAgent CLI (awen) 未安装"})
     # Best-effort for other providers: installed CLI is treated as usable.
     return _ok({"installed": installed, "provider": provider, "authenticated": installed,
                 "email": None, "method": None,

@@ -6,7 +6,7 @@ persisted to disk so we can serve historical results after restarts.
 
 Design:
 - One job at a time (asyncio.Lock) — user is a single-seat operator
-- Each job gets ~/.hermes/ivyea-ops-data/amazon-audits/<job_id>/
+- Each job gets ~/.hermes/awenops-data/amazon-audits/<job_id>/
   - meta.json   (status, asin, marketplace, timestamps, error)
   - report.md   (raw claude markdown output — final)
   - report.json (parsed structured section, if claude complied)
@@ -34,7 +34,7 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
-from app.services import ivyea_agent_service as ivyea_agent
+from app.services import awen_agent_service as awen_agent
 from app.services.runners import (  # noqa: F401 — re-exported for tests
     RUNNER_LABELS,
     RUNNER_ORDER,
@@ -48,17 +48,19 @@ from app.services.runners import (  # noqa: F401 — re-exported for tests
     runner_status as _cli_runner_status,
 )
 
-# 同 ad_audit：~/.hermes/ivyea-ops-data 是 IvyeaOps 自己的历史落盘位置，
+logger = logging.getLogger("awen.services.asin_audit")
+
+# 同 ad_audit：~/.hermes/awenops-data 是 awenops 自己的历史落盘位置，
 # 与 hermes 程序无关，改名要搬数据，保持不动。
-AUDIT_ROOT = Path.home() / ".hermes" / "ivyea-ops-data" / "amazon-audits"
+AUDIT_ROOT = Path.home() / ".hermes" / "awenops-data" / "amazon-audits"
 
 _log = logging.getLogger(__name__)
 AUDIT_ROOT.mkdir(parents=True, exist_ok=True)
 
-IVYEA_AGENT_RUNNER = "ivyea-agent"
-# RUNNER_ORDER 自 2026-08-06 起已以 ivyea-agent 打头，这里去重后再拼，避免出现
-# 两个 ivyea-agent（历史上是靠 RUNNER_ORDER 里没有它才成立的）。
-VALID_RUNNERS = (IVYEA_AGENT_RUNNER,) + tuple(r for r in RUNNER_ORDER if r != IVYEA_AGENT_RUNNER)
+AWEN_AGENT_RUNNER = "awen-agent"
+# RUNNER_ORDER 自 2026-08-06 起已以 awen-agent 打头，这里去重后再拼，避免出现
+# 两个 awen-agent（历史上是靠 RUNNER_ORDER 里没有它才成立的）。
+VALID_RUNNERS = (AWEN_AGENT_RUNNER,) + tuple(r for r in RUNNER_ORDER if r != AWEN_AGENT_RUNNER)
 
 
 # Hard kill after this many seconds.
@@ -281,49 +283,49 @@ def _build_prompt(asin: str, marketplace: str, mode: str) -> str:
 """
 
 
-def _ivyea_agent_available() -> tuple[bool, str]:
+def _awen_agent_available() -> tuple[bool, str]:
     try:
-        status = ivyea_agent.ensure_available()
+        status = awen_agent.ensure_available()
     except Exception as exc:  # noqa: BLE001
         return False, str(exc)
     if status.get("available"):
         return True, ""
-    return False, str(status.get("error") or "IvyeaAgent 服务不可用")
+    return False, str(status.get("error") or "awenAgent 服务不可用")
 
 
 def _resolve_audit_runner(pref: str) -> tuple[Optional[str], Optional[str], str]:
     pref = (pref or "auto").lower()
     if pref == "auto":
-        # 默认用 ivyea-agent（2026-08-06 从 hermes 切过来）：它已内置审计 skill
+        # 默认用 awen-agent（2026-08-06 从 hermes 切过来）：它已内置审计 skill
         # (11 板块 + 结尾 JSON 结构指导)、放开步数、plan_mode=False 放行 MCP，且
-        # ~/.ivyea/mcp.json 里 sorftime / sellersprite / sif_mcp 均已 trusted，
+        # ~/.awen/mcp.json 里 sorftime / sellersprite / sif_mcp 均已 trusted，
         # 取证能力与当初的 hermes 对齐。未配数据源时 agent 会明说“未检测到数据源”
         # 而非臆造。可在设置 audit_default_runner 改；选定 runner 不可用时按下面顺序兜底。
         from app.core import hub_settings as _hs
-        default = (str(_hs.get("audit_default_runner") or "").strip().lower()) or IVYEA_AGENT_RUNNER
+        default = (str(_hs.get("audit_default_runner") or "").strip().lower()) or AWEN_AGENT_RUNNER
         # 旧配置里存的是 hermes 时，不再把它当默认——它已从 RUNNER_ORDER 移除，
         # 继续沿用会让审计落到一个不再维护的路径上。
         if default == "hermes":
-            default = IVYEA_AGENT_RUNNER
+            default = AWEN_AGENT_RUNNER
         order: list[str] = []
-        for r in [default, IVYEA_AGENT_RUNNER, *RUNNER_ORDER]:
+        for r in [default, AWEN_AGENT_RUNNER, *RUNNER_ORDER]:
             if r and r not in order:
                 order.append(r)
         last_reason = ""
         for cand in order:
-            if cand == IVYEA_AGENT_RUNNER:
-                ok, reason = _ivyea_agent_available()
+            if cand == AWEN_AGENT_RUNNER:
+                ok, reason = _awen_agent_available()
                 if ok:
-                    return IVYEA_AGENT_RUNNER, None, ""
+                    return AWEN_AGENT_RUNNER, None, ""
                 last_reason = reason
             else:
                 rb = _find_bin(cand)
                 if rb:
                     return cand, rb, ""
         return None, None, last_reason or f"no runner available; tried {', '.join(order)}"
-    if pref == IVYEA_AGENT_RUNNER:
-        ok, reason = _ivyea_agent_available()
-        return (IVYEA_AGENT_RUNNER, None, "") if ok else (None, None, reason)
+    if pref == AWEN_AGENT_RUNNER:
+        ok, reason = _awen_agent_available()
+        return (AWEN_AGENT_RUNNER, None, "") if ok else (None, None, reason)
     if pref in RUNNER_ORDER:
         runner_bin = _find_bin(pref)
         return (pref, runner_bin, "") if runner_bin else (None, None, f"runner '{pref}' is not available")
@@ -331,13 +333,13 @@ def _resolve_audit_runner(pref: str) -> tuple[Optional[str], Optional[str], str]
 
 
 def _agent_trusted_data_source() -> bool:
-    """Does the embedded IvyeaAgent have a trusted MCP data source configured?
+    """Does the embedded awenAgent have a trusted MCP data source configured?
 
-    ASIN audit via ivyea-agent needs at least one ``"trusted": true`` server in
-    ~/.ivyea/mcp.json to fetch page/review evidence unattended. Best-effort read
+    ASIN audit via awen-agent needs at least one ``"trusted": true`` server in
+    ~/.awen/mcp.json to fetch page/review evidence unattended. Best-effort read
     of the agent's local config (same host)."""
     try:
-        mcp_path = Path.home() / ".ivyea" / "mcp.json"
+        mcp_path = Path.home() / ".awen" / "mcp.json"
         if not mcp_path.is_file():
             return False
         data = json.loads(mcp_path.read_text(encoding="utf-8"))
@@ -348,8 +350,8 @@ def _agent_trusted_data_source() -> bool:
 
 
 def runner_status() -> List[Dict[str, Any]]:
-    """Report availability of the embedded IvyeaAgent plus legacy CLI runners."""
-    ivyea_ok, ivyea_reason = _ivyea_agent_available()
+    """Report availability of the embedded awenAgent plus legacy CLI runners."""
+    awen_ok, awen_reason = _awen_agent_available()
     cli_rows = _cli_runner_status()
     # auto 显示与真实解析一致（默认 hermes，见 _resolve_audit_runner）。
     auto_target = _resolve_audit_runner("auto")[0]
@@ -359,35 +361,35 @@ def runner_status() -> List[Dict[str, Any]]:
             "label": f"自动（当前：{auto_target or '无'}）",
             "available": bool(auto_target),
             "path": None,
-            "reason": None if auto_target else "IvyeaAgent 和外部 CLI 均不可用",
+            "reason": None if auto_target else "awenAgent 和外部 CLI 均不可用",
             "auto_resolved_to": auto_target,
         },
         {
-            "name": IVYEA_AGENT_RUNNER,
-            "label": "IvyeaAgent（内置）",
-            "available": ivyea_ok,
-            "path": ivyea_agent.base_url(),
-            "reason": None if ivyea_ok else ivyea_reason,
-            # ivyea-agent 现内置审计 skill，但取真实证据需要一个 trusted 数据源 MCP。
+            "name": AWEN_AGENT_RUNNER,
+            "label": "awenAgent（内置）",
+            "available": awen_ok,
+            "path": awen_agent.base_url(),
+            "reason": None if awen_ok else awen_reason,
+            # awen-agent 现内置审计 skill，但取真实证据需要一个 trusted 数据源 MCP。
             "data_source_ready": _agent_trusted_data_source(),
             "data_source_hint": None if _agent_trusted_data_source() else
             "未检测到 trusted 数据源 MCP：审计将无法抓真实页面/评论数据（会输出推断版）。"
-            "用 `ivyea mcp add` 配一个数据源并选“信任/免审批”。",
+            "用 `awen mcp add` 配一个数据源并选“信任/免审批”。",
         },
-        # ivyea-agent 上面已单列（内置 HTTP），从 CLI 行里剔除，避免选择器重复。
-        *[row for row in cli_rows if row.get("name") not in ("auto", IVYEA_AGENT_RUNNER)],
+        # awen-agent 上面已单列（内置 HTTP），从 CLI 行里剔除，避免选择器重复。
+        *[row for row in cli_rows if row.get("name") not in ("auto", AWEN_AGENT_RUNNER)],
     ]
 
 
-async def _run_ivyea_agent(job: Job, prompt: str, stdout_log: Path) -> bool:
-    job.runner_used = IVYEA_AGENT_RUNNER
+async def _run_awen_agent(job: Job, prompt: str, stdout_log: Path) -> bool:
+    job.runner_used = AWEN_AGENT_RUNNER
     job.status = "running"
     job.started_at = _now_iso()
-    job.progress = "已启动 IvyeaAgent 生成审计报告…"
+    job.progress = "已启动 awenAgent 生成审计报告…"
     _write_meta(job)
 
     headers = {"Content-Type": "application/json", "Accept": "text/event-stream"}
-    token = ivyea_agent._token()
+    token = awen_agent._token()
     if token:
         headers["Authorization"] = f"Bearer {token}"
     from app.core import hub_settings as _hs
@@ -408,7 +410,7 @@ async def _run_ivyea_agent(job: Job, prompt: str, stdout_log: Path) -> bool:
         "persist": True,
         "inject_retrieval": True,
         "system": (
-            "你正在作为 IvyeaOps 内置 ASIN 深度审计智能体。"
+            "你正在作为 awenops 内置 ASIN 深度审计智能体。"
             "先用 mcp_list_tools 发现已配置的数据源工具，再用 mcp_call_tool 按 ASIN 抓真实证据；"
             "没有真实工具数据时必须标注推断建议，不要把猜测写成页面事实，也不要去扫本地文件系统找数据。"
             "取证与分析完成后，把【完整 11 板块 Markdown 报告 + 结尾 JSON 代码块】作为你的最终输出一次性完整呈现，"
@@ -424,7 +426,7 @@ async def _run_ivyea_agent(job: Job, prompt: str, stdout_log: Path) -> bool:
     written = 0
 
     async with httpx.AsyncClient(timeout=httpx.Timeout(HARD_TIMEOUT_SEC + 60, connect=10)) as client:
-        async with client.stream("POST", f"{ivyea_agent.base_url()}/v1/chat/stream", json=payload, headers=headers) as resp:
+        async with client.stream("POST", f"{awen_agent.base_url()}/v1/chat/stream", json=payload, headers=headers) as resp:
             resp.raise_for_status()
             with stdout_log.open("ab") as out:
                 async for line in resp.aiter_lines():
@@ -488,14 +490,14 @@ async def _run_ivyea_agent(job: Job, prompt: str, stdout_log: Path) -> bool:
 
 def _agent_sessions_dir() -> Path:
     """Locate the embedded agent's sessions dir (best-effort). Prefers the
-    data_dir reported by the agent health, falls back to ~/.ivyea."""
+    data_dir reported by the agent health, falls back to ~/.awen."""
     try:
-        data_dir = (ivyea_agent.availability().get("health") or {}).get("data_dir")
+        data_dir = (awen_agent.availability().get("health") or {}).get("data_dir")
         if data_dir:
             return Path(data_dir) / "sessions"
     except Exception:
-        pass
-    return Path.home() / ".ivyea" / "sessions"
+        logger.debug("data_dir = 失败（旁路，已忽略）", exc_info=True)
+    return Path.home() / ".awen" / "sessions"
 
 
 def _report_from_session(session_id: str) -> str:
@@ -549,9 +551,9 @@ async def _run_claude(job: Job) -> None:
         _write_meta(job)
         return
 
-    if runner == IVYEA_AGENT_RUNNER:
+    if runner == AWEN_AGENT_RUNNER:
         try:
-            await _run_ivyea_agent(job, prompt, stdout_log)
+            await _run_awen_agent(job, prompt, stdout_log)
             job.finished_at = _now_iso()
             raw = stdout_log.read_text(encoding="utf-8", errors="replace")
             md_text, structured = _split_report_and_json(raw)
@@ -566,7 +568,7 @@ async def _run_claude(job: Job) -> None:
             _write_meta(job)
         except Exception as exc:  # noqa: BLE001
             job.status = "failed"
-            job.error = f"IvyeaAgent 审计失败：{exc}"
+            job.error = f"awenAgent 审计失败：{exc}"
             job.finished_at = _now_iso()
             _write_meta(job)
         return
@@ -592,7 +594,7 @@ async def _run_claude(job: Job) -> None:
 
     job.status = "running"
     job.started_at = _now_iso()
-    mcp_note = "（MCP: sorftime + sif_mcp）" if runner in ("ivyea-agent", "hermes") else ""
+    mcp_note = "（MCP: sorftime + sif_mcp）" if runner in ("awen-agent", "hermes") else ""
     job.progress = f"已启动 {runner} 收集证据{mcp_note}…"
     _write_meta(job)
 
@@ -684,7 +686,7 @@ async def _run_claude(job: Job) -> None:
 
         # Success — split markdown and structured JSON.
         raw = stdout_log.read_text(encoding="utf-8", errors="replace")
-        # ivyea-agent CLI 走 stream-json 时先还原最终文本并留存过程事件；其它 runner 透传。
+        # awen-agent CLI 走 stream-json 时先还原最终文本并留存过程事件；其它 runner 透传。
         parsed = extract_runner_output(runner, raw)
         raw = parsed["text"]
         if parsed["structured"]:
@@ -711,7 +713,7 @@ async def _run_claude(job: Job) -> None:
             if proc.returncode is None:
                 proc.kill()
         except Exception:
-            pass
+            logger.debug("proc.kill 失败（旁路，已忽略）", exc_info=True)
 
 
 _JSON_FENCE_RE = re.compile(
@@ -783,7 +785,7 @@ async def start_job(
                     job.finished_at = _now_iso()
                     _write_meta(job)
                 except Exception:
-                    pass
+                    logger.debug("job.status = failed 失败（旁路，已忽略）", exc_info=True)
             finally:
                 _live_jobs.pop(job.job_id, None)
 

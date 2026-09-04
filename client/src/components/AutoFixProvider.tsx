@@ -11,6 +11,7 @@ import {
   type AutofixErrorCtx,
   type AutofixJob,
 } from "../api/autofix";
+import { errText } from "../lib/errText";
 
 // Endpoint-prefix → human label, so the popup names the board that failed.
 const FEATURE_MAP: [string, string][] = [
@@ -139,7 +140,7 @@ export default function AutoFixProvider({ children }: { children: React.ReactNod
       setJob(j);
       poll(j.id);
     } catch (e: any) {
-      setErr(e?.response?.data?.detail || e?.message || "无法启动修复");
+      setErr(errText(e, "无法启动修复"));
       setUi("failed");
     }
   }, [ctx, poll]);
@@ -157,7 +158,7 @@ export default function AutoFixProvider({ children }: { children: React.ReactNod
         setUi("rebuild_done"); // frontend-only fix: refresh suffices
       }
     } catch (e: any) {
-      setErr(e?.response?.data?.detail || e?.message || "应用失败");
+      setErr(errText(e, "应用失败"));
       setUi("failed");
     }
   }, [job]);
@@ -244,7 +245,7 @@ export default function AutoFixProvider({ children }: { children: React.ReactNod
               <Title>修复方案（请审核）</Title>
               <Detail>{job.summary || "（无说明）"}</Detail>
               {job.changed_files.length > 0 && (
-                <div style={{ margin: "8px 0", fontSize: 11, color: "var(--t2)" }}>
+                <div style={{ margin: "8px 0", fontSize: "var(--fs-11)", color: "var(--t2)" }}>
                   改动文件：{job.changed_files.join("、")}
                   {job.needs_restart ? " · 需重启后端" : ""}
                   {job.needs_rebuild ? " · 需重建前端" : ""}
@@ -362,7 +363,7 @@ function Modal({ children }: { children: React.ReactNode }) {
           border: "1px solid var(--b)",
           borderRadius: "var(--r)",
           padding: 18,
-          fontSize: 12,
+          fontSize: "var(--fs-12)",
           color: "var(--t2)",
           lineHeight: 1.7,
         }}
@@ -374,7 +375,7 @@ function Modal({ children }: { children: React.ReactNode }) {
 }
 
 const Title = ({ children }: { children: React.ReactNode }) => (
-  <div style={{ fontSize: 14, color: "var(--t)", marginBottom: 10, fontWeight: 600 }}>
+  <div style={{ fontSize: "var(--fs-14)", color: "var(--t)", marginBottom: 10, fontWeight: 600 }}>
     🛠 {children}
   </div>
 );
@@ -388,7 +389,7 @@ const Detail = ({ children }: { children: React.ReactNode }) => (
       border: "1px solid var(--b)",
       borderRadius: "var(--r)",
       padding: 10,
-      fontSize: 11,
+      fontSize: "var(--fs-11)",
       color: "var(--t3)",
       whiteSpace: "pre-wrap",
       wordBreak: "break-word",
@@ -414,7 +415,7 @@ function Diff({ text }: { text: string }) {
         border: "1px solid var(--b)",
         borderRadius: "var(--r)",
         padding: 10,
-        fontSize: 10.5,
+        fontSize: "var(--fs-105)",
         whiteSpace: "pre-wrap",
         wordBreak: "break-word",
         maxHeight: 320,

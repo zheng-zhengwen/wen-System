@@ -304,8 +304,8 @@ export default function FileTree({ selectedProject, onFileOpen }: FileTreeProps)
         <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50">
           <div className="mx-4 max-w-sm rounded-lg border border-border bg-background p-4 shadow-lg">
             <div className="mb-4 flex items-center gap-3">
-              <div className="rounded-full bg-red-100 p-2 dark:bg-red-900/30">
-                <AlertTriangle className="h-5 w-5 text-red-600 dark:text-red-400" />
+              <div className="rounded-full bg-red-100 p-2 bg-red-900/30">
+                <AlertTriangle className="h-5 w-5 text-red-600 text-red-400" />
               </div>
               <div>
                 <h3 className="font-medium text-foreground">

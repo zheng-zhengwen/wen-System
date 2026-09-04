@@ -12,6 +12,7 @@ function fmtNum(v: number | boolean | null, metric: string): string {
   if (v == null) return "—";
   if (metric === "price") return "$" + v.toFixed(2);
   if (metric === "bsr") return "#" + Math.round(v);
+  if (metric === "rating") return v.toFixed(1);
   if (v >= 1000) return (v / 1000).toFixed(1) + "K";
   return String(Math.round(v));
 }
@@ -22,7 +23,8 @@ function describe(a: AlertItem): { text: string; up: boolean } {
     const on = a.to === true;
     return { text: `${label}${on ? "上线" : "下线"}`, up: on };
   }
-  const up = typeof a.diff === "number" ? a.diff > 0 : false;
+  // BSR 数字越小排名越好：38→83 是下降，其余数值仍按增减展示。
+  const up = typeof a.diff === "number" ? (a.metric === "bsr" ? a.diff < 0 : a.diff > 0) : false;
   return {
     text: `${label} ${fmtNum(a.from, a.metric)}→${fmtNum(a.to, a.metric)}`,
     up,
@@ -37,15 +39,26 @@ export default function AlertStrip({ reloadKey, dataSource, marketplace, onJump 
 }) {
   const [alerts, setAlerts] = useState<AlertItem[]>([]);
   const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState("");
 
   useEffect(() => {
+    setLoaded(false);
+    setError("");
     fetchAlerts(dataSource)
       .then(setAlerts)
-      .catch(() => setAlerts([]))
+      .catch((e: any) => { setAlerts([]); setError(e?.message || "读取异动失败"); })
       .finally(() => setLoaded(true));
   }, [reloadKey, dataSource]);
 
   if (!loaded) return null;
+
+  if (error) {
+    return (
+      <div className="home-alerts home-alerts-empty">
+        <span className="home-alerts-icon">⚠</span>读取异动失败：{error}
+      </div>
+    );
+  }
 
   if (alerts.length === 0) {
     return (

@@ -43,11 +43,13 @@ export default function MarketTraffic({ marketplace, dataSource }: { marketplace
   const [items, setItems] = useState<MarketWatchItem[]>([]);
   const [selected, setSelected] = useState<string>("");
   const [series, setSeries] = useState<MarketSeries | null>(null);
+  const [seriesError, setSeriesError] = useState("");
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState("");
   const [recording, setRecording] = useState(false);
   const [backfilling, setBackfilling] = useState(false);
-  const [view, setView] = useState<View>(() => (localStorage.getItem("ivyea-ops-mkt-view") as View) || "month");
+  const [view, setView] = useState<View>(() => (localStorage.getItem("awenops-mkt-view") as View) || "month");
   const [catInput, setCatInput] = useState("");
   const [dailyBusy, setDailyBusy] = useState(false);
   const [dailyMsg, setDailyMsg] = useState("");
@@ -55,7 +57,7 @@ export default function MarketTraffic({ marketplace, dataSource }: { marketplace
   const notify = useToast();
   const sourceName = dataSource === "sellersprite" ? "卖家精灵" : "Sorftime";
 
-  useEffect(() => { localStorage.setItem("ivyea-ops-mkt-view", view); }, [view]);
+  useEffect(() => { localStorage.setItem("awenops-mkt-view", view); }, [view]);
 
   const mine = items.filter(it => it.marketplace === marketplace);
 
@@ -63,24 +65,33 @@ export default function MarketTraffic({ marketplace, dataSource }: { marketplace
   // freshly-fetched list (not stale state): keep the current selection when it
   // still exists for this site, otherwise fall back to the site's first entry.
   const loadList = async (pickQuery?: string) => {
+    setLoadError("");
     try {
       const all = await listMarketWatch(dataSource);
       setItems(all);
       const forMkt = all.filter(it => it.marketplace === marketplace);
       setSelected(prev => pickQuery ?? (forMkt.some(it => it.query === prev) ? prev : forMkt[0]?.query ?? ""));
-    } catch { /* ignore */ }
+    } catch (e: any) {
+      setLoadError(e?.message || "读取大盘监控列表失败");
+    }
   };
 
   useEffect(() => { loadList(); /* eslint-disable-next-line */ }, [marketplace, dataSource]);
 
   // Load series when selection changes.
   useEffect(() => {
-    if (!selected) { setSeries(null); return; }
+    if (!selected) { setSeries(null); setSeriesError(""); return; }
     let alive = true;
     setLoading(true);
+    setSeriesError("");
     fetchMarketSeries(selected, marketplace, dataSource)
       .then(s => { if (alive) setSeries(s); })
-      .catch(() => { if (alive) setSeries(null); })
+      .catch((e: any) => {
+        if (alive) {
+          setSeries(null);
+          setSeriesError(e?.message || "读取趋势失败");
+        }
+      })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
   }, [selected, marketplace, dataSource]);
@@ -99,7 +110,12 @@ export default function MarketTraffic({ marketplace, dataSource }: { marketplace
   };
 
   const handleRemove = async (item: MarketWatchItem) => {
-    await deleteMarketWatch(item.id).catch(() => notify("warn", `「${item.query}」服务端删除失败，刷新后可能回来`));
+    try {
+      await deleteMarketWatch(item.id);
+    } catch (e: any) {
+      notify("error", `删除「${item.query}」失败：${e?.message || "请求失败"}`);
+      return;
+    }
     await loadList();
   };
 
@@ -193,7 +209,9 @@ export default function MarketTraffic({ marketplace, dataSource }: { marketplace
         </button>
       </div>
 
-      {mine.length === 0 ? (
+      {loadError && <div className="pulse-err">⚠ {loadError}</div>}
+
+      {!loadError && (mine.length === 0 ? (
         <div className="pulse-onboard">
           <div className="pulse-onboard-icon">↗</div>
           <div className="pulse-onboard-title">大盘流量监控</div>
@@ -201,7 +219,7 @@ export default function MarketTraffic({ marketplace, dataSource }: { marketplace
             添加你关注的类目基线，系统每天自动记录大盘需求(搜索量)、TOP 合计销量与均价，
             累积成日曲线；并叠加自有 / 竞对销量，帮你判断涨跌是大盘还是自身原因
           </div>
-          <div className="pulse-onboard-sub" style={{ marginTop: 8, fontSize: 11, color: "var(--t3)" }}>
+          <div className="pulse-onboard-sub" style={{ marginTop: 8, fontSize: "var(--fs-11)", color: "var(--t3)" }}>
             提示：曲线从开始记录当天起累积，需几天数据才有趋势意义
           </div>
         </div>
@@ -231,6 +249,8 @@ export default function MarketTraffic({ marketplace, dataSource }: { marketplace
               <div className="skeleton line md" />
             </div>
           )}
+
+          {seriesError && <div className="pulse-err">⚠ {seriesError}</div>}
 
           {!loading && series && (
             <>
@@ -270,7 +290,7 @@ export default function MarketTraffic({ marketplace, dataSource }: { marketplace
             </>
           )}
         </>
-      )}
+      ))}
     </div>
   );
 }

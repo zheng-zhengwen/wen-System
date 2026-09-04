@@ -2,19 +2,28 @@
  * First-run Setup Wizard
  *
  * Shown once to new users who haven't set a password yet.
- * Five steps:
+ * Six steps:
  *   0. Welcome
  *   1. Agent Detection + install
  *   2. Global fallback model (assistant slot) — makes AI work without a local agent
  *   3. API Keys (apimart + optional sorftime)
- *   4. Done
+ *   4. 试跑一次 —— 让用户在离开向导之前**看到一个真实产出**
+ *   5. Done
+ *
+ * 第 4 步是这个向导存在的理由。配置向导最常见的失败是：用户老老实实填完所有
+ * 表单，然后落在一个空荡荡的首页上，不知道这东西到底能干什么，就走了。所以在
+ * 「完成」之前插一步，用**本地知识库**跑一次真实检索 —— 不依赖任何外部数据源、
+ * 不花一分钱、几百毫秒出结果，而且返回的每条都带官方出处，正好是这个产品和
+ * 「AI 随口说」的区别。
  *
  * On completion calls POST /api/setup/complete, then navigates to /.
  */
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { api } from "../api/client";
 import { completeSetup, installAgentStreamUrl, type SetupChecks } from "../api/setup";
 import { patchSettings } from "../api/settings";
+import { errText } from "../lib/errText";
 
 // ---------------------------------------------------------------------------
 // Tiny style helpers (inline, no extra CSS file needed)
@@ -38,15 +47,15 @@ const S = {
     padding: "32px 28px",
   } as React.CSSProperties,
   stepHeader: {
-    fontSize: 9,
+    fontSize: "var(--fs-9)",
     letterSpacing: ".12em",
     color: "var(--t3)",
     textTransform: "uppercase" as const,
     marginBottom: 20,
   },
   title: { fontSize: 18, fontWeight: 600, color: "var(--t)", marginBottom: 6 },
-  sub: { fontSize: 12, color: "var(--t2)", lineHeight: 1.6, marginBottom: 24 },
-  label: { fontSize: 11, color: "var(--t2)", marginBottom: 5, display: "block" },
+  sub: { fontSize: "var(--fs-12)", color: "var(--t2)", lineHeight: 1.6, marginBottom: 24 },
+  label: { fontSize: "var(--fs-11)", color: "var(--t2)", marginBottom: 5, display: "block" },
   input: {
     width: "100%",
     background: "var(--bg2)",
@@ -54,12 +63,12 @@ const S = {
     borderRadius: 4,
     padding: "7px 10px",
     color: "var(--t)",
-    fontSize: 12,
+    fontSize: "var(--fs-12)",
     fontFamily: "var(--font)",
     boxSizing: "border-box" as const,
     outline: "none",
   } as React.CSSProperties,
-  hint: { fontSize: 10, color: "var(--t3)", marginTop: 4, lineHeight: 1.5 },
+  hint: { fontSize: "var(--fs-10)", color: "var(--t3)", marginTop: 4, lineHeight: 1.5 },
   row: { display: "flex", gap: 10, marginTop: 20, justifyContent: "flex-end" },
   btnPrimary: {
     padding: "7px 20px",
@@ -68,7 +77,7 @@ const S = {
     border: "none",
     borderRadius: 4,
     cursor: "pointer",
-    fontSize: 12,
+    fontSize: "var(--fs-12)",
     fontFamily: "var(--font)",
     fontWeight: 600,
   } as React.CSSProperties,
@@ -79,7 +88,7 @@ const S = {
     border: "1px solid var(--b)",
     borderRadius: 4,
     cursor: "pointer",
-    fontSize: 12,
+    fontSize: "var(--fs-12)",
     fontFamily: "var(--font)",
   } as React.CSSProperties,
   pill: (ok: boolean) => ({
@@ -88,7 +97,7 @@ const S = {
     gap: 5,
     padding: "3px 10px",
     borderRadius: 12,
-    fontSize: 11,
+    fontSize: "var(--fs-11)",
     background: ok ? "rgba(74,222,128,.1)" : "rgba(248,113,113,.1)",
     color: ok ? "var(--acc)" : "var(--red)",
     border: `1px solid ${ok ? "rgba(74,222,128,.2)" : "rgba(248,113,113,.2)"}`,
@@ -99,7 +108,7 @@ const S = {
     borderRadius: 4,
     padding: "8px 10px",
     fontFamily: "monospace",
-    fontSize: 11,
+    fontSize: "var(--fs-11)",
     color: "var(--t2)",
     maxHeight: 180,
     overflowY: "auto" as const,
@@ -202,13 +211,13 @@ function AgentRow({
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        <span style={{ flex: 1, fontSize: 12, color: "var(--t)" }}>{label}</span>
+        <span style={{ flex: 1, fontSize: "var(--fs-12)", color: "var(--t)" }}>{label}</span>
         <span style={S.pill(isOk)}>
           {isOk ? "✓ 已就绪" : state === "installing" ? "⏳ 安装中…" : state === "error" ? "✗ 失败" : "✗ 未安装"}
         </span>
         {!isOk && state !== "installing" && (
           <button
-            style={{ ...S.btnPrimary, padding: "4px 12px", fontSize: 11 }}
+            style={{ ...S.btnPrimary, padding: "4px 12px", fontSize: "var(--fs-11)" }}
             onClick={startInstall}
           >
             安装/修复
@@ -216,7 +225,7 @@ function AgentRow({
         )}
         {!isOk && state === "error" && (
           <button
-            style={{ ...S.btnSecondary, padding: "4px 10px", fontSize: 11 }}
+            style={{ ...S.btnSecondary, padding: "4px 10px", fontSize: "var(--fs-11)" }}
             onClick={startInstall}
           >
             重试
@@ -225,7 +234,7 @@ function AgentRow({
       </div>
 
       {/* Legacy installers are optional; failures do not block setup. */}
-      {!isOk && (name === "hermes" || name === "gbrain") && (
+      {!isOk && name === "hermes" && (
         <div style={S.hint}>
           将在线安装可选组件；如网络较慢或失败，可先跳过，稍后在系统配置或脚本中重试。
         </div>
@@ -251,9 +260,9 @@ function AgentRow({
 function StepWelcome({ onNext }: { onNext: () => void }) {
   return (
     <>
-      <div style={S.title}>欢迎使用 IvyeaOps</div>
+      <div style={S.title}>欢迎使用 awenops</div>
       <div style={S.sub}>
-        IvyeaOps 是一个自托管的运营工作台，集成了 AI Agent、市场调研、广告审计、
+        awenops 是一个自托管的运营工作台，集成了 AI Agent、市场调研、广告审计、
         Listing 生成、知识库等功能。<br /><br />
         这个向导将帮你完成初始配置，只需 2 分钟。
       </div>
@@ -266,7 +275,7 @@ function StepWelcome({ onNext }: { onNext: () => void }) {
         }}
       >
         {[
-          ["🤖", "AI Agent", "IvyeaAgent 内置运行"],
+          ["🤖", "AI Agent", "awenAgent 内置运行"],
           ["🔍", "市场调研", "Sorftime 数据 + AI 分析"],
           ["🖼", "Listing 生成", "图片 + 文案一体化"],
           ["🧠", "知识库", "上传文档 + 本地检索"],
@@ -280,9 +289,9 @@ function StepWelcome({ onNext }: { onNext: () => void }) {
               borderRadius: 6,
             }}
           >
-            <div style={{ fontSize: 16, marginBottom: 4 }}>{icon}</div>
-            <div style={{ fontSize: 11, color: "var(--t)", fontWeight: 500 }}>{name}</div>
-            <div style={{ fontSize: 10, color: "var(--t3)", marginTop: 2 }}>{desc}</div>
+            <div style={{ fontSize: "var(--fs-16)", marginBottom: 4 }}>{icon}</div>
+            <div style={{ fontSize: "var(--fs-11)", color: "var(--t)", fontWeight: 500 }}>{name}</div>
+            <div style={{ fontSize: "var(--fs-10)", color: "var(--t3)", marginTop: 2 }}>{desc}</div>
           </div>
         ))}
       </div>
@@ -308,9 +317,9 @@ function StepAgents({
 }) {
   const agents: Array<{ name: string; label: string; hint?: string }> = [
     {
-      name: "ivyea-agent",
-      label: "IvyeaAgent（默认 · Agent + 知识库 + 本地检索）",
-      hint: "安装到 IvyeaOps 的 server/.venv；这是新部署的默认 AI 主链。",
+      name: "awen-agent",
+      label: "awenAgent（默认 · Agent + 知识库 + 本地检索）",
+      hint: "安装到 awenops 的 server/.venv；这是新部署的默认 AI 主链。",
     },
     {
       name: "codex",
@@ -326,10 +335,10 @@ function StepAgents({
 
   return (
     <>
-      <div style={S.title}>IvyeaAgent 检测</div>
+      <div style={S.title}>awenAgent 检测</div>
       <div style={S.sub}>
-        新版本默认使用内置 IvyeaAgent 驱动对话、知识库和本地检索。Codex / Claude
-        仍可作为代码任务增强项安装，但不再是部署 IvyeaOps 的必要条件。
+        新版本默认使用内置 awenAgent 驱动对话、知识库和本地检索。Codex / Claude
+        仍可作为代码任务增强项安装，但不再是部署 awenops 的必要条件。
       </div>
       {agents.map((a) => (
         <AgentRow
@@ -360,7 +369,7 @@ function StepAgents({
 // Step 2 — Global fallback model (assistant slot)
 //
 // This is the practical "works out of the box" path: users without a local
-// IvyeaAgent or an external agent CLI can point IvyeaOps at any OpenAI-compatible
+// awenAgent or an external agent CLI can point awenops at any OpenAI-compatible
 // model here, and every board's text AI falls back to it. Mirrors the
 // 「全局兜底大模型」 block in 系统配置.
 // ---------------------------------------------------------------------------
@@ -404,7 +413,7 @@ function StepFallbackModel({ onNext }: { onNext: () => void }) {
       } as any);
       onNext();
     } catch (e: any) {
-      setErr(e?.response?.data?.detail || e?.message || "保存失败");
+      setErr(errText(e, "保存失败"));
     } finally {
       setSaving(false);
     }
@@ -414,7 +423,7 @@ function StepFallbackModel({ onNext }: { onNext: () => void }) {
     <>
       <div style={S.title}>全局兜底大模型</div>
       <div style={S.sub}>
-        当内置 IvyeaAgent 或外部 Agent 需要调用云端模型时，各板块会统一使用这里的配置。
+        当内置 awenAgent 或外部 Agent 需要调用云端模型时，各板块会统一使用这里的配置。
         <strong>填好这里，新机器部署后就能直接使用主要 AI 功能</strong>。
       </div>
 
@@ -452,12 +461,29 @@ function StepFallbackModel({ onNext }: { onNext: () => void }) {
           placeholder="sk-..."
           autoComplete="off"
         />
+        {/* 「我没有 API key 怎么办」——这是新用户在这一步最常卡住的地方，
+            而卡住的人多半就直接关掉不用了。把出路直接写在这里，不让他去查文档。 */}
+        <details style={{ marginTop: 6 }}>
+          <summary style={{ ...S.hint, cursor: "pointer" }}>我没有 API Key 怎么办？</summary>
+          <div style={{ ...S.hint, marginTop: 6, lineHeight: 1.8 }}>
+            <b>一、先跳过。</b>没有 Key 也能用：本地知识库检索、报表解析、定时任务、
+            终端、备份这些都不需要模型。需要 AI 的板块会明确告诉你缺什么，
+            而不是默默失败。
+            <br />
+            <b>二、用本地模型。</b>装 Ollama 之后，提供商选「自定义」，
+            Base URL 填 <code>http://127.0.0.1:11434/v1</code>，Key 随便填一个非空值。
+            这样一分钱不花，数据也确实一步都没出你的机器。
+            <br />
+            <b>三、买一个。</b>DeepSeek 与硅基流动都支持个人注册、按量付费，
+            一般几十块能用很久。填进来之后随时可以在「系统配置」里换。
+          </div>
+        </details>
       </div>
 
       <div style={{ marginBottom: 16 }}>
         <label style={S.label}>
           Base URL{" "}
-          <span style={{ fontSize: 9, color: "var(--t3)" }}>
+          <span style={{ fontSize: "var(--fs-9)", color: "var(--t3)" }}>
             {provider === "custom" ? "（必填）" : "（留空用默认）"}
           </span>
         </label>
@@ -474,7 +500,7 @@ function StepFallbackModel({ onNext }: { onNext: () => void }) {
       {err && (
         <div
           style={{
-            fontSize: 11, color: "var(--red)", padding: "6px 10px",
+            fontSize: "var(--fs-11)", color: "var(--red)", padding: "6px 10px",
             background: "rgba(248,113,113,.08)", border: "1px solid rgba(248,113,113,.2)",
             borderRadius: 4, marginBottom: 10,
           }}
@@ -521,7 +547,7 @@ function StepApiKeys({
       }
       onNext();
     } catch (e: any) {
-      setErr(e?.response?.data?.detail || e?.message || "保存失败");
+      setErr(errText(e, "保存失败"));
     } finally {
       setSaving(false);
     }
@@ -539,7 +565,7 @@ function StepApiKeys({
           Apimart API 密钥{" "}
           <span
             style={{
-              fontSize: 9,
+              fontSize: "var(--fs-9)",
               padding: "1px 5px",
               background: "rgba(74,222,128,.1)",
               color: "var(--acc)",
@@ -568,7 +594,7 @@ function StepApiKeys({
           Sorftime 市场数据密钥{" "}
           <span
             style={{
-              fontSize: 9,
+              fontSize: "var(--fs-9)",
               padding: "1px 5px",
               background: "rgba(251,191,36,.1)",
               color: "var(--amber)",
@@ -593,7 +619,7 @@ function StepApiKeys({
       {err && (
         <div
           style={{
-            fontSize: 11,
+            fontSize: "var(--fs-11)",
             color: "var(--red)",
             padding: "6px 10px",
             background: "rgba(248,113,113,.08)",
@@ -619,6 +645,97 @@ function StepApiKeys({
 }
 
 // ---------------------------------------------------------------------------
+// Step 4 — 试跑一次
+// ---------------------------------------------------------------------------
+
+const DEMO_QUERIES = [
+  "变体合并有什么风险",
+  "Listing 被下架怎么申诉",
+  "广告 ACOS 多少算正常",
+];
+
+function StepTryIt({ onNext }: { onNext: () => void }) {
+  const [q, setQ] = useState(DEMO_QUERIES[0]);
+  const [rows, setRows] = useState<any[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  const run = async (query: string) => {
+    setQ(query);
+    setBusy(true);
+    setErr("");
+    setRows(null);
+    try {
+      const { data } = await api.get<{ ok: boolean; results: any[] }>(
+        "/awen-agent/knowledge/search", { params: { q: query, limit: 3 } });
+      setRows(data.results || []);
+    } catch (e) {
+      setErr(errText(e, "试跑失败"));
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <>
+      <div style={S.title}>试跑一次</div>
+      <div style={S.sub}>
+        查一个真实问题。这一步<b>不花钱、不联网</b> —— 用的是随程序自带的亚马逊
+        知识库，跑在你自己这台机器上。
+      </div>
+
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", margin: "14px 0" }}>
+        {DEMO_QUERIES.map((d) => (
+          <button key={d} style={{ ...S.btnSecondary, fontSize: "var(--fs-12)", padding: "5px 10px" }}
+                  disabled={busy} onClick={() => run(d)}>
+            {d}
+          </button>
+        ))}
+      </div>
+
+      {busy && <div style={S.sub}>查询中…</div>}
+      {err && <div style={{ ...S.sub, color: "var(--red)" }}>{err}</div>}
+
+      {rows && rows.length === 0 && (
+        <div style={S.sub}>
+          这次没查到条目。不影响后面使用 —— 知识库可以在「Skill 中心」里补充。
+        </div>
+      )}
+
+      {rows && rows.length > 0 && (
+        <>
+          <div style={{ display: "grid", gap: 8, margin: "10px 0" }}>
+            {rows.map((r) => (
+              <div key={r.id} style={{ padding: 10, background: "var(--bg2)",
+                                       border: "1px solid var(--b)", borderRadius: 6 }}>
+                <div style={{ fontSize: "var(--fs-12)", marginBottom: 4 }}>{r.title}</div>
+                <div style={{ fontSize: "var(--fs-10)", color: "var(--t3)" }}>
+                  {r.category} · {r.source_type} · {r.retrieved_at}
+                </div>
+                {r.source_url && (
+                  <a href={r.source_url} target="_blank" rel="noreferrer"
+                     style={{ fontSize: "var(--fs-10)", color: "var(--acc)" }}>
+                    {String(r.source_url).slice(0, 70)}
+                  </a>
+                )}
+              </div>
+            ))}
+          </div>
+          <div style={{ ...S.sub, fontSize: "var(--fs-11)" }}>
+            注意每条后面都跟着<b>出处和取回日期</b>。这是这个产品和「AI 随口说一句」
+            的区别 —— 结论能被追问到源头。
+          </div>
+        </>
+      )}
+
+      <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+        <button style={S.btnPrimary} onClick={onNext}>
+          {rows ? "下一步 →" : "跳过 →"}
+        </button>
+      </div>
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Step 3 — Done
 // ---------------------------------------------------------------------------
 
@@ -634,7 +751,7 @@ function StepDone({ onFinish }: { onFinish: () => void }) {
         <div style={{ fontSize: 40, marginBottom: 16 }}>✓</div>
         <div style={{ ...S.title, textAlign: "center" }}>配置完成</div>
         <div style={{ ...S.sub, textAlign: "center" }}>
-          IvyeaOps 已就绪。随时可以在「系统配置」页修改或补充任何设置。
+          awenops 已就绪。随时可以在「系统配置」页修改或补充任何设置。
         </div>
         <div
           style={{
@@ -659,8 +776,8 @@ function StepDone({ onFinish }: { onFinish: () => void }) {
                 textAlign: "left",
               }}
             >
-              <div style={{ fontSize: 11, color: "var(--acc)", marginBottom: 4 }}>{name}</div>
-              <div style={{ fontSize: 10, color: "var(--t3)" }}>{desc}</div>
+              <div style={{ fontSize: "var(--fs-11)", color: "var(--acc)", marginBottom: 4 }}>{name}</div>
+              <div style={{ fontSize: "var(--fs-10)", color: "var(--t3)" }}>{desc}</div>
             </div>
           ))}
         </div>
@@ -679,7 +796,7 @@ function StepDone({ onFinish }: { onFinish: () => void }) {
 export default function Setup({ checks }: { checks: SetupChecks }) {
   const navigate = useNavigate();
   const [step, setStep] = useState(0);
-  const TOTAL = 5;
+  const TOTAL = 6;
 
   const next = () => setStep((s) => Math.min(s + 1, TOTAL - 1));
 
@@ -692,7 +809,7 @@ export default function Setup({ checks }: { checks: SetupChecks }) {
     navigate("/", { replace: true });
   };
 
-  const STEP_LABELS = ["欢迎", "Agent", "兜底模型", "密钥", "完成"];
+  const STEP_LABELS = ["欢迎", "Agent", "兜底模型", "密钥", "试跑", "完成"];
 
   return (
     <div style={S.page}>
@@ -706,7 +823,8 @@ export default function Setup({ checks }: { checks: SetupChecks }) {
         {step === 1 && <StepAgents checks={checks} onNext={next} />}
         {step === 2 && <StepFallbackModel onNext={next} />}
         {step === 3 && <StepApiKeys checks={checks} onNext={next} />}
-        {step === 4 && <StepDone onFinish={finish} />}
+        {step === 4 && <StepTryIt onNext={next} />}
+        {step === 5 && <StepDone onFinish={finish} />}
       </div>
     </div>
   );

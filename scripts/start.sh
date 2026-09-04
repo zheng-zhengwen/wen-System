@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Start IvyeaOps (Linux/macOS). Host/port are read from server/.env.
+# Start awenops (Linux/macOS). Host/port are read from server/.env.
 #
 # Usage:
 #   bash scripts/start.sh

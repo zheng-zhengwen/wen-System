@@ -2,20 +2,21 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import json
 import sqlite3
 import time
 import uuid
-from pathlib import Path
 from typing import AsyncGenerator, List
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from app.core.config import settings
 from app.core.security import require_user
 from app.services import sorftime_service, ai_synthesis_service
+
+logger = logging.getLogger("awen.routers.market")
 
 router = APIRouter()
 
@@ -91,7 +92,7 @@ def save_history(*, mode: str, query: str, marketplace: str, provider: str = "",
                  elapsed_s: float = 0.0, ts: int | None = None, report: str = "",
                  entry_id: str = "") -> str:
     """Persist one market report row; returns its id.
-    Shared by POST /history (frontend) and the IvyeaAgent panel bridge."""
+    Shared by POST /history (frontend) and the awenAgent panel bridge."""
     ts = int(ts if ts is not None else time.time())
     entry_id = entry_id or str(ts) or uuid.uuid4().hex
     with _history_connect() as conn:
@@ -120,9 +121,9 @@ def add_history(entry: HistoryEntryIn, _user: str = Depends(require_user)) -> di
 async def generate_report(mode: str, query: str, marketplace: str,
                           data_source: str = "sorftime") -> dict:
     """Collect + synthesize + persist one market report (no SSE), then return it.
-    Used by the IvyeaAgent panel bridge so an agent-driven 市场调研 lands in the
-    panel's 历史. Synthesis skips the ivyea-agent provider to avoid agent→ops→agent
-    nesting (the caller is already IvyeaAgent)."""
+    Used by the awenAgent panel bridge so an agent-driven 市场调研 lands in the
+    panel's 历史. Synthesis skips the awen-agent provider to avoid agent→ops→agent
+    nesting (the caller is already awenAgent)."""
     mode = mode if mode in ("keyword", "asin") else "keyword"
     marketplace = (marketplace or "US").strip().upper()
     data_source = _normalize_data_source(data_source)
@@ -261,7 +262,7 @@ async def _stream_synthesis(
             try:
                 await task
             except (asyncio.CancelledError, Exception):
-                pass
+                logger.debug("task 失败（旁路，已忽略）", exc_info=True)
 
 
 async def _run_research(req: ResearchReq) -> AsyncGenerator[str, None]:
@@ -270,7 +271,7 @@ async def _run_research(req: ResearchReq) -> AsyncGenerator[str, None]:
     source_label = _source_label(data_source)
     yield _sse({"type": "source", "requested": data_source, "actual": data_source, "label": source_label})
     # Always collect market data through the server-side MCP client. It reads the
-    # single IvyeaOps system setting and works for every signed-in user. Depending
+    # single awenops system setting and works for every signed-in user. Depending
     # on a per-OS/per-user Hermes config caused first-run Windows sessions to call
     # Sorftime without a key even though the key was present in System Settings.
     hermes_first = False

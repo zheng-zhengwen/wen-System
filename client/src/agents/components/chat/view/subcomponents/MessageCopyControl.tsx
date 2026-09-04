@@ -127,7 +127,7 @@ const MessageCopyControl = ({
 
   const toneClass = messageType === 'user'
     ? 'text-blue-100 hover:text-white'
-    : 'text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300';
+    : 'text-gray-400 hover:text-gray-600 text-gray-500 hover:text-gray-300';
   const copyTitle = copied ? t('copyMessage.copied') : t('copyMessage.copy');
   const rootClassName = canSelectCopyFormat
     ? 'relative flex min-w-0 flex-1 items-center gap-0.5 sm:min-w-max sm:flex-none sm:w-auto'
@@ -164,7 +164,7 @@ const MessageCopyControl = ({
             <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
           </svg>
         )}
-        <span className="text-[10px] font-semibold uppercase tracking-wide">{selectedFormatTag}</span>
+        <span className="text-[length:var(--fs-10)] font-semibold uppercase tracking-wide">{selectedFormatTag}</span>
       </button>
 
       {canSelectCopyFormat && (
@@ -187,7 +187,7 @@ const MessageCopyControl = ({
           </button>
 
           {isDropdownOpen && (
-            <div className="absolute left-auto top-full z-30 mt-1 min-w-36 rounded-md border border-gray-200 bg-white p-1 shadow-lg dark:border-gray-700 dark:bg-gray-900">
+            <div className="absolute left-auto top-full z-30 mt-1 min-w-36 rounded-md border border-gray-200 bg-white p-1 shadow-lg border-gray-700 bg-gray-900">
               {copyFormatOptions.map((option) => {
                 const isSelected = option.format === selectedFormat;
                 return (
@@ -196,8 +196,8 @@ const MessageCopyControl = ({
                     type="button"
                     onClick={() => handleFormatChange(option.format)}
                     className={`block w-full rounded px-2 py-1.5 text-left transition-colors ${isSelected
-                      ? 'bg-gray-100 text-gray-900 dark:bg-gray-800 dark:text-gray-100'
-                      : 'text-gray-700 hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-gray-800/60'
+                      ? 'bg-gray-100 text-gray-900 bg-gray-800 text-gray-100'
+                      : 'text-gray-700 hover:bg-gray-50 text-gray-300 hover:bg-gray-800/60'
                       }`}
                   >
                     <span className="block text-xs font-medium">{option.label}</span>

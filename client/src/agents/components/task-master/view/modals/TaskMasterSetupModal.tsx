@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { Suspense, lazy, useState } from 'react';
 import { Plus, Terminal } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { cn } from '../../../../lib/utils';
-import Shell from '../../../shell/view/Shell';
+// 同 StandaloneShell：xterm 按需加载，别钉在首屏块里。
+const Shell = lazy(() => import('../../../shell/view/Shell'));
 import type { TaskMasterProject } from '../../types';
 
 type TaskMasterSetupModalProps = {
@@ -32,21 +33,21 @@ export default function TaskMasterSetupModal({ isOpen, project, onClose, onAfter
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 p-4 pt-16 backdrop-blur-sm">
-      <div className="flex h-[600px] w-full max-w-4xl flex-col rounded-lg border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900">
-        <div className="flex items-center justify-between border-b border-gray-200 p-4 dark:border-gray-700">
+      <div className="flex h-[600px] w-full max-w-4xl flex-col rounded-lg border border-gray-200 bg-white shadow-xl border-gray-700 bg-gray-900">
+        <div className="flex items-center justify-between border-b border-gray-200 p-4 border-gray-700">
           <div className="flex items-center gap-3">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-100 dark:bg-blue-900/50">
-              <Terminal className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-100 bg-blue-900/50">
+              <Terminal className="h-4 w-4 text-blue-600 text-blue-400" />
             </div>
             <div>
-              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">{t('setupModal.title')}</h2>
-              <p className="text-sm text-gray-500 dark:text-gray-400">{t('setupModal.subtitle', { projectName: project.displayName })}</p>
+              <h2 className="text-lg font-semibold text-gray-900 text-white">{t('setupModal.title')}</h2>
+              <p className="text-sm text-gray-500 text-gray-400">{t('setupModal.subtitle', { projectName: project.displayName })}</p>
             </div>
           </div>
 
           <button
             onClick={closeModal}
-            className="rounded-md p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-800 dark:hover:text-gray-300"
+            className="rounded-md p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600 hover:bg-gray-800 hover:text-gray-300"
             title="Close"
           >
             <Plus className="h-5 w-5 rotate-45" />
@@ -55,6 +56,7 @@ export default function TaskMasterSetupModal({ isOpen, project, onClose, onAfter
 
         <div className="flex-1 p-4">
           <div className="h-full overflow-hidden rounded-lg bg-black">
+            <Suspense fallback={null}>
             <Shell
               selectedProject={project}
               selectedSession={null}
@@ -67,14 +69,15 @@ export default function TaskMasterSetupModal({ isOpen, project, onClose, onAfter
                 }
               }}
             />
+            </Suspense>
           </div>
         </div>
 
-        <div className="border-t border-gray-200 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-800/50">
+        <div className="border-t border-gray-200 bg-gray-50 p-4 border-gray-700 bg-gray-800/50">
           <div className="flex items-center justify-between">
-            <div className="text-sm text-gray-600 dark:text-gray-400">
+            <div className="text-sm text-gray-600 text-gray-400">
               {isTaskMasterComplete ? (
-                <span className="flex items-center gap-2 text-green-600 dark:text-green-400">
+                <span className="flex items-center gap-2 text-green-600 text-green-400">
                   <span className="h-2 w-2 rounded-full bg-green-500" />
                   {t('setupModal.completed')}
                 </span>
@@ -89,7 +92,7 @@ export default function TaskMasterSetupModal({ isOpen, project, onClose, onAfter
                 'px-4 py-2 text-sm font-medium rounded-md transition-colors',
                 isTaskMasterComplete
                   ? 'bg-green-600 hover:bg-green-700 text-white'
-                  : 'text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-600',
+                  : 'text-gray-700 text-gray-300 bg-white bg-gray-700 border border-gray-300 border-gray-600 hover:bg-gray-50 hover:bg-gray-600',
               )}
             >
               {isTaskMasterComplete ? t('setupModal.closeContinueButton') : t('setupModal.closeButton')}

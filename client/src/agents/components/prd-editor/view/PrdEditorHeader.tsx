@@ -6,10 +6,8 @@ import {
   FileText,
   Maximize2,
   Minimize2,
-  Moon,
   Save,
   Sparkles,
-  Sun,
   X,
 } from 'lucide-react';
 import { cn } from '../../../lib/utils';
@@ -22,8 +20,6 @@ type PrdEditorHeaderProps = {
   onTogglePreview: () => void;
   wordWrap: boolean;
   onToggleWordWrap: () => void;
-  isDarkMode: boolean;
-  onToggleTheme: () => void;
   onDownload: () => void;
   onOpenGenerateTasks: () => void;
   canGenerateTasks: boolean;
@@ -50,8 +46,8 @@ function HeaderIconButton({ title, onClick, icon, active = false }: HeaderIconBu
       className={cn(
         'p-2 rounded-md min-w-[44px] min-h-[44px] md:min-w-0 md:min-h-0 flex items-center justify-center transition-colors',
         active
-          ? 'text-purple-600 dark:text-purple-400 bg-purple-50 dark:bg-purple-900/50'
-          : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-800',
+          ? 'text-purple-600 text-purple-400 bg-purple-50 bg-purple-900/50'
+          : 'text-gray-600 text-gray-400 hover:text-gray-900 hover:text-white hover:bg-gray-100 hover:bg-gray-800',
       )}
     >
       {icon}
@@ -67,8 +63,6 @@ export default function PrdEditorHeader({
   onTogglePreview,
   wordWrap,
   onToggleWordWrap,
-  isDarkMode,
-  onToggleTheme,
   onDownload,
   onOpenGenerateTasks,
   canGenerateTasks,
@@ -82,7 +76,7 @@ export default function PrdEditorHeader({
   const fileNameInputRef = useRef<HTMLInputElement | null>(null);
 
   return (
-    <div className="flex min-w-0 flex-shrink-0 items-center justify-between border-b border-gray-200 p-4 dark:border-gray-700">
+    <div className="flex min-w-0 flex-shrink-0 items-center justify-between border-b border-gray-200 p-4 border-gray-700">
       <div className="flex min-w-0 flex-1 items-center gap-3">
         <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded bg-purple-600">
           <FileText className="h-4 w-4 text-white" />
@@ -91,24 +85,24 @@ export default function PrdEditorHeader({
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center">
             <div className="flex min-w-0 flex-1 items-center gap-1">
-              <div className="flex min-w-0 flex-1 items-center rounded-md border border-gray-200 bg-gray-50 px-3 py-2 focus-within:border-purple-500 focus-within:ring-2 focus-within:ring-purple-500 dark:border-gray-600 dark:bg-gray-700 dark:focus-within:border-purple-400 dark:focus-within:ring-purple-400">
+              <div className="flex min-w-0 flex-1 items-center rounded-md border border-gray-200 bg-gray-50 px-3 py-2 focus-within:border-purple-500 focus-within:ring-2 focus-within:ring-purple-500 border-gray-600 bg-gray-700 focus-within:border-purple-400 focus-within:ring-purple-400">
                 <input
                   ref={fileNameInputRef}
                   type="text"
                   value={fileName}
                   onChange={(event) => onFileNameChange(event.target.value)}
-                  className="min-w-0 flex-1 border-none bg-transparent text-base font-medium text-gray-900 placeholder-gray-400 outline-none dark:text-white dark:placeholder-gray-500 sm:text-sm"
+                  className="min-w-0 flex-1 border-none bg-transparent text-base font-medium text-gray-900 placeholder-gray-400 outline-none text-white placeholder-gray-500 sm:text-sm"
                   placeholder="Enter PRD filename"
                   maxLength={100}
                 />
-                <span className="ml-1 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400 sm:text-xs">
+                <span className="ml-1 whitespace-nowrap text-sm text-gray-500 text-gray-400 sm:text-xs">
                   .txt
                 </span>
               </div>
 
               <button
                 onClick={() => fileNameInputRef.current?.focus()}
-                className="p-1 text-gray-400 transition-colors hover:text-purple-600 dark:hover:text-purple-400"
+                className="p-1 text-gray-400 transition-colors hover:text-purple-600 hover:text-purple-400"
                 title="Focus filename input"
               >
                 <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -123,18 +117,18 @@ export default function PrdEditorHeader({
             </div>
 
             <div className="flex flex-shrink-0 items-center gap-2">
-              <span className="whitespace-nowrap rounded bg-purple-100 px-2 py-1 text-xs text-purple-600 dark:bg-purple-900 dark:text-purple-300">
+              <span className="whitespace-nowrap rounded bg-purple-100 px-2 py-1 text-xs text-purple-600 bg-purple-900 text-purple-300">
                 PRD
               </span>
               {isNewFile && (
-                <span className="whitespace-nowrap rounded bg-green-100 px-2 py-1 text-xs text-green-600 dark:bg-green-900 dark:text-green-300">
+                <span className="whitespace-nowrap rounded bg-green-100 px-2 py-1 text-xs text-green-600 bg-green-900 text-green-300">
                   New
                 </span>
               )}
             </div>
           </div>
 
-          <p className="mt-1 truncate text-xs text-gray-500 dark:text-gray-400 sm:text-sm">
+          <p className="mt-1 truncate text-xs text-gray-500 text-gray-400 sm:text-sm">
             Product Requirements Document
           </p>
         </div>
@@ -153,18 +147,6 @@ export default function PrdEditorHeader({
           onClick={onToggleWordWrap}
           icon={<span className="font-mono text-sm font-bold md:text-xs">WRAP</span>}
           active={wordWrap}
-        />
-
-        <HeaderIconButton
-          title="Toggle theme"
-          onClick={onToggleTheme}
-          icon={
-            isDarkMode ? (
-              <Sun className="h-5 w-5 md:h-4 md:w-4" />
-            ) : (
-              <Moon className="h-5 w-5 md:h-4 md:w-4" />
-            )
-          }
         />
 
         <HeaderIconButton
@@ -211,7 +193,7 @@ export default function PrdEditorHeader({
 
         <button
           onClick={onToggleFullscreen}
-          className="hidden items-center justify-center rounded-md p-2 text-gray-600 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-white md:flex"
+          className="hidden items-center justify-center rounded-md p-2 text-gray-600 hover:bg-gray-100 hover:text-gray-900 text-gray-400 hover:bg-gray-800 hover:text-white md:flex"
           title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
         >
           {isFullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}

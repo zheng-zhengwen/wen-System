@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { getSettings, updateSettings, StudioSettings } from "../../api/skill";
-import SheetSelect from "../../components/SheetSelect";
+import { errText } from "../../lib/errText";
 
 /**
  * Settings are stored on the server (used by the snapshot prune job and trash
  * TTL on the backend). A few fields are informational only for now:
  *   - autosave_debounce_ms: saved but not yet consumed by the editor (hardcoded 600).
- *   - theme: saved but light mode is not styled yet.
+ *   - theme: retained by the server for backwards compatibility and fixed to light.
  */
 export default function SettingsPage() {
   const [saved, setSaved] = useState<StudioSettings | null>(null);
@@ -24,7 +24,7 @@ export default function SettingsPage() {
       setSaved(s);
       setDraft(s);
     } catch (e: any) {
-      setErr(e?.response?.data?.detail ?? e?.message ?? "加载失败");
+      setErr(errText(e, "加载失败"));
     } finally {
       setLoading(false);
     }
@@ -38,8 +38,7 @@ export default function SettingsPage() {
     (
       draft.snapshot_retention !== saved.snapshot_retention ||
       draft.trash_ttl_days !== saved.trash_ttl_days ||
-      draft.autosave_debounce_ms !== saved.autosave_debounce_ms ||
-      draft.theme !== saved.theme
+      draft.autosave_debounce_ms !== saved.autosave_debounce_ms
     );
 
   const update = <K extends keyof StudioSettings>(key: K, v: StudioSettings[K]) => {
@@ -57,7 +56,7 @@ export default function SettingsPage() {
       setToast("设置已保存");
       window.setTimeout(() => setToast(null), 3000);
     } catch (e: any) {
-      setErr(e?.response?.data?.detail ?? e?.message ?? "保存失败");
+      setErr(errText(e, "保存失败"));
     } finally {
       setSaving(false);
     }
@@ -122,19 +121,6 @@ export default function SettingsPage() {
           </div>
         </div>
 
-        <div className="sks-form-row">
-          <label>主题</label>
-          <SheetSelect
-            className="sks-input"
-            value={draft.theme}
-            onChange={(v) => update("theme", v as "dark" | "light")}
-            title="主题"
-            options={[
-              { value: "dark", label: "暗色（当前唯一已实装）" },
-              { value: "light", label: "明色（保留字段，尚未样式化）" },
-            ]}
-          />
-        </div>
       </section>
 
       <div className="sks-set-foot">

@@ -4,7 +4,7 @@ A "project" here means "a working directory where one or more AI sessions
 were run". We never persist this — it's derived from three sources at
 read time and cached briefly:
 
-  1. IvyeaOps's own ``agent_sessions`` table (``workdir`` column)
+  1. awenops's own ``agent_sessions`` table (``workdir`` column)
   2. Claude Code's ``~/.claude/projects/<encoded-cwd>/<session>.jsonl``
   3. Codex's ``~/.codex/sessions/YYYY/MM/DD/*.jsonl`` (each session_meta
      line carries a ``cwd`` field in its payload)
@@ -49,7 +49,7 @@ def refresh() -> None:
 @dataclass
 class ProjectSession:
     """A single session row within a project, merged across sources."""
-    id: str                       # IvyeaOps session id, claude sessionId, or codex uuid
+    id: str                       # awenops session id, claude sessionId, or codex uuid
     source: str                   # "hub" | "claude" | "codex"
     title: str
     agent: str | None             # human-readable agent name
@@ -353,7 +353,7 @@ def _parse_iso(s: str | None) -> float | None:
 def list_projects(force: bool = False) -> list[Project]:
     """Return all known projects, newest first.
 
-    Aggregates IvyeaOps agent_sessions + claude + codex; merges by cwd.
+    Aggregates awenops agent_sessions + claude + codex; merges by cwd.
     Result is cached for _CACHE_TTL_S; pass ``force=True`` to bypass.
     """
     now = time.time()

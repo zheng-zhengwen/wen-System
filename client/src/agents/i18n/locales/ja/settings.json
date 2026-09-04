@@ -118,10 +118,6 @@
     }
   },
   "appearanceSettings": {
-    "darkMode": {
-      "label": "ダークモード",
-      "description": "ライトテーマとダークテーマを切り替えます"
-    },
     "projectSorting": {
       "label": "プロジェクトの並び順",
       "description": "サイドバーでのプロジェクトの並び順を設定します",

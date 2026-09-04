@@ -51,8 +51,22 @@ async def status() -> Dict[str, Any]:
 async def probe() -> Dict[str, Any]:
     """Verify both backends end-to-end: OpenAPI (token + signed read) and, if an
     X-Mcp-Key is configured, MCP (tools/list classified read/write)."""
-    out: Dict[str, Any] = {"openapi": None, "mcp": None}
+    out: Dict[str, Any] = {"ssh": None, "openapi": None, "mcp": None}
     from app.services import lingxing_openapi as lo
+    from app.services import lingxing_ssh_proxy
+    ssh_status = lingxing_ssh_proxy.public_status()
+    if ssh_status.get("configured"):
+        try:
+            out["ssh"] = await lingxing_ssh_proxy.probe()
+        except lingxing_ssh_proxy.SSHProxyError as e:
+            out["ssh"] = {"configured": True, "active": False, "ok": False, "error": str(e)}
+            if lo.is_configured():
+                out["openapi"] = {"ok": False, "error": "SSH 跳板未连通，未尝试 OpenAPI"}
+            if lx._key():
+                out["mcp"] = {"ok": False, "error": "SSH 跳板未连通，未尝试 MCP"}
+            return out
+    else:
+        out["ssh"] = {"configured": False, "active": False, "mode": "direct", "ok": True}
     if lo.is_configured():
         try:
             out["openapi"] = await lx.openapi_verify(caller="probe")
@@ -108,9 +122,58 @@ async def optimizer_run_detail(run_id: str) -> Dict[str, Any]:
     return run
 
 
+@router.get("/optimizer/runs/{run_id}/findings")
+async def optimizer_run_findings(run_id: str) -> Dict[str, Any]:
+    """把这次运行的候选操作译成统一结论契约（core/findings）。
+
+    比 LLM 那条链路的结论"硬"一档：证据是接口取回来的真实指标，不是模型转述的。
+    同一个结论卡片、同一份带证据页的交付物，这边写的是「花费 820.50 USD /
+    点击 312 / 订单 0，取自 lingxing，近 30 天」。"""
+    from app.services import lingxing_findings as lxf
+    out = lxf.findings_for_run(run_id)
+    if out is None:
+        raise HTTPException(status_code=404, detail="未找到该优化运行")
+    return out
+
+
+@router.get("/optimizer/runs/{run_id}/deliverable")
+async def optimizer_run_deliverable(run_id: str, fmt: str = "xlsx"):
+    """导出成可以直接发给别人的交付物：结论 / 证据 / 说明 三页。"""
+    from fastapi.responses import FileResponse
+
+    from pathlib import Path
+
+    from app.core.config import settings
+    from app.services import deliverable, lingxing_findings as lxf
+    if fmt not in ("xlsx", "md"):
+        raise HTTPException(status_code=400, detail="fmt 只支持 xlsx 或 md")
+    findings = lxf.findings_for_run(run_id)
+    if findings is None:
+        raise HTTPException(status_code=404, detail="未找到该优化运行")
+
+    meta = {"job_id": run_id, "kind": "领星广告规则优化"}
+    out_dir = Path(settings.data_dir) / "lingxing" / "deliverables"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    if fmt == "md":
+        path = out_dir / f"{run_id}.md"
+        path.write_text(deliverable.build_markdown(findings, meta), encoding="utf-8")
+        return FileResponse(path, media_type="text/markdown",
+                            filename=f"领星广告优化-{run_id}-结论.md")
+    path = deliverable.build_xlsx(out_dir / f"{run_id}.xlsx", findings, meta)
+    return FileResponse(
+        path,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        filename=f"领星广告优化-{run_id}-交付物.xlsx")
+
+
 @router.get("/dashboard")
 async def dashboard(sids: str = "", days: int = 7) -> Dict[str, Any]:
-    """广告数据大盘聚合（按店铺/活动/天）。sids 逗号分隔，空=全部店铺。"""
+    """广告数据大盘聚合（按店铺/活动/天）。sids 逗号分隔，空=全部店铺。
+
+    **UI 已不再使用**：驾驶舱的广告看板（/api/cockpit/ads）承接了这块，且是
+    它的超集。保留这条路由是因为 agent 工具 ``lingxing_dashboard`` 直接调它 ——
+    详见 services/lingxing_dashboard.py 的模块说明。
+    """
     from app.services import lingxing_dashboard as lxdash
     sid_list = [int(x) for x in sids.replace("，", ",").split(",") if x.strip().isdigit()] or None
     try:
@@ -222,8 +285,8 @@ async def help_doc() -> Dict[str, Any]:
 async def review_providers() -> Dict[str, Any]:
     cfg = _hs.load()
     return {"available": lxo.available_providers(),
-            "review_providers": cfg.get("lingxing_review_providers") or "ivyea-agent,deepseek,assistant",
-            "analysis_provider": cfg.get("lingxing_analysis_provider") or "ivyea-agent",
+            "review_providers": cfg.get("lingxing_review_providers") or "awen-agent,deepseek,assistant",
+            "analysis_provider": cfg.get("lingxing_analysis_provider") or "awen-agent",
             "personas": [p[0] for p in lxo._REVIEWERS],
             "rules_doc": _hs.get("lingxing_rules_doc") or "",
             "rules_doc_default": _hs._DEFAULTS.get("lingxing_rules_doc", "")}

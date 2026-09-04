@@ -26,6 +26,7 @@ from __future__ import annotations
 from app.core.proc import no_window_kwargs
 
 import asyncio
+import logging
 import json
 import os
 import re
@@ -33,9 +34,11 @@ import shutil
 import time
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Optional
 
 from app.agents import claude_sessions
+
+logger = logging.getLogger("awen.agents.claude_driver")
 
 # sessionId -> {"proc", "status", "writer", "start"}
 _active_sessions: dict[str, dict] = {}
@@ -62,7 +65,7 @@ def _claude_bin() -> str:
         if override and os.path.exists(override):
             return override
     except Exception:
-        pass
+        logger.debug("override = 失败（旁路，已忽略）", exc_info=True)
     try:
         from app.core import integrations
         search = os.pathsep.join([p for p in integrations.extra_path_dirs() if p]
@@ -118,7 +121,7 @@ async def abort_session(session_id: str) -> bool:
             except asyncio.TimeoutError:
                 proc.kill()
     except (ProcessLookupError, Exception):
-        pass
+        logger.debug("proc.terminate 失败（旁路，已忽略）", exc_info=True)
     _active_sessions.pop(session_id, None)
     return True
 
@@ -129,6 +132,27 @@ def reconnect_writer(session_id: str, ws) -> bool:
         return False
     s["writer"].update_ws(ws)
     return True
+
+
+async def inject(session_id: str, text: str) -> dict:
+    """把一条追加指令送进正在跑的那一轮。
+
+    claude 的交互模式下 stdin 一直开着（到 result 才关），多写一条 user 消息就是它
+    原生的排队语义 —— 这也正是 Claude Code 自己在你打断它时做的事。
+    非交互（bypassPermissions）那档 stdin 在开头就关了，明确回不接。
+    """
+    s = _active_sessions.get(session_id)
+    if not s or s.get("status") != "active":
+        return {"ok": True, "accepted": False, "reason": "no_live_turn"}
+    proc = s.get("proc")
+    if proc is None or proc.stdin is None or proc.stdin.is_closing():
+        return {"ok": True, "accepted": False, "reason": "no_input_channel"}
+    try:
+        await _write_stdin(proc, _build_user_message(text, None))
+    except Exception:  # noqa: BLE001
+        logger.debug("claude inject 写 stdin 失败", exc_info=True)
+        return {"ok": True, "accepted": False, "reason": "write_failed"}
+    return {"ok": True, "accepted": True, "item": {"id": _rid(), "text": text}}
 
 
 def resolve_tool_approval(request_id: str, decision: dict) -> None:
@@ -304,7 +328,7 @@ async def query_claude(command: str, options: dict, writer) -> None:
         if not interactive and proc.stdin is not None:
             proc.stdin.close()
     except Exception:
-        pass
+        logger.debug("_write_stdin 失败（旁路，已忽略）", exc_info=True)
 
     session_created_sent = False
     try:

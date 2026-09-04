@@ -53,8 +53,8 @@ async function loadLocale(lng) {
 }
 
 // Get saved language preference from localStorage
-// Use 'ivyea_ops_lang' key to avoid reading stale 'userLanguage: en' from old installs
-const LANG_KEY = 'ivyea_ops_lang';
+// Use 'awenops_lang' key to avoid reading stale 'userLanguage: en' from old installs
+const LANG_KEY = 'awenops_lang';
 const getSavedLanguage = () => {
   try {
     const saved = localStorage.getItem(LANG_KEY);
@@ -93,7 +93,7 @@ i18n
       },
     },
 
-    // Default language — zh-CN for IvyeaOps integration
+    // Default language — zh-CN for awenops integration
     lng: getSavedLanguage(),
 
     // Fallback language when a translation is missing

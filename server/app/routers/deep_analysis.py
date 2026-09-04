@@ -9,12 +9,12 @@ Tools:
 """
 from __future__ import annotations
 
-import asyncio
 import json
+import logging
 import sqlite3
 import time
 import uuid
-from typing import List, Optional
+from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -22,6 +22,8 @@ from pydantic import BaseModel, Field
 
 from app.core.security import require_user
 from app.services import sif_service
+
+logger = logging.getLogger("awen.routers.deep_analysis")
 
 router = APIRouter(dependencies=[Depends(require_user)])
 
@@ -93,7 +95,7 @@ def delete_history_entry(entry_id: str, _user: str = Depends(require_user)) -> d
 async def generate_report(tool: str, query: str, country: str = "US") -> dict:
     """Run one structured analysis (keyword/competitor/traffic), synthesize a
     Markdown narrative, persist it to the 分析工具 history, and return it. Used by
-    the IvyeaAgent bridge. Synthesis skips ivyea-agent (anti-recursion)."""
+    the awenAgent bridge. Synthesis skips awen-agent (anti-recursion)."""
     tool = (tool or "").strip().lower()
     label = _DEEP_TOOLS.get(tool)
     if not label:
@@ -179,7 +181,7 @@ def _save_structured_history(tool: str, query: str, country: str,
                      country=country, provider="sorftime", elapsed_s=elapsed_s,
                      report=json.dumps(data, ensure_ascii=False))
     except Exception:
-        pass  # history is best-effort; never fail the analysis over it
+        logger.debug("save_history 失败（旁路，已忽略）", exc_info=True)
 
 
 @router.post("/keyword")

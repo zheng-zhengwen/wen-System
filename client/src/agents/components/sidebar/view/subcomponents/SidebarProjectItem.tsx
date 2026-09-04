@@ -36,6 +36,8 @@ type SidebarProjectItemProps = {
   onSaveProjectName: (projectName: string) => void;
   onDeleteProject: (project: Project) => void;
   onSessionSelect: (session: SessionWithProvider, projectName: string) => void;
+  /** 此刻真的有一轮在跑的会话 id（左栏据此打闪烁标记）。 */
+  processingSessions?: Set<string>;
   onDeleteSession: (
     projectName: string,
     sessionId: string,
@@ -82,6 +84,7 @@ export default function SidebarProjectItem({
   onSaveProjectName,
   onDeleteProject,
   onSessionSelect,
+  processingSessions,
   onDeleteSession,
   onLoadMoreSessions,
   onNewSession,
@@ -125,7 +128,7 @@ export default function SidebarProjectItem({
               isSelected && 'bg-primary/5 border-primary/20',
               isStarred &&
                 !isSelected &&
-                'bg-yellow-50/50 dark:bg-yellow-900/5 border-yellow-200/30 dark:border-yellow-800/30',
+                'bg-yellow-50/50 bg-yellow-900/5 border-yellow-200/30 border-yellow-800/30',
             )}
             onClick={toggleProject}
           >
@@ -135,8 +138,8 @@ export default function SidebarProjectItem({
                   className={cn(
                     'w-8 h-8 rounded-lg flex items-center justify-center active:scale-90 transition-all duration-150 border',
                     isStarred
-                      ? 'bg-yellow-500/10 dark:bg-yellow-900/30 border-yellow-200 dark:border-yellow-800'
-                      : 'bg-gray-500/10 dark:bg-gray-900/30 border-gray-200 dark:border-gray-800',
+                      ? 'bg-yellow-500/10 bg-yellow-900/30 border-yellow-200 border-yellow-800'
+                      : 'bg-gray-500/10 bg-gray-900/30 border-gray-200 border-gray-800',
                   )}
                   onClick={(event) => {
                     event.stopPropagation();
@@ -148,8 +151,8 @@ export default function SidebarProjectItem({
                     className={cn(
                       'w-4 h-4 transition-colors',
                       isStarred
-                        ? 'text-yellow-600 dark:text-yellow-400 fill-current'
-                        : 'text-gray-600 dark:text-gray-400',
+                        ? 'text-yellow-600 text-yellow-400 fill-current'
+                        : 'text-gray-600 text-gray-400',
                     )}
                   />
                 </button>
@@ -202,7 +205,7 @@ export default function SidebarProjectItem({
                 {isEditing ? (
                   <>
                     <button
-                      className="flex h-8 w-8 items-center justify-center rounded-lg bg-green-500 shadow-sm transition-all duration-150 active:scale-90 active:shadow-none dark:bg-green-600"
+                      className="flex h-8 w-8 items-center justify-center rounded-lg bg-green-500 shadow-sm transition-all duration-150 active:scale-90 active:shadow-none bg-green-600"
                       onClick={(event) => {
                         event.stopPropagation();
                         saveProjectName();
@@ -211,7 +214,7 @@ export default function SidebarProjectItem({
                       <Check className="h-4 w-4 text-white" />
                     </button>
                     <button
-                      className="flex h-8 w-8 items-center justify-center rounded-lg bg-gray-500 shadow-sm transition-all duration-150 active:scale-90 active:shadow-none dark:bg-gray-600"
+                      className="flex h-8 w-8 items-center justify-center rounded-lg bg-gray-500 shadow-sm transition-all duration-150 active:scale-90 active:shadow-none bg-gray-600"
                       onClick={(event) => {
                         event.stopPropagation();
                         onCancelEditingProject();
@@ -223,17 +226,17 @@ export default function SidebarProjectItem({
                 ) : (
                   <>
                     <button
-                      className="flex h-8 w-8 items-center justify-center rounded-lg border border-red-200 bg-red-500/10 active:scale-90 dark:border-red-800 dark:bg-red-900/30"
+                      className="flex h-8 w-8 items-center justify-center rounded-lg border border-red-200 bg-red-500/10 active:scale-90 border-red-800 bg-red-900/30"
                       onClick={(event) => {
                         event.stopPropagation();
                         onDeleteProject(project);
                       }}
                     >
-                      <Trash2 className="h-4 w-4 text-red-600 dark:text-red-400" />
+                      <Trash2 className="h-4 w-4 text-red-600 text-red-400" />
                     </button>
 
                     <button
-                      className="flex h-8 w-8 items-center justify-center rounded-lg border border-primary/20 bg-primary/10 active:scale-90 dark:border-primary/30 dark:bg-primary/20"
+                      className="flex h-8 w-8 items-center justify-center rounded-lg border border-primary/20 bg-primary/10 active:scale-90 border-primary/30 bg-primary/20"
                       onClick={(event) => {
                         event.stopPropagation();
                         onStartEditingProject(project);
@@ -260,10 +263,10 @@ export default function SidebarProjectItem({
           variant="ghost"
           className={cn(
             'hidden md:flex w-full justify-between p-2 h-auto font-normal hover:bg-accent/50',
-            isSelected && 'bg-primary/10 text-primary hover:bg-primary/15 dark:bg-primary/20 dark:text-primary',
+            isSelected && 'bg-primary/10 text-primary hover:bg-primary/15 bg-primary/20 text-primary',
             isStarred &&
               !isSelected &&
-              'bg-yellow-50/50 dark:bg-yellow-900/10 hover:bg-yellow-100/50 dark:hover:bg-yellow-900/20',
+              'bg-yellow-50/50 bg-yellow-900/10 hover:bg-yellow-100/50 hover:bg-yellow-900/20',
           )}
           onClick={selectAndToggleProject}
         >
@@ -272,7 +275,7 @@ export default function SidebarProjectItem({
               className={cn(
                 'w-6 h-6 flex items-center justify-center rounded cursor-pointer transition-all duration-200',
                 isStarred
-                  ? 'hover:bg-yellow-50 dark:hover:bg-yellow-900/20'
+                  ? 'hover:bg-yellow-50 hover:bg-yellow-900/20'
                   : 'opacity-40 hover:opacity-100 hover:bg-accent',
               )}
               onClick={(event) => {
@@ -285,7 +288,7 @@ export default function SidebarProjectItem({
                 className={cn(
                   'w-3 h-3 transition-colors',
                   isStarred
-                    ? 'text-yellow-600 dark:text-yellow-400 fill-current'
+                    ? 'text-yellow-600 text-yellow-400 fill-current'
                     : 'text-muted-foreground',
                 )}
               />
@@ -342,7 +345,7 @@ export default function SidebarProjectItem({
             {isEditing ? (
               <>
                 <div
-                  className="flex h-6 w-6 cursor-pointer items-center justify-center rounded text-green-600 transition-colors hover:bg-green-50 hover:text-green-700 dark:hover:bg-green-900/20"
+                  className="flex h-6 w-6 cursor-pointer items-center justify-center rounded text-green-600 transition-colors hover:bg-green-50 hover:text-green-700 hover:bg-green-900/20"
                   onClick={(event) => {
                     event.stopPropagation();
                     saveProjectName();
@@ -351,7 +354,7 @@ export default function SidebarProjectItem({
                   <Check className="h-3 w-3" />
                 </div>
                 <div
-                  className="flex h-6 w-6 cursor-pointer items-center justify-center rounded text-gray-500 transition-colors hover:bg-gray-50 hover:text-gray-700 dark:hover:bg-gray-800"
+                  className="flex h-6 w-6 cursor-pointer items-center justify-center rounded text-gray-500 transition-colors hover:bg-gray-50 hover:text-gray-700 hover:bg-gray-800"
                   onClick={(event) => {
                     event.stopPropagation();
                     onCancelEditingProject();
@@ -373,14 +376,14 @@ export default function SidebarProjectItem({
                   <Edit3 className="h-3 w-3" />
                 </div>
                 <div
-                  className="touch:opacity-100 flex h-6 w-6 cursor-pointer items-center justify-center rounded opacity-0 transition-all duration-200 hover:bg-red-50 group-hover:opacity-100 dark:hover:bg-red-900/20"
+                  className="touch:opacity-100 flex h-6 w-6 cursor-pointer items-center justify-center rounded opacity-0 transition-all duration-200 hover:bg-red-50 group-hover:opacity-100 hover:bg-red-900/20"
                   onClick={(event) => {
                     event.stopPropagation();
                     onDeleteProject(project);
                   }}
                   title={t('tooltips.deleteProject')}
                 >
-                  <Trash2 className="h-3 w-3 text-red-600 dark:text-red-400" />
+                  <Trash2 className="h-3 w-3 text-red-600 text-red-400" />
                 </div>
                 {isExpanded ? (
                   <ChevronDown className="h-4 w-4 text-muted-foreground transition-colors group-hover:text-foreground" />
@@ -410,6 +413,7 @@ export default function SidebarProjectItem({
         onSaveEditingSession={onSaveEditingSession}
         onProjectSelect={onProjectSelect}
         onSessionSelect={onSessionSelect}
+        processingSessions={processingSessions}
         onDeleteSession={onDeleteSession}
         onLoadMoreSessions={onLoadMoreSessions}
         onNewSession={onNewSession}

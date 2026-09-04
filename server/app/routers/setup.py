@@ -20,6 +20,7 @@ from __future__ import annotations
 from app.core.proc import no_window_kwargs
 
 import asyncio
+import logging
 import json
 import os
 import shlex
@@ -40,6 +41,8 @@ from app.core import hub_settings as _hs
 from app.core.security import require_user
 from app.core.version import app_version
 
+logger = logging.getLogger("awen.routers.setup")
+
 router = APIRouter()
 
 # Mapping from the agent name the frontend sends to the npm package to install.
@@ -47,8 +50,8 @@ _INSTALLABLE: dict[str, str] = {
     "codex":  "@openai/codex",
     "claude": "@anthropic-ai/claude-code",
 }
-_COMPONENTS = {"ivyea-agent", "legacy", "hermes", "gbrain", "ollama", "codex", "claude", "all"}
-_LATEST_RELEASE_API = "https://api.github.com/repos/Hector-xue/IvyeaOps/releases/latest"
+_COMPONENTS = {"awen-agent", "legacy", "hermes", "codex", "claude", "all"}
+_LATEST_RELEASE_API = "https://api.github.com/repos/zheng-zhengwen/wen-System/releases/latest"
 
 
 def _version_tuple(value: str) -> tuple[int, int, int] | None:
@@ -89,14 +92,9 @@ def setup_status(_u: str = Depends(require_user)):
     )
 
     agents_found = {name: bool(_find_bin(name)) for name in RUNNER_ORDER}
-    ivyea_found = bool(_ivyea_bin())
-    agents_found["ivyea-agent"] = ivyea_found
-    agents_found["gbrain"] = bool(shutil.which("gbrain") or (Path.home() / ".bun" / "bin" / "gbrain.exe").exists())
-    agents_found["ollama"] = bool(
-        shutil.which("ollama")
-        or (Path.home() / "AppData" / "Local" / "Programs" / "Ollama" / "ollama.exe").exists()
-    )
-    any_agent_found = ivyea_found or any(agents_found.get(name) for name in RUNNER_ORDER)
+    awen_found = bool(_awen_bin())
+    agents_found["awen-agent"] = awen_found
+    any_agent_found = awen_found or any(agents_found.get(name) for name in RUNNER_ORDER)
     apimart_set: bool = bool(cfg.get("apimart_key"))
 
     # Trigger the wizard only for genuine fresh installs.
@@ -153,17 +151,17 @@ def _runtime_root() -> Path:
     return Path(__file__).resolve().parents[3]
 
 
-def _ivyea_bin(root: Path | None = None) -> str | None:
-    found = shutil.which("ivyea")
+def _awen_bin(root: Path | None = None) -> str | None:
+    found = shutil.which("awen")
     if found:
         return found
     root = root or _runtime_root()
     candidates = [
-        root / "server" / ".venv" / "bin" / "ivyea",
-        root / "server" / ".venv" / "Scripts" / "ivyea.exe",
-        Path(sys.executable).resolve().parent / "ivyea",
-        Path(sys.executable).resolve().parent / "ivyea.exe",
-        Path.home() / ".local" / "bin" / "ivyea",
+        root / "server" / ".venv" / "bin" / "awen",
+        root / "server" / ".venv" / "Scripts" / "awen.exe",
+        Path(sys.executable).resolve().parent / "awen",
+        Path(sys.executable).resolve().parent / "awen.exe",
+        Path.home() / ".local" / "bin" / "awen",
     ]
     for c in candidates:
         if c.is_file() and (sys.platform == "win32" or os.access(c, os.X_OK)):
@@ -171,33 +169,37 @@ def _ivyea_bin(root: Path | None = None) -> str | None:
     return None
 
 
-def _ivyea_install_shell(root: Path) -> str:
-    local = os.environ.get("IVYEA_AGENT_LOCAL", "").strip()
-    sibling = root.parent / "ivyea-agent"
+def _awen_install_shell(root: Path) -> str:
+    local = os.environ.get("AWEN_AGENT_LOCAL", "").strip()
+    sibling = root.parent / "awen-agent"
     if not local and sibling.is_dir():
         local = str(sibling)
+    # **带上 [feishu] extra**：飞书接收端（卡片按钮回调 + 飞书对话）要用官方 SDK。
+    # 不带的话，用户配完飞书、卡片也收到了，一点按钮什么都不发生——而他没有
+    # 任何线索，因为缺的东西根本不在他机器上。装了它，接收端就跟着 agent 的
+    # serve 自动跑起来，用户一个按钮都不用点。
     if local and Path(local).expanduser().is_dir():
-        target = "-e " + shlex.quote(str(Path(local).expanduser()))
+        target = "-e " + shlex.quote(str(Path(local).expanduser()) + "[feishu]")
     else:
-        repo = os.environ.get("IVYEA_AGENT_REPO", "https://github.com/Hector-xue/ivyea-agent.git")
-        ref = os.environ.get("IVYEA_AGENT_REF", "main")
-        target = shlex.quote(f"git+{repo}@{ref}")
+        repo = os.environ.get("AWEN_AGENT_REPO", "https://github.com/Hector-xue/awen-agent.git")
+        ref = os.environ.get("AWEN_AGENT_REF", "main")
+        target = shlex.quote(f"awen-agent[feishu] @ git+{repo}@{ref}")
 
     py = shlex.quote(sys.executable)
-    ivyea = shlex.quote(_ivyea_bin(root) or str(Path(sys.executable).resolve().parent / "ivyea"))
+    awen = shlex.quote(_awen_bin(root) or str(Path(sys.executable).resolve().parent / "awen"))
     return (
         f"{py} -m pip install {target} && "
-        'mkdir -p "$HOME/.ivyea/knowledge" "$HOME/.ivyea/models" && '
-        f"({ivyea} self doctor || true) && "
-        f"({ivyea} retrieval sync --json >/dev/null 2>&1 || true) && "
-        f"({ivyea} self service-start --host 127.0.0.1 --port 8765 || true)"
+        'mkdir -p "$HOME/.awen/knowledge" "$HOME/.awen/models" && '
+        f"({awen} self doctor || true) && "
+        f"({awen} retrieval sync --json >/dev/null 2>&1 || true) && "
+        f"({awen} self service-start --host 127.0.0.1 --port 8765 || true)"
     )
 
 
 def _windows_update_supported(root: Path) -> bool:
     return (
         sys.platform.startswith("win")
-        and (root / "IvyeaOpsServer.exe").is_file()
+        and (root / "awenopsServer.exe").is_file()
         and (root / "scripts" / "windows-action-gui.ps1").is_file()
     )
 
@@ -207,7 +209,7 @@ def update_info(_u: str = Depends(require_user)):
     current = app_version()
     root = _runtime_root()
     supported = _windows_update_supported(root)
-    fallback_url = "https://github.com/Hector-xue/IvyeaOps/releases/latest"
+    fallback_url = "https://github.com/zheng-zhengwen/wen-System/releases/latest"
     result = {
         "current": current,
         "latest": "",
@@ -222,7 +224,7 @@ def update_info(_u: str = Depends(require_user)):
             _LATEST_RELEASE_API,
             headers={
                 "Accept": "application/vnd.github+json",
-                "User-Agent": "IvyeaOps-update-check",
+                "User-Agent": "awenops-update-check",
             },
         )
         with urllib.request.urlopen(req, timeout=4) as resp:
@@ -314,13 +316,13 @@ def start_windows_update(_u: str = Depends(require_user)):
 _UPDATE_LOCK = threading.Lock()
 _UPDATE_STATE: dict = {"phase": "idle", "percent": 0, "downloaded": 0, "total": 0,
                        "error": "", "zip_path": "", "target": ""}
-_UPDATE_ZIP_URL = ("https://github.com/Hector-xue/IvyeaOps/releases/latest/download/"
-                   "IvyeaOps-Windows-x64.zip")
+_UPDATE_ZIP_URL = ("https://github.com/zheng-zhengwen/wen-System/releases/latest/download/"
+                   "awenops-Windows-x64.zip")
 
 
 def _update_download_worker(url: str, dest: Path) -> None:
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": "IvyeaOps-updater"})
+        req = urllib.request.Request(url, headers={"User-Agent": "awenops-updater"})
         with urllib.request.urlopen(req, timeout=30) as resp:
             total = int(resp.headers.get("Content-Length") or 0)
             _UPDATE_STATE.update(total=total)
@@ -351,8 +353,8 @@ def _update_download_worker(url: str, dest: Path) -> None:
                 bad = zf.testzip()
                 if bad is not None:
                     raise RuntimeError(f"安装包损坏（{bad} 校验失败），请重试更新")
-                if not any(n.endswith("IvyeaOpsServer.exe") for n in zf.namelist()):
-                    raise RuntimeError("安装包内未找到 IvyeaOpsServer.exe，下载可能损坏")
+                if not any(n.endswith("awenopsServer.exe") for n in zf.namelist()):
+                    raise RuntimeError("安装包内未找到 awenopsServer.exe，下载可能损坏")
         except zipfile.BadZipFile:
             raise RuntimeError("下载的文件不是有效的 zip 安装包，请重试更新")
         _UPDATE_STATE.update(phase="downloaded", percent=100, zip_path=str(dest))
@@ -361,7 +363,7 @@ def _update_download_worker(url: str, dest: Path) -> None:
         try:
             dest.unlink(missing_ok=True)
         except OSError:
-            pass
+            logger.debug("dest.unlink 失败（旁路，已忽略）", exc_info=True)
 
 
 @router.post("/setup/update/download")
@@ -377,16 +379,16 @@ def update_download(_u: str = Depends(require_user)):
         try:
             req = urllib.request.Request(_LATEST_RELEASE_API,
                                          headers={"Accept": "application/vnd.github+json",
-                                                  "User-Agent": "IvyeaOps-updater"})
+                                                  "User-Agent": "awenops-updater"})
             with urllib.request.urlopen(req, timeout=6) as resp:
                 target = str(json.loads(resp.read().decode("utf-8", "replace")).get("tag_name") or "")
         except Exception:  # noqa: BLE001 — tag is cosmetic; download still proceeds
-            pass
-        dest = Path(tempfile.gettempdir()) / "IvyeaOps-update.zip"
+            logger.debug("urllib.request.Request 失败（旁路，已忽略）", exc_info=True)
+        dest = Path(tempfile.gettempdir()) / "awenops-update.zip"
         _UPDATE_STATE.update(phase="downloading", percent=0, downloaded=0, total=0,
                              error="", zip_path="", target=target)
         threading.Thread(target=_update_download_worker, args=(_UPDATE_ZIP_URL, dest),
-                         daemon=True, name="ivyea-update-download").start()
+                         daemon=True, name="awen-update-download").start()
     return {"ok": True, "target": target}
 
 
@@ -404,7 +406,7 @@ def update_install(_u: str = Depends(require_user)):
     if not _windows_update_supported(root):
         raise HTTPException(400, "应用内更新仅支持 Windows x64 免 Python 包。")
     # Guard against a double-install: two concurrent updaters race on
-    # IvyeaOpsServer.exe — the 2nd hits a sharing violation (robocopy exit 11) and
+    # awenopsServer.exe — the 2nd hits a sharing violation (robocopy exit 11) and
     # reports a scary failure even though the 1st succeeded. Atomically flip to
     # "installing" so a second call is a no-op.
     with _UPDATE_LOCK:
@@ -430,7 +432,7 @@ def update_install(_u: str = Depends(require_user)):
             fh.write(f"\n[update_install] triggered; ps={ps}; script={script}; "
                      f"zip={_UPDATE_STATE['zip_path']}\n")
     except Exception:
-        pass
+        logger.debug("log_path.parent.mkdir 失败（旁路，已忽略）", exc_info=True)
 
     # Launch via `cmd /c start` rather than a hidden detached Popen: `start` makes
     # the updater a brand-new independent process (survives this backend being
@@ -444,7 +446,7 @@ def update_install(_u: str = Depends(require_user)):
         if sys.platform == "win32":
             # `start "<title>" /min <cmd>` — cmd's start launches powershell as an
             # independent process in its own (minimized) window, then cmd exits.
-            subprocess.Popen(f'start "IvyeaOps 更新" /min {inner}', cwd=str(root), shell=True)
+            subprocess.Popen(f'start "awenops 更新" /min {inner}', cwd=str(root), shell=True)
         else:
             subprocess.Popen([ps, "-File", str(script), "-ZipPath", _UPDATE_STATE["zip_path"]],
                              cwd=str(root))
@@ -454,21 +456,9 @@ def update_install(_u: str = Depends(require_user)):
     return {"ok": True, "detail": "正在安装，服务即将重启。"}
 
 
-# Pin GBrain to a known-good commit. Upstream HEAD (v0.35+) changed the config
-# schema to require database_url and broke `init --pglite`, so an *unpinned*
-# install (what this used to do) left the 知识库 board erroring "No database URL".
-# Clean-reinstall (remove + cache rm) so an already-installed v0.35 is replaced.
-_GBRAIN_REF = "github:garrytan/gbrain#1a6b543cc536cb8c379ce30518390a38e6d2ee57"
-_GBRAIN_INSTALL_SH = (
-    'command -v bun >/dev/null || curl -fsSL https://bun.sh/install | bash; '
-    'export PATH="$HOME/.bun/bin:$PATH"; '
-    'bun remove -g gbrain >/dev/null 2>&1 || true; '
-    'bun pm cache rm >/dev/null 2>&1 || true; '
-    f'bun install -g {_GBRAIN_REF}; '
-    # On POSIX the gbrain bin is a symlink to src/cli.ts run via bun's shebang, so
-    # `gbrain` works directly (the "Blocked postinstall" is just pglite's migration).
-    'mkdir -p "$HOME/brain"; cd "$HOME/brain" && (gbrain init --pglite || true)'
-)
+# GBrain 的安装脚本已移除。知识库现在由 awenAgent 自带，GBrain 只剩尚未迁完的
+# 旧读路径。它必须 pin 在某个 commit（上游 v0.35+ 改了配置 schema、废掉
+# `init --pglite`），装的时候还要先拉 bun —— 对新用户是纯负担且经常装不上。
 
 
 async def _component_install_stream(component: str) -> AsyncGenerator[str, None]:
@@ -486,26 +476,20 @@ async def _component_install_stream(component: str) -> AsyncGenerator[str, None]
             yield "data: __ERROR__\n\n"
             return
         if not ps:
-            yield "data: ERROR: PowerShell not found. Please start IvyeaOps from a normal Windows environment.\n\n"
+            yield "data: ERROR: PowerShell not found. Please start awenops from a normal Windows environment.\n\n"
             yield "data: __ERROR__\n\n"
             return
         cmd = [ps, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script), "-Component", component]
-    elif component in {"all", "ivyea-agent"}:
-        cmd = ["bash", "-lc", _ivyea_install_shell(root)]
-    elif component == "legacy":
-        cmd = ["bash", "-lc", "curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash; " + _GBRAIN_INSTALL_SH]
-    elif component == "hermes":
+    elif component in {"all", "awen-agent"}:
+        cmd = ["bash", "-lc", _awen_install_shell(root)]
+    elif component in {"legacy", "hermes"}:
         cmd = ["bash", "-lc", "curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash"]
-    elif component == "gbrain":
-        cmd = ["bash", "-lc", _GBRAIN_INSTALL_SH]
-    elif component == "ollama":
-        cmd = ["bash", "-lc", "command -v ollama >/dev/null || curl -fsSL https://ollama.com/install.sh | sh; ollama pull nomic-embed-text"]
     elif component in _INSTALLABLE:
         async for event in _npm_install_stream(component, _INSTALLABLE[component]):
             yield event
         return
     else:
-        cmd = ["bash", "-lc", "curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash; " + _GBRAIN_INSTALL_SH]
+        cmd = ["bash", "-lc", "curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash"]
 
     yield f"data: > {' '.join(cmd)}\n\n"
     env = {**os.environ}

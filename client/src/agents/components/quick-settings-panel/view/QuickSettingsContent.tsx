@@ -1,6 +1,4 @@
-import { Moon, Sun } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { DarkModeToggle } from '../../../shared/view/ui';
 import LanguageSelector from '../../../shared/view/ui/LanguageSelector';
 import {
   INPUT_SETTING_TOGGLES,
@@ -17,13 +15,11 @@ import QuickSettingsSection from './QuickSettingsSection';
 import QuickSettingsToggleRow from './QuickSettingsToggleRow';
 
 type QuickSettingsContentProps = {
-  isDarkMode: boolean;
   preferences: QuickSettingsPreferences;
   onPreferenceChange: (key: PreferenceToggleKey, value: boolean) => void;
 };
 
 export default function QuickSettingsContent({
-  isDarkMode,
   preferences,
   onPreferenceChange,
 }: QuickSettingsContentProps) {
@@ -44,17 +40,6 @@ export default function QuickSettingsContent({
   return (
     <div className="flex-1 space-y-6 overflow-y-auto overflow-x-hidden bg-background p-4">
       <QuickSettingsSection title={t('quickSettings.sections.appearance')}>
-        <div className={SETTING_ROW_CLASS}>
-          <span className="flex items-center gap-2 text-sm text-gray-900 dark:text-white">
-            {isDarkMode ? (
-              <Moon className="h-4 w-4 text-gray-600 dark:text-gray-400" />
-            ) : (
-              <Sun className="h-4 w-4 text-gray-600 dark:text-gray-400" />
-            )}
-            {t('quickSettings.darkMode')}
-          </span>
-          <DarkModeToggle />
-        </div>
         <LanguageSelector compact />
       </QuickSettingsSection>
 
@@ -68,7 +53,7 @@ export default function QuickSettingsContent({
 
       <QuickSettingsSection title={t('quickSettings.sections.inputSettings')}>
         {renderToggleRows(INPUT_SETTING_TOGGLES)}
-        <p className="ml-3 text-xs text-gray-500 dark:text-gray-400">
+        <p className="ml-3 text-xs text-gray-500 text-gray-400">
           {t('quickSettings.sendByCtrlEnterDescription')}
         </p>
       </QuickSettingsSection>

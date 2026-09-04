@@ -129,7 +129,7 @@ export default function GitPanelHeader({
               {remoteStatus?.hasRemote && (
                 <span className="flex items-center gap-0.5 text-xs">
                   {aheadCount > 0 && (
-                    <span className="text-green-600 dark:text-green-400" title={`${aheadCount} ahead`}>
+                    <span className="text-green-600 text-green-400" title={`${aheadCount} ahead`}>
                       ↑{aheadCount}
                     </span>
                   )}

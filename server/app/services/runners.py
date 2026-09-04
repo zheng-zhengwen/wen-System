@@ -1,6 +1,6 @@
 """Shared agent-runner helpers used by audit services.
 
-The IvyeaOps workbench spawns agent CLIs (hermes / codex / claude) as
+The awenops workbench spawns agent CLIs (hermes / codex / claude) as
 subprocesses to execute skills. Both the ASIN audit and the ad-report audit
 share the same runner selection and invocation logic, so we lift it into a
 standalone module.
@@ -39,15 +39,15 @@ def _extra_paths() -> list[str]:
         "/usr/bin",
     ]
 
-# Ordered runner preference (auto-pick walks this list). IvyeaAgent 首选（自托管、自带亚马逊域）。
+# Ordered runner preference (auto-pick walks this list). awenAgent 首选（自托管、自带亚马逊域）。
 # 2026-08-06：hermes 从自动挑选序列里移除——它不再是任何板块的默认或兜底。
 # _find_bin("hermes") / _build_runner_cmd("hermes", …) 仍然保留，供 /agents 板块里
 # 用户手动选择 hermes provider 时使用；只是系统自己不会再走到它。
-RUNNER_ORDER = ("ivyea-agent", "codex", "claude")
+RUNNER_ORDER = ("awen-agent", "codex", "claude")
 
 # Human-friendly labels shown in the UI selector.
 RUNNER_LABELS = {
-    "ivyea-agent": "IvyeaAgent（推荐 · 自托管 · 亚马逊域 · 自带 MCP）",
+    "awen-agent": "awenAgent（推荐 · 自托管 · 亚马逊域 · 自带 MCP）",
     "hermes": "Hermes（仅手动选择）",
     "codex":  "Codex（OpenAI）",
     "claude": "Claude Code",
@@ -68,8 +68,8 @@ def _find_bin(name: str) -> Optional[str]:
         configured = direct_lookup()
         if configured:
             return configured
-    # ivyea-agent 的可执行是 `ivyea`（launcher / venv / Scripts），runner 名与 exe 名不同。
-    exe = "ivyea" if name == "ivyea-agent" else name
+    # awen-agent 的可执行是 `awen`（launcher / venv / Scripts），runner 名与 exe 名不同。
+    exe = "awen" if name == "awen-agent" else name
     p = shutil.which(exe)
     if p:
         return p
@@ -96,15 +96,15 @@ def _resolve_runner() -> tuple[Optional[str], Optional[str]]:
     return None, None
 
 
-# ivyea-agent ≥1.2.0 支持 `chat -p --output-format stream-json`（NDJSON 事件，对齐
+# awen-agent ≥1.2.0 支持 `chat -p --output-format stream-json`（NDJSON 事件，对齐
 # Claude Code）。用 `chat --help` 探测一次并缓存，旧版自动回退纯文本 argv。
-_IVYEA_HELP_CACHE: Dict[str, str] = {}
+_AWEN_HELP_CACHE: Dict[str, str] = {}
 
 
-def _ivyea_chat_help(binary: str) -> str:
-    """Return (cached) `ivyea chat --help` text; empty string on any failure."""
-    if binary in _IVYEA_HELP_CACHE:
-        return _IVYEA_HELP_CACHE[binary]
+def _awen_chat_help(binary: str) -> str:
+    """Return (cached) `awen chat --help` text; empty string on any failure."""
+    if binary in _AWEN_HELP_CACHE:
+        return _AWEN_HELP_CACHE[binary]
     import subprocess
     from app.core.proc import no_window_kwargs
     try:
@@ -113,30 +113,30 @@ def _ivyea_chat_help(binary: str) -> str:
         text = (proc.stdout or "") + (proc.stderr or "")
     except Exception:
         text = ""
-    _IVYEA_HELP_CACHE[binary] = text
+    _AWEN_HELP_CACHE[binary] = text
     return text
 
 
-def ivyea_stream_json_supported(binary: str) -> bool:
-    return "--output-format" in _ivyea_chat_help(binary)
+def awen_stream_json_supported(binary: str) -> bool:
+    return "--output-format" in _awen_chat_help(binary)
 
 
-def _ivyea_permission_args(binary: str) -> List[str]:
+def _awen_permission_args(binary: str) -> List[str]:
     """无人值守审批档：默认 --approve-all（与历史行为一致，xlsx 方案等需要写文件）。
-    运维在 ~/.ivyea/policy.json 配好写根/命令白名单后，可设环境变量
-    IVYEA_OPS_IVYEA_PERMISSION_MODE=policy 切到 policy 档（单工具拒绝不终止整轮）。"""
-    mode = (os.environ.get("IVYEA_OPS_IVYEA_PERMISSION_MODE") or "approve-all").strip().lower()
-    if mode == "policy" and "--permission-mode" in _ivyea_chat_help(binary):
+    运维在 ~/.awen/policy.json 配好写根/命令白名单后，可设环境变量
+    AWENOPS_AWEN_PERMISSION_MODE=policy 切到 policy 档（单工具拒绝不终止整轮）。"""
+    mode = (os.environ.get("AWENOPS_AWEN_PERMISSION_MODE") or "approve-all").strip().lower()
+    if mode == "policy" and "--permission-mode" in _awen_chat_help(binary):
         return ["--permission-mode", "policy"]
     return ["--approve-all"]
 
 
 def _build_runner_cmd(runner: str, binary: str, prompt: str) -> List[str]:
     """Build the subprocess argv for the given runner + prompt."""
-    if runner == "ivyea-agent":
+    if runner == "awen-agent":
         # -p: 非交互一次性，结果打 stdout。新版走 stream-json 拿结构化过程事件。
-        argv = [binary, "chat", "-p", prompt, *_ivyea_permission_args(binary)]
-        if ivyea_stream_json_supported(binary):
+        argv = [binary, "chat", "-p", prompt, *_awen_permission_args(binary)]
+        if awen_stream_json_supported(binary):
             argv += ["--output-format", "stream-json"]
         return argv
     if runner == "hermes":
@@ -180,7 +180,7 @@ def runner_status() -> List[Dict[str, Any]]:
 def _audit_default_runner() -> str:
     """Configured default runner for audits (settings ``audit_default_runner``).
 
-    Defaults to ``hermes`` — the only runner IvyeaOps wires up with both the
+    Defaults to ``hermes`` — the only runner awenops wires up with both the
     skill (seeded to ~/.hermes/skills) and the data-source MCP (sorftime/sif_mcp
     in ~/.hermes/config.yaml), so audits get skill guidance + real data and can
     emit the structured JSON the UI parses. Falls back through RUNNER_ORDER.
@@ -214,7 +214,7 @@ def resolve_with_pref(pref: str) -> tuple[Optional[str], Optional[str], Optional
     pref = (pref or "auto").lower()
     # 2026-08-06：hermes 已移出 RUNNER_ORDER。历史 job / 旧前端里存下来的
     # runner_pref="hermes" 不该直接报 unknown runner 把任务打死，退回 auto
-    # （会落到 ivyea-agent）。
+    # （会落到 awen-agent）。
     if pref == "hermes":
         pref = "auto"
     if pref == "auto":
@@ -239,7 +239,11 @@ def build_child_env(runner_bin: str) -> Dict[str, str]:
     - Sets ``IS_SANDBOX=1`` so claude's --dangerously-skip-permissions check
       doesn't refuse when running as root.
     """
-    child_env = {**os.environ}
+    # 从 os.environ 全量复制改成走 core.proc.child_env：这条路径跑的是 AI 自己
+    # 决定的工具调用（hermes/claude/codex + 它们再拉起的 MCP server），是整个
+    # 系统里最不该看到 AWENOPS_SECRET 的地方 —— 拿到它就能伪造管理员会话。
+    from app.core.proc import child_env as _scrubbed_env
+    child_env = _scrubbed_env()
     bin_dir = str(Path(runner_bin).parent)
     if bin_dir not in child_env.get("PATH", "").split(os.pathsep):
         child_env["PATH"] = bin_dir + os.pathsep + child_env.get("PATH", "")
@@ -249,7 +253,7 @@ def build_child_env(runner_bin: str) -> Dict[str, str]:
 
 
 # ---------------------------------------------------------------------------
-# ivyea-agent stream-json 解析：把 NDJSON 事件流还原成 最终文本 + 过程事件 + 花费。
+# awen-agent stream-json 解析：把 NDJSON 事件流还原成 最终文本 + 过程事件 + 花费。
 # 事件 schema 对齐 Claude Code：system/init → assistant(text/tool_use) →
 # user(tool_result) → result（费用字段是 total_cost_cny，人民币）。
 # 非 JSON 行（stderr 混入/旧版纯文本）一律跳过；没有 result 事件时降级为原文透传。
@@ -258,7 +262,7 @@ def build_child_env(runner_bin: str) -> Dict[str, str]:
 _TOOL_RESULT_KEEP = 2000   # steps 里工具结果保留的最大字符（防 steps.json 爆炸）
 
 
-class IvyeaStreamJsonParser:
+class awenStreamJsonParser:
     """行缓冲增量解析器。feed() 喂原始 chunk，随时读 .events / .progress / .result_event。"""
 
     def __init__(self) -> None:
@@ -335,13 +339,13 @@ def extract_runner_output(runner: str, raw: str) -> Dict[str, Any]:
     """统一的 runner stdout 后处理。
 
     返回 {"text", "events", "cost_cny", "session_id", "structured"}：
-    - ivyea-agent 且 stdout 是 stream-json → text=result 事件里的最终答案，
+    - awen-agent 且 stdout 是 stream-json → text=result 事件里的最终答案，
       events=过程事件（工具调用/结果/中间文本），structured=True。
     - 其它 runner / 旧版纯文本 / 解析不出 result → text=原文透传，structured=False。
     """
-    if runner == "ivyea-agent" and '"type"' in raw:
+    if runner == "awen-agent" and '"type"' in raw:
         # 不按首行判定（stderr 告警可能混在最前面），解析器本身会跳过所有非 JSON 行。
-        p = IvyeaStreamJsonParser()
+        p = awenStreamJsonParser()
         p.feed(raw)
         p.close()
         if p.result_event is not None:

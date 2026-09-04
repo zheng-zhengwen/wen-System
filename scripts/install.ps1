@@ -1,4 +1,4 @@
-﻿# IvyeaOps 一键安装（Windows / PowerShell 5.1+）
+# awenops 一键安装（Windows / PowerShell 5.1+）
 #
 # 做的事：
 #   1. 自动检测 Python 3.9+ 和 Node 18+；缺失则用 winget 自动安装
@@ -8,7 +8,7 @@
 #   5. 创建桌面快捷方式（默认后台启动，不常驻终端窗口）
 #   6. 可选：立即启动
 #
-# 用法：双击根目录的「安装 IvyeaOps.bat」，或：
+# 用法：双击根目录的「安装 awenops.bat」，或：
 #   powershell -ExecutionPolicy Bypass -File scripts\install.ps1
 
 Set-StrictMode -Version Latest
@@ -17,9 +17,9 @@ $ErrorActionPreference = "Stop"
 $RepoRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 Set-Location $RepoRoot
 
-function Write-Info($msg) { Write-Host "[IvyeaOps] $msg" -ForegroundColor Green }
-function Write-Warn($msg) { Write-Host "[IvyeaOps] 注意: $msg" -ForegroundColor Yellow }
-function Write-Fail($msg) { Write-Host "[IvyeaOps] 错误: $msg" -ForegroundColor Red; Read-Host "按回车退出"; exit 1 }
+function Write-Info($msg) { Write-Host "[awenops] $msg" -ForegroundColor Green }
+function Write-Warn($msg) { Write-Host "[awenops] 注意: $msg" -ForegroundColor Yellow }
+function Write-Fail($msg) { Write-Host "[awenops] 错误: $msg" -ForegroundColor Red; Read-Host "按回车退出"; exit 1 }
 
 function Test-Cmd($name) { return [bool](Get-Command $name -ErrorAction SilentlyContinue) }
 
@@ -89,17 +89,17 @@ if (-not $HasPrebuilt) { Write-Info "  Node:   $(& node --version)" }
 
 # ── 1.5 国内镜像自动检测 ──────────────────────────────────────────────────────
 # pip / npm 从中国大陆很慢。若 google 不可达则判定为大陆网络，pip/npm 走清华
-# + 淘宝镜像。覆盖：环境变量 IVYEA_CN=1（强制开）/ IVYEA_CN=0（强制关）。
+# + 淘宝镜像。覆盖：环境变量 AWEN_CN=1（强制开）/ AWEN_CN=0（强制关）。
 $PipMirror = @(); $NpmMirror = @()
 $useCN = $false
-if ($env:IVYEA_CN -eq "1") { $useCN = $true }
-elseif ($env:IVYEA_CN -eq "0") { $useCN = $false }
+if ($env:AWEN_CN -eq "1") { $useCN = $true }
+elseif ($env:AWEN_CN -eq "0") { $useCN = $false }
 else {
     try { Invoke-WebRequest -Uri "https://www.google.com" -TimeoutSec 4 -UseBasicParsing -ErrorAction Stop | Out-Null }
     catch { $useCN = $true }
 }
 if ($useCN) {
-    Write-Info "检测到国内网络 —— 启用清华 PyPI + 淘宝 npm 镜像加速（设 IVYEA_CN=0 可关闭）"
+    Write-Info "检测到国内网络 —— 启用清华 PyPI + 淘宝 npm 镜像加速（设 AWEN_CN=0 可关闭）"
     $PipMirror = @("-i", "https://pypi.tuna.tsinghua.edu.cn/simple")
     $env:PIP_INDEX_URL = "https://pypi.tuna.tsinghua.edu.cn/simple"
     $NpmMirror = @("--registry=https://registry.npmmirror.com")
@@ -183,17 +183,17 @@ if (Test-Path $EnvFile) {
     @"
 # 由 scripts\install.ps1 生成，可按需修改。完整说明见 docs\CONFIG.md。
 
-IVYEA_OPS_HOST=127.0.0.1
-IVYEA_OPS_PORT=8001
-IVYEA_OPS_DEV=0
+AWENOPS_HOST=127.0.0.1
+AWENOPS_PORT=8001
+AWENOPS_DEV=0
 
 # 会话签名密钥（保密，设好后不要改，否则所有人退出登录）
-IVYEA_OPS_SECRET=$Secret
+AWENOPS_SECRET=$Secret
 
-IVYEA_OPS_USER=admin
-IVYEA_OPS_PASSWORD_HASH=$PwHash
+AWENOPS_USER=admin
+AWENOPS_PASSWORD_HASH=$PwHash
 
-IVYEA_OPS_ALLOWED_ORIGINS=http://127.0.0.1:8001
+AWENOPS_ALLOWED_ORIGINS=http://127.0.0.1:8001
 "@ | Out-File -FilePath $EnvFile -Encoding utf8
     Write-Info "  server\.env 已创建。"
     if ($Generated) {
@@ -205,89 +205,79 @@ IVYEA_OPS_ALLOWED_ORIGINS=http://127.0.0.1:8001
 
 if (-not (Test-Path "$RepoRoot\data")) { New-Item -ItemType Directory -Path "$RepoRoot\data" | Out-Null }
 
-# ── 4.5 内置 IvyeaAgent ─────────────────────────────────────────────────────
-# 新部署默认使用 IvyeaAgent 承担 Agent、知识库与本地检索；Hermes/GBrain/Ollama
-# 只作为旧部署兼容组件，需要显式设置 IVYEA_OPS_INSTALL_LEGACY_AI=1 才安装。
+# ── 4.5 内置 awenAgent ─────────────────────────────────────────────────────
+# 新部署默认使用 awenAgent 承担 Agent、知识库与本地检索；Hermes/Ollama
+# 只作为旧部署兼容组件，需要显式设置 AWENOPS_INSTALL_LEGACY_AI=1 才安装。
 Write-Host ""
-Write-Info "安装内置 IvyeaAgent（Agent + 知识库 + 本地检索）..."
+Write-Info "安装内置 awenAgent（Agent + 知识库 + 本地检索）..."
 try {
     $VenvScripts = Split-Path -Parent $VenvPy
-    $IvyeaBin = Join-Path $VenvScripts "ivyea.exe"
-    if (-not (Test-Path $IvyeaBin)) {
-        $IvyeaAgentSource = $env:IVYEA_AGENT_LOCAL
-        $SiblingAgent = Join-Path (Split-Path -Parent $RepoRoot) "ivyea-agent"
-        if ([string]::IsNullOrWhiteSpace($IvyeaAgentSource) -and (Test-Path $SiblingAgent)) {
-            $IvyeaAgentSource = (Resolve-Path $SiblingAgent).Path
+    $awenBin = Join-Path $VenvScripts "awen.exe"
+    if (-not (Test-Path $awenBin)) {
+        $awenAgentSource = $env:AWEN_AGENT_LOCAL
+        $SiblingAgent = Join-Path (Split-Path -Parent $RepoRoot) "awen-agent"
+        if ([string]::IsNullOrWhiteSpace($awenAgentSource) -and (Test-Path $SiblingAgent)) {
+            $awenAgentSource = (Resolve-Path $SiblingAgent).Path
         }
-        if (-not [string]::IsNullOrWhiteSpace($IvyeaAgentSource) -and (Test-Path $IvyeaAgentSource)) {
-            Write-Info "  从本地源码安装 IvyeaAgent：$IvyeaAgentSource"
-            & $VenvPy -m pip install -q @PipMirror -e $IvyeaAgentSource
+        if (-not [string]::IsNullOrWhiteSpace($awenAgentSource) -and (Test-Path $awenAgentSource)) {
+            Write-Info "  从本地源码安装 awenAgent：$awenAgentSource"
+            & $VenvPy -m pip install -q @PipMirror -e $awenAgentSource
         } else {
-            $IvyeaAgentRepo = if ($env:IVYEA_AGENT_REPO) { $env:IVYEA_AGENT_REPO } else { "https://github.com/Hector-xue/ivyea-agent.git" }
-            $IvyeaAgentRef = if ($env:IVYEA_AGENT_REF) { $env:IVYEA_AGENT_REF } else { "main" }
-            Write-Info "  从 Git 安装 IvyeaAgent：$IvyeaAgentRepo@$IvyeaAgentRef"
-            & $VenvPy -m pip install -q @PipMirror "git+$IvyeaAgentRepo@$IvyeaAgentRef"
+            $awenAgentRepo = if ($env:AWEN_AGENT_REPO) { $env:AWEN_AGENT_REPO } else { "https://github.com/Hector-xue/awen-agent.git" }
+            # 默认装**最新 release tag**，不是 main：装 main 等于把未发布代码推给
+            # 用户，且和「有新版本」的提示对不上（那个提示比的就是 release tag）。
+            # 取不到时不硬失败（安装是从零开始，挡住人不合适），但要大声说清楚。
+            $awenAgentRef = $env:AWEN_AGENT_REF
+            if ([string]::IsNullOrWhiteSpace($awenAgentRef)) {
+                try {
+                    $rel = Invoke-RestMethod -TimeoutSec 8 -Headers @{ "User-Agent" = "awenops" } `
+                        -Uri "https://api.github.com/repos/Hector-xue/awen-agent/releases/latest"
+                    $awenAgentRef = $rel.tag_name
+                } catch { $awenAgentRef = $null }
+            }
+            if ([string]::IsNullOrWhiteSpace($awenAgentRef)) {
+                $awenAgentRef = "main"
+                Write-Warn "  取不到 awenAgent 的最新 release（网络？），改用 main 分支 —— 这是**未发布代码**。"
+                Write-Warn "  网络恢复后建议重装到正式版：`$env:AWEN_AGENT_REF='vX.Y.Z' 后重跑本脚本。"
+            }
+            Write-Info "  从 Git 安装 awenAgent：$awenAgentRepo@$awenAgentRef"
+            & $VenvPy -m pip install -q @PipMirror "git+$awenAgentRepo@$awenAgentRef"
         }
     }
     $UserHome = if ($env:USERPROFILE) { $env:USERPROFILE } else { [Environment]::GetFolderPath("UserProfile") }
-    $IvyeaHome = Join-Path $UserHome ".ivyea"
-    New-Item -ItemType Directory -Force -Path (Join-Path $IvyeaHome "knowledge") | Out-Null
-    New-Item -ItemType Directory -Force -Path (Join-Path $IvyeaHome "models") | Out-Null
-    if (Test-Path $IvyeaBin) {
-        & $IvyeaBin self doctor
-        try { & $IvyeaBin retrieval sync --json | Out-Null } catch {}
-        try { & $IvyeaBin self service-start --host 127.0.0.1 --port 8765 | Out-Host } catch {
-            Write-Warn "IvyeaAgent 服务暂未启动；打开 IvyeaOps 后会自动重试拉起。"
+    $awenHome = Join-Path $UserHome ".awen"
+    New-Item -ItemType Directory -Force -Path (Join-Path $awenHome "knowledge") | Out-Null
+    New-Item -ItemType Directory -Force -Path (Join-Path $awenHome "models") | Out-Null
+    if (Test-Path $awenBin) {
+        & $awenBin self doctor
+        try { & $awenBin retrieval sync --json | Out-Null } catch {}
+        try { & $awenBin self service-start --host 127.0.0.1 --port 8765 | Out-Host } catch {
+            Write-Warn "awenAgent 服务暂未启动；打开 awenops 后会自动重试拉起。"
         }
-        Write-Info "  IvyeaAgent 已就绪：$IvyeaBin"
+        Write-Info "  awenAgent 已就绪：$awenBin"
     } else {
-        Write-Warn "未检测到 ivyea.exe；IvyeaOps 仍可启动，但右下角 IvyeaAgent 会显示未连接。"
+        Write-Warn "未检测到 awen.exe；awenops 仍可启动，但右下角 awenAgent 会显示未连接。"
     }
 } catch {
-    Write-Warn "IvyeaAgent 自动安装失败（不影响 IvyeaOps 主程序）：$_"
-    Write-Warn "可设置 IVYEA_AGENT_LOCAL 指向本地 ivyea-agent 源码后重跑安装脚本。"
+    Write-Warn "awenAgent 自动安装失败（不影响 awenops 主程序）：$_"
+    Write-Warn "可设置 AWEN_AGENT_LOCAL 指向本地 awen-agent 源码后重跑安装脚本。"
 }
 
-if ($env:IVYEA_OPS_INSTALL_LEGACY_AI -eq "1") {
+if ($env:AWENOPS_INSTALL_LEGACY_AI -eq "1") {
     try {
         & powershell -NoProfile -ExecutionPolicy Bypass -File "$RepoRoot\scripts\install-components.ps1" -Component legacy
     } catch {
-        Write-Warn "旧兼容组件 Hermes/GBrain 安装失败（不影响 IvyeaOps 主程序）：$_"
+        Write-Warn "旧兼容组件 Hermes 安装失败（不影响 awenops 主程序）：$_"
         Write-Warn "稍后可运行：powershell -ExecutionPolicy Bypass -File scripts\install-components.ps1 -Component legacy"
     }
-    Write-Host "  旧链路安装路径会被 IvyeaOps 自动发现；如未识别，可在「系统配置 → 智能体」里填路径。" -ForegroundColor Yellow
-}
-
-# ── 4.6 可选：Listing 采集服务 (amazon-image-workflow, 经 Docker) ─────────────
-# 自包含 docker-compose（自带 Postgres）；免费抓取、零密钥。没 Docker 就跳过，
-# Listing 其余功能照常（手填 + AI），仅无法自动抓竞品。
-if (Test-Path "$RepoRoot\amazon-image-workflow\docker-compose.yml") {
-    if (Test-Cmd "docker") {
-        Write-Host ""
-        $scrape = Read-Host "启动 Listing 采集服务（amazon-image-workflow，Docker，免密钥）？(y/N)"
-        if ($scrape -eq "y" -or $scrape -eq "Y") {
-            Write-Info "启动采集服务（首次构建镜像，较慢）..."
-            Push-Location "$RepoRoot\amazon-image-workflow"
-            try {
-                & docker compose up -d --build
-                Write-Info "  采集服务已启动（:3001）。IvyeaOps 默认已指向它。"
-            } catch {
-                Write-Warn "采集服务启动失败，可稍后手动：cd amazon-image-workflow; docker compose up -d --build"
-            }
-            Pop-Location
-        }
-    } else {
-        Write-Warn "未检测到 Docker —— Listing 采集服务需要 Docker Desktop。装上后："
-        Write-Warn "  cd amazon-image-workflow; docker compose up -d --build"
-        Write-Warn "（不装也行：Listing 其余功能照常，仅无法自动抓竞品。）"
-    }
+    Write-Host "  旧链路安装路径会被 awenops 自动发现；如未识别，可在「系统配置 → 智能体」里填路径。" -ForegroundColor Yellow
 }
 
 # ── 5. 桌面快捷方式（默认后台启动，不常驻终端窗口）──────────────────────────────
-$Launcher = "$RepoRoot\启动 IvyeaOps (后台).vbs"
-$DebugLauncher = "$RepoRoot\启动 IvyeaOps.bat"
+$Launcher = "$RepoRoot\启动 awenops (后台).vbs"
+$DebugLauncher = "$RepoRoot\启动 awenops.bat"
 if (-not (Test-Path $Launcher)) {
-    Write-Warn "未找到「启动 IvyeaOps (后台).vbs」，将退回使用可见窗口启动器。"
+    Write-Warn "未找到「启动 awenops (后台).vbs」，将退回使用可见窗口启动器。"
     $Launcher = $DebugLauncher
 }
 if (-not (Test-Path $Launcher)) {
@@ -297,32 +287,32 @@ if (Test-Path $Launcher) {
 try {
     $Desktop = [Environment]::GetFolderPath("Desktop")
     $WshShell = New-Object -ComObject WScript.Shell
-    $Shortcut = $WshShell.CreateShortcut("$Desktop\IvyeaOps.lnk")
+    $Shortcut = $WshShell.CreateShortcut("$Desktop\awenops.lnk")
     $Shortcut.TargetPath = $Launcher
     $Shortcut.WorkingDirectory = $RepoRoot
-    $Shortcut.Description = "启动 IvyeaOps 工作台"
+    $Shortcut.Description = "启动 awenops 工作台"
     $ShortcutIcon = "$RepoRoot\client\public\favicon.ico"  # 圆角多尺寸 ICO，用于 Windows 桌面快捷方式
     if (Test-Path $ShortcutIcon) {
         $Shortcut.IconLocation = $ShortcutIcon
     }
     $Shortcut.Save()
-    Write-Info "  桌面快捷方式已创建：IvyeaOps"
+    Write-Info "  桌面快捷方式已创建：awenops"
 } catch {
-    Write-Warn "桌面快捷方式创建失败（不影响使用），可手动双击「启动 IvyeaOps.bat」。"
+    Write-Warn "桌面快捷方式创建失败（不影响使用），可手动双击「启动 awenops.bat」。"
 }
 }
 
 # ── 6. 完成 / 可选立即启动 ────────────────────────────────────────────────────
 Write-Host ""
 Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Green
-Write-Host "  IvyeaOps 安装完成！" -ForegroundColor Green
+Write-Host "  awenops 安装完成！" -ForegroundColor Green
 Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Green
 Write-Host ""
-Write-Host "  以后双击桌面「IvyeaOps」即可后台启动，不会常驻终端窗口。"
-Write-Host "  需要停止后台服务时，双击「停止 IvyeaOps.bat」。"
-Write-Host "  如果需要查看启动日志/排错，可双击「启动 IvyeaOps.bat」（可见窗口模式）。"
+Write-Host "  以后双击桌面「awenops」即可后台启动，不会常驻终端窗口。"
+Write-Host "  需要停止后台服务时，双击「停止 awenops.bat」。"
+Write-Host "  如果需要查看启动日志/排错，可双击「启动 awenops.bat」（可见窗口模式）。"
 Write-Host "  想让同一局域网（同 Wi-Fi/路由器）下的其他电脑、手机也能用？"
-Write-Host "    双击「启动 IvyeaOps (局域网共享).bat」——它会自动探测本机 IP、放行防火墙，"
+Write-Host "    双击「启动 awenops (局域网共享).bat」——它会自动探测本机 IP、放行防火墙，"
 Write-Host "    并在窗口里显示让别人访问的网址，对方浏览器打开即可，无需安装任何东西。" -ForegroundColor Yellow
 Write-Host "  首次登录后会有向导，按提示填一个「全局兜底大模型」即可用全部 AI 功能。"
 Write-Host "  注意：Windows 上终端(PTY)板块不可用，其余功能均正常。"

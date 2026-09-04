@@ -1,5 +1,5 @@
 {
-  "name": "ivyea-ops-client",
+  "name": "awenops-client",
   "private": true,
   "version": "0.1.0",
   "license": "AGPL-3.0-only",
@@ -9,7 +9,21 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "typecheck": "tsc -b --noEmit",
-    "test:e2e:knowledge": "node e2e/knowledge-governance.mjs"
+    "test:errtext": "node scripts/check-errtext.mjs",
+    "test:e2e:knowledge": "node e2e/knowledge-governance.mjs",
+    "test:e2e:scroll": "node e2e/stream-scroll.mjs",
+    "test:e2e:activity": "node e2e/activity-line.mjs",
+    "test:stats": "node e2e/turn-stats.mjs",
+    "test:approval": "node e2e/approval-modes.mjs",
+    "test:restore": "node e2e/session-restore.mjs",
+    "test:session-url": "node e2e/session-url.mjs",
+    "test:live-dock": "node e2e/live-dock.mjs",
+    "test:live-turn": "node e2e/live-turn.mjs",
+    "test:followups": "node e2e/followups.mjs",
+    "test:terminal": "node e2e/terminal-runtime.mjs",
+    "test:lingxing-ssh": "node e2e/lingxing-ssh-config.mjs",
+    "test:cockpit-store": "node e2e/cockpit-store-scope.mjs",
+    "test:cockpit-delete": "node e2e/cockpit-delete-failure.mjs"
   },
   "dependencies": {
     "@codemirror/commands": "^6.10.3",
@@ -23,7 +37,6 @@
     "@codemirror/language": "^6.12.3",
     "@codemirror/merge": "^6.12.1",
     "@codemirror/state": "^6.6.0",
-    "@codemirror/theme-one-dark": "^6.1.3",
     "@codemirror/view": "^6.42.1",
     "@iarna/toml": "^2.2.5",
     "@replit/codemirror-minimap": "^0.5.2",
@@ -72,6 +85,7 @@
     "source-map": "^0.7.6",
     "tailwindcss": "^3.4.19",
     "typescript": "^5.5.3",
-    "vite": "^5.4.0"
+    "vite": "^5.4.0",
+    "ws": "^8.21.3"
   }
 }

@@ -19,7 +19,7 @@ router = APIRouter()
 
 @router.get("/projects")
 def list_projects(_user: str = Depends(require_user)) -> dict:
-    """List all known projects (workspaces). Aggregates IvyeaOps
+    """List all known projects (workspaces). Aggregates awenops
     agent_sessions, Claude jsonl logs, and Codex jsonl logs by cwd."""
     items = [p.to_dict() for p in proj_svc.list_projects()]
     return {"projects": items, "total": len(items)}
@@ -107,7 +107,7 @@ def resume_session(
     body: ResumeRequest | None = None,
     _user: str = Depends(require_user),
 ) -> dict:
-    """Create a new IvyeaOps agent_session that wraps the resumed CLI.
+    """Create a new awenops agent_session that wraps the resumed CLI.
 
     What this does:
       1. Look up the external session (must be claude/codex; hub sessions

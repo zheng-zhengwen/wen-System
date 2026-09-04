@@ -2,11 +2,11 @@
 
 Each helper follows the same precedence:
     1. hub_settings.json (user-configurable via web UI)
-    2. IVYEA_OPS_<KEY> env var (handled inside hub_settings.get)
+    2. AWENOPS_<KEY> env var (handled inside hub_settings.get)
     3. shutil.which / PATH lookup (for binaries)
     4. None (caller decides whether the feature is available)
 
-Nothing here is required for IvyeaOps itself to function. These hooks
+Nothing here is required for awenops itself to function. These hooks
 exist so the monitor / agent-hub / chat surfaces can light up against
 the user's Hermes / Codex / Kiro / Claude / Bun installs without
 hard-coding paths.
@@ -84,6 +84,14 @@ def kiro_cli_sessions_dir() -> Optional[Path]:
 
 def claude_projects_dir() -> Optional[Path]:
     return _path_or_none(_hs.get("claude_projects_dir", ""))
+
+
+def awen_sessions_dir() -> Optional[Path]:
+    return _path_or_none(_hs.get("awen_sessions_dir", ""))
+
+
+def dsh_sessions_dir() -> Optional[Path]:
+    return _path_or_none(_hs.get("dsh_sessions_dir", ""))
 
 
 # --- PATH augmentations ----------------------------------------------------

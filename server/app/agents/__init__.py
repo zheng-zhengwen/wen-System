@@ -2,7 +2,7 @@
 
 This package replaces the external Node service that used to run on :3002.
 It reimplements the claudecodeui backend contract as ops-native FastAPI,
-mounted under ``/api/agents`` and sharing ops' cookie auth (``ivyea_ops_session``).
+mounted under ``/api/agents`` and sharing ops' cookie auth (``awenops_session``).
 
 Layout:
   db.py        SQLite connection + schema (projects/sessions metadata index

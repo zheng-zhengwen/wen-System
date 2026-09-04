@@ -21,7 +21,7 @@ def _pulse_payload(asin: str, marketplace: str, *, price: float, source: str) ->
         "data_source": source,
         "error": None,
         "title": f"{source} product",
-        "brand": "Ivyea",
+        "brand": "awen",
         "image": None,
         "price": price,
         "bsr": 10,

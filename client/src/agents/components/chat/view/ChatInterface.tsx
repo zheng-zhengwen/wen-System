@@ -1,10 +1,10 @@
-import React, { useCallback, useEffect, useMemo, useRef } from 'react';
+import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { useTasksSettings } from '../../../contexts/TasksSettingsContext';
 import PermissionContext from '../../../contexts/PermissionContext';
 // QuickSettingsPanel 已移除(设置走 ops 系统配置)
-import type { ChatInterfaceProps, Provider  } from '../types/types';
+import type { ChatInterfaceProps, FollowUpItem, Provider  } from '../types/types';
 import type { LLMProvider } from '../../../types/app';
 import { useChatProviderState } from '../hooks/useChatProviderState';
 import { useChatSessionState } from '../hooks/useChatSessionState';
@@ -14,7 +14,9 @@ import { useSessionStore } from '../../../stores/useSessionStore';
 
 import ChatMessagesPane from './subcomponents/ChatMessagesPane';
 import ChatComposer from './subcomponents/ChatComposer';
-import CommandResultModal from './subcomponents/CommandResultModal';
+// 斜杠命令的结果弹窗（/help、/models、/cost、/status）约 60 kB，只有真的敲了
+// 命令才会出现。它本来就靠 payload 是否为空决定显示，这里把这个判断提前到挂载。
+const CommandResultModal = lazy(() => import('./subcomponents/CommandResultModal'));
 
 
 type PendingViewSession = {
@@ -78,7 +80,7 @@ function ChatInterface({
     setHermesModel,
     agyModel,
     setAgyModel,
-    ivyeaModel,
+    awenModel,
     permissionMode,
     pendingPermissionRequests,
     setPendingPermissionRequests,
@@ -93,6 +95,14 @@ function ChatInterface({
     selectedSession,
     selectedProject,
   });
+
+  /**
+   * 轮次跑着的时候用户补的话：还没被这一轮读到的排在这儿。
+   *
+   * 放在 ChatInterface 这一层是因为两边都要碰它：输入框那边往里放，事件流那边
+   * 收到 agent 回执后销账、收到 complete 后把没读到的当成下一轮发出去。
+   */
+  const [followUpQueue, setFollowUpQueue] = useState<FollowUpItem[]>([]);
 
   const {
     chatMessages,
@@ -171,6 +181,7 @@ function ChatInterface({
     isDragActive,
     openImagePicker,
     handleSubmit,
+    submitText,
     handleInputChange,
     handleKeyDown,
     handlePaste,
@@ -186,6 +197,7 @@ function ChatInterface({
     commandModalPayload,
     closeCommandModal,
   } = useChatComposerState({
+    setFollowUpQueue,
     selectedProject,
     selectedSession,
     currentSessionId,
@@ -199,7 +211,7 @@ function ChatInterface({
     opencodeModel,
     hermesModel,
     agyModel,
-    ivyeaModel,
+    awenModel,
     isLoading,
     canAbortSession,
     tokenBudget,
@@ -235,6 +247,21 @@ function ChatInterface({
     setCanAbortSession(false);
   }, [selectedProject, selectedSession, sessionStore, setIsLoading, setCanAbortSession]);
 
+  /**
+   * 一轮结束：把**没被这一轮读到的**追加指令当成下一轮发出去。
+   *
+   * 判据是 state：`injected` 的已经被 agent 读走（销账时就从队列里摘了），
+   * 留下来的就是没进去的 —— 宁可晚一轮，也不能吞掉一句用户说过的话。
+   */
+  useEffect(() => {
+    if (isLoading || followUpQueue.length === 0) return;
+    const leftovers = followUpQueue.filter((item) => item.state !== 'injected');
+    setFollowUpQueue([]);
+    if (!leftovers.length) return;
+    const text = leftovers.map((item) => item.text).join('\n');
+    submitText(text);
+  }, [isLoading, followUpQueue, submitText]);
+
   useChatRealtimeHandlers({
     latestMessage,
     provider,
@@ -246,6 +273,7 @@ function ChatInterface({
     setClaudeStatus,
     setTokenBudget,
     setPendingPermissionRequests,
+    setFollowUpQueue,
     pendingViewSessionRef,
     streamTimerRef,
     accumulatedStreamRef,
@@ -303,8 +331,8 @@ function ChatInterface({
                 ? t('messageTypes.hermes', { defaultValue: 'Hermes' })
                 : provider === 'agy'
                   ? t('messageTypes.agy', { defaultValue: 'Antigravity' })
-                  : provider === 'ivyea'
-                    ? t('messageTypes.ivyea', { defaultValue: 'IvyeaAgent' })
+                  : provider === 'awen'
+                    ? t('messageTypes.awen', { defaultValue: 'awenAgent' })
             : t('messageTypes.claude');
 
     return (
@@ -349,7 +377,7 @@ function ChatInterface({
           setHermesModel={setHermesModel}
           agyModel={agyModel}
           setAgyModel={setAgyModel}
-          ivyeaModel={ivyeaModel}
+          awenModel={awenModel}
           providerModelCatalog={providerModelCatalog}
           providerModelsLoading={providerModelsLoading}
           tasksEnabled={tasksEnabled}
@@ -384,6 +412,7 @@ function ChatInterface({
           handleGrantToolPermission={handleGrantToolPermission}
           claudeStatus={claudeStatus}
           isLoading={isLoading}
+          followUpQueue={followUpQueue}
           onAbortSession={handleAbortSession}
           provider={provider}
           permissionMode={permissionMode}
@@ -446,8 +475,8 @@ function ChatInterface({
                         ? t('messageTypes.hermes', { defaultValue: 'Hermes' })
                         : provider === 'agy'
                           ? t('messageTypes.agy', { defaultValue: 'Antigravity' })
-                          : provider === 'ivyea'
-                            ? t('messageTypes.ivyea', { defaultValue: 'IvyeaAgent' })
+                          : provider === 'awen'
+                            ? t('messageTypes.awen', { defaultValue: 'awenAgent' })
                     : t('messageTypes.claude'),
           })}
           isTextareaExpanded={isTextareaExpanded}
@@ -457,6 +486,8 @@ function ChatInterface({
 
       {/* QuickSettings 右侧滑出面板已移除:设置统一走 ops 系统配置 */}
 
+      {commandModalPayload && (
+        <Suspense fallback={null}>
       <CommandResultModal
         payload={commandModalPayload}
         onClose={closeCommandModal}
@@ -467,6 +498,8 @@ function ChatInterface({
         currentSessionId={currentSessionId || selectedSession?.id || null}
         onSelectProviderModel={selectProviderModel}
       />
+        </Suspense>
+      )}
     </PermissionContext.Provider>
   );
 }

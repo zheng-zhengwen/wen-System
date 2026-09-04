@@ -6,7 +6,6 @@ post-processing helpers.
 """
 from __future__ import annotations
 
-import io
 import json
 from pathlib import Path
 
@@ -17,9 +16,9 @@ from openpyxl import Workbook, load_workbook
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
-    monkeypatch.setenv("IVYEA_OPS_DEV_MODE", "1")
-    monkeypatch.setenv("IVYEA_OPS_ALLOWED_ORIGINS", "https://test.example.com")
-    monkeypatch.setenv("IVYEA_OPS_SECRET", "test-secret")
+    monkeypatch.setenv("AWENOPS_DEV_MODE", "1")
+    monkeypatch.setenv("AWENOPS_ALLOWED_ORIGINS", "https://test.example.com")
+    monkeypatch.setenv("AWENOPS_SECRET", "test-secret")
     # Reload config so the env vars take effect.
     import importlib
     from app.core import config as cfg_mod
@@ -657,8 +656,8 @@ def test_sweep_stale_running_flips_ghosts(tmp_path, monkeypatch):
         }), encoding="utf-8")
     n = ad_audit.sweep_stale_running()
     assert n == 2
-    assert json.loads((root / "ghost1" / "meta.json").read_text())["status"] == "failed"
-    assert json.loads((root / "keep" / "meta.json").read_text())["status"] == "done"
+    assert json.loads((root / "ghost1" / "meta.json").read_text(encoding="utf-8"))["status"] == "failed"
+    assert json.loads((root / "keep" / "meta.json").read_text(encoding="utf-8"))["status"] == "done"
 
 
 def test_download_html_renders_self_contained(tmp_path, monkeypatch):

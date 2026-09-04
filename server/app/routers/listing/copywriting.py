@@ -3,7 +3,7 @@
 一条管线两个入口：
 - 新入口 `POST /projects/{id}/copy`：项目级后台 job，产品信息/素材图/竞品 ASIN
   全部由服务端从项目里取，结果落到项目上（刷新不丢）。
-- 旧入口 `/copy-jobs*`：保留给 agent 桥接（ivyea_ops_tools）和历史调用，管线同源。
+- 旧入口 `/copy-jobs*`：保留给 agent 桥接（awenops_tools）和历史调用，管线同源。
 
 整改点：生成阶段走统一降级链 run_text_chain；视觉识别走统一视觉链
 stream_vision —— 老实现直连 apimart /messages（该端点恒 403）导致这两步长期
@@ -12,6 +12,7 @@ stream_vision —— 老实现直连 apimart /messages（该端点恒 403）导�
 from __future__ import annotations
 
 import asyncio
+import logging
 import json
 import sqlite3
 import time
@@ -25,11 +26,15 @@ from pydantic import BaseModel
 from app.core.config import settings
 from app.core.security import require_user
 
-from .ai import _call_ai, _collect_vision, has_vision
+from .ai import (
+    _call_ai, _collect_vision, has_semantic_vision, has_vision, vision_tier, vision_tier_label,
+)
 from .common import (
     _parse_copy_result, _strip_json, project_row, update_project,
 )
 from .jobs import JobHandle, start_job
+
+logger = logging.getLogger("awen.routers.listing.copywriting")
 
 router = APIRouter()
 
@@ -130,7 +135,7 @@ try:
     _cjc.commit()
     _cjc.close()
 except Exception:
-    pass
+    logger.debug("_copy_job_db 失败（旁路，已忽略）", exc_info=True)
 
 
 class CopyJobReq(BaseModel):
@@ -175,30 +180,53 @@ async def _analyze_images_vision(image_paths: list[str], product_type: str) -> d
                     "webp": "image/webp", "gif": "image/gif"}.get(ext, "image/jpeg")
             images_b64.append(f"data:{mime};base64,{data}")
         except Exception:
-            pass
+            logger.debug("uri = await _img_datauri_from_url 失败（旁路，已忽略）", exc_info=True)
     if not images_b64:
         return {"mode": "skipped", "features": [], "reason": "Could not read image files"}
 
-    prompt = (
-        f"You are analyzing product images for an Amazon listing. "
-        f"Product type: {product_type}. "
-        f"Extract: materials, key features, dimensions/size cues, accessories included, "
-        f"color options, usage scenarios visible in images. "
-        f"Be specific and factual. Do not invent features not visible. "
-        f"Return JSON: {{\"features\": [\"feature1\", ...], \"materials\": \"...\", "
-        f"\"size_hints\": \"...\", \"accessories\": \"...\", \"scenarios\": [\"...\"]}}"
-    )
+    semantic = has_semantic_vision()
+    if semantic:
+        prompt = (
+            f"You are analyzing product images for an Amazon listing. "
+            f"Product type: {product_type}. "
+            f"Extract: materials, key features, dimensions/size cues, accessories included, "
+            f"color options, usage scenarios visible in images. "
+            f"Be specific and factual. Do not invent features not visible. "
+            f"Return JSON: {{\"features\": [\"feature1\", ...], \"materials\": \"...\", "
+            f"\"size_hints\": \"...\", \"accessories\": \"...\", \"scenarios\": [\"...\"]}}"
+        )
+    else:
+        # T3：拿到的是本地 CV 读数 + OCR 文本，不是画面。素材图上的文字（包装标注、
+        # 参数表、卖点条）恰恰是文案最有用的原料，所以这一步在 T3 下仍有价值——
+        # 但只能提取"图上写了什么"，不能提取"图上看起来是什么材质"。
+        prompt = (
+            f"你在为亚马逊 listing 分析产品图，但**没有看到画面**，只拿到了客观测量读数"
+            f"（尺寸、白底判定、主体占比、主色板）和 OCR 识别出的图上文字。\n"
+            f"产品类型：{product_type}\n\n"
+            f"只返回 JSON，且**只填能从 OCR 文字或测量读数确证的内容，其余留空数组/空字符串**：\n"
+            f'{{"features": ["仅来自 OCR 文字的卖点/参数，逐条注明是图上文字"], '
+            f'"materials": "仅当 OCR 文字明确写了材质时填写，否则空字符串", '
+            f'"size_hints": "仅当 OCR 文字明确写了尺寸时填写，否则空字符串", '
+            f'"accessories": "仅当 OCR 文字明确列出配件时填写，否则空字符串", '
+            f'"scenarios": [], "colour_hints": ["主色板里属于产品的颜色"]}}\n\n'
+            f"严禁根据颜色或占比数字推测材质、功能、使用场景。推不出来就留空。"
+        )
     try:
         text = await asyncio.wait_for(_collect_vision(prompt, images_b64), timeout=180)
     except Exception as exc:  # noqa: BLE001
         return {"mode": "error", "features": [], "reason": str(exc)}
     if not text:
         return {"mode": "skipped", "features": [], "reason": "Vision call failed"}
+    mode = "vision" if semantic else "local_cv"
     parsed = _strip_json(text)
     if parsed:
-        parsed["mode"] = "vision"
+        parsed["mode"] = mode
+        parsed["vision_tier"] = vision_tier()
+        if not semantic:
+            parsed["reason"] = (f"当前视觉能力为「{vision_tier_label()}」，"
+                                "仅从图上文字与测量读数提取，未做画面语义识别。")
         return parsed
-    return {"mode": "vision", "features": [text[:500]], "raw": text}
+    return {"mode": mode, "features": [text[:500]], "raw": text, "vision_tier": vision_tier()}
 
 
 async def _fetch_competitor_data(asins: list[str], marketplace: str) -> dict:
@@ -431,7 +459,7 @@ async def _run_copy_job(job_id: str) -> None:
             try:
                 update_project(project_id, copy_result=result_json, copy_job_id=job_id)
             except Exception:
-                pass
+                logger.debug("update_project 失败（旁路，已忽略）", exc_info=True)
 
     except Exception as exc:
         conn = _copy_job_db()
@@ -545,7 +573,7 @@ def get_copy_job(job_id: str, _user: str = Depends(require_user)):
             try:
                 d[key] = json.loads(d[key])
             except Exception:
-                pass
+                logger.debug("d 失败（旁路，已忽略）", exc_info=True)
     if d.get("result"):
         d["result"] = _parse_copy_result(d["result"]) or d["result"]
     return d

@@ -21,6 +21,7 @@ from __future__ import annotations
 from app.core.proc import no_window_kwargs
 
 import asyncio
+import logging
 import shutil
 import subprocess
 import sys
@@ -31,13 +32,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-# repo root: server/app/services/autofix_service.py -> parents[3] == IvyeaOps/
-REPO_ROOT = Path(__file__).resolve().parents[3]
-SERVICE_UNIT = "ivyea-ops.service"
+logger = logging.getLogger("awen.services.autofix_service")
 
-# 修复用的 runner。2026-08-06 从 hermes 切到 ivyea-agent：hermes 不再是本机
-# 的默认智能体，ivyea 自带代码工具链且 argv 由 runners._build_runner_cmd 统一产出。
-_RUNNER = "ivyea-agent"
+# repo root: server/app/services/autofix_service.py -> parents[3] == awenops/
+REPO_ROOT = Path(__file__).resolve().parents[3]
+SERVICE_UNIT = "awenops.service"
+
+# 修复用的 runner。2026-08-06 从 hermes 切到 awen-agent：hermes 不再是本机
+# 的默认智能体，awen 自带代码工具链且 argv 由 runners._build_runner_cmd 统一产出。
+_RUNNER = "awen-agent"
 # Caps. Diagnosis is the only long-running step; keep a hard ceiling so a stuck
 # agent can never pin memory/CPU indefinitely.
 _DIAGNOSE_TIMEOUT_S = 900
@@ -45,7 +48,7 @@ _DIFF_MAX_CHARS = 60_000
 _LOG_TAIL_CHARS = 8_000
 # Use the OS temp dir (gettempdir) instead of a hardcoded /tmp — Windows has no
 # /tmp, which would otherwise drop the worktree on a nonexistent path.
-_WORKTREE_PARENT = Path(tempfile.gettempdir()) / "ivyea-ops-autofix"
+_WORKTREE_PARENT = Path(tempfile.gettempdir()) / "awenops-autofix"
 
 
 @dataclass
@@ -90,13 +93,14 @@ _lock = asyncio.Lock()
 def _git(*args: str, cwd: Path | str | None = None, timeout: int = 60) -> subprocess.CompletedProcess:
     # Resolve REPO_ROOT at call time (not as a default arg, which binds once at
     # definition) so tests can repoint REPO_ROOT and never touch the real repo.
-    return subprocess.run(
+    from app.core import proc as _proc
+    return _proc.run(
         ["git", *args],
         cwd=str(cwd if cwd is not None else REPO_ROOT),
         capture_output=True,
         text=True,
         timeout=timeout,
-        **no_window_kwargs(),
+        audit_module="autofix", audit_action="git",
     )
 
 
@@ -115,7 +119,7 @@ def _build_prompt(err: Dict[str, Any]) -> str:
     status = err.get("status") or ""
     detail = err.get("detail") or ""
     feature = err.get("feature") or ""
-    return f"""你是 IvyeaOps 项目（FastAPI 后端 server/ + React 前端 client/）的维护工程师。
+    return f"""你是 awenops 项目（FastAPI 后端 server/ + React 前端 client/）的维护工程师。
 当前工作目录就是该项目的一个隔离副本，可以直接读写文件。
 
 用户在使用功能时遇到报错，需要你定位根因并修复：
@@ -144,7 +148,7 @@ async def start_diagnose(error: Dict[str, Any]) -> Dict[str, Any]:
             raise RuntimeError("已有一个修复任务在进行中，请等待它完成")
         from app.services.runners import _find_bin
         if not _find_bin(_RUNNER):
-            raise RuntimeError("ivyea CLI 不可用，无法启动自动修复")
+            raise RuntimeError("awen CLI 不可用，无法启动自动修复")
         job = Job(id=uuid.uuid4().hex[:12], error=error)
         _active = job
         _task = asyncio.create_task(_run_diagnose(job), name=f"autofix-{job.id}")
@@ -175,7 +179,7 @@ async def _run_diagnose(job: Job) -> None:
         env.setdefault("NO_COLOR", "1")
 
         prompt = _build_prompt(job.error)
-        # _build_runner_cmd 已经带上 ivyea 的无人值守审批档（--approve-all /
+        # _build_runner_cmd 已经带上 awen 的无人值守审批档（--approve-all /
         # --permission-mode），修复必须能真正落笔改文件——安全边界是 worktree 隔离
         # 加人工审核合并，不是靠工具审批拦。
         cmd = _build_runner_cmd(_RUNNER, binary, prompt)
@@ -195,11 +199,11 @@ async def _run_diagnose(job: Job) -> None:
             try:
                 await asyncio.wait_for(proc.communicate(), timeout=5)
             except Exception:
-                pass
+                logger.debug("asyncio.wait_for 失败（旁路，已忽略）", exc_info=True)
             raise RuntimeError(f"修复超时（>{_DIAGNOSE_TIMEOUT_S}s），已终止")
 
         raw = (out or b"").decode("utf-8", errors="replace")
-        # ivyea 新版走 stream-json；取出最终答案而不是把 NDJSON 原文塞给用户看。
+        # awen 新版走 stream-json；取出最终答案而不是把 NDJSON 原文塞给用户看。
         text = extract_runner_output(_RUNNER, raw).get("text") or raw
         job.summary = text[-_LOG_TAIL_CHARS:].strip()
 
@@ -238,13 +242,15 @@ def _cleanup_worktree(job: Job) -> None:
         try:
             _git("branch", "-D", job.branch)
         except Exception:
-            pass
+            logger.debug("_git 失败（旁路，已忽略）", exc_info=True)
         job.branch = ""
 
 
 # ── apply ──────────────────────────────────────────────────────────────────
 async def apply(job_id: str) -> Dict[str, Any]:
     """Apply the reviewed diff to the real working tree and commit it."""
+    from app.core import audit as _audit
+    _audit.record("autofix", "apply", target=job_id)
     global _active
     job = _require(job_id)
     if job.status != "diagnosed":
@@ -318,6 +324,8 @@ def restart(job_id: str) -> Dict[str, Any]:
     The restart kills *this* process, so we spawn a fully detached shell that
     sleeps briefly (letting the HTTP response flush) then restarts the unit.
     """
+    from app.core import audit as _audit
+    _audit.record("autofix", "restart", target=job_id)
     job = _require(job_id)
     if job.status not in ("applied", "failed"):
         raise RuntimeError(f"当前状态 {job.status} 无法重启")
@@ -327,7 +335,7 @@ def restart(job_id: str) -> Dict[str, Any]:
         job.status = "applied"
         job.updated_at = time.time()
         return {"ok": True, "restarting": False,
-                "detail": "修复已应用。Windows 下请手动重启 IvyeaOps（关闭后重新打开）使其生效。"}
+                "detail": "修复已应用。Windows 下请手动重启 awenops（关闭后重新打开）使其生效。"}
     job.status = "restarting"
     job.updated_at = time.time()
     subprocess.Popen(
@@ -343,6 +351,8 @@ def restart(job_id: str) -> Dict[str, Any]:
 # ── rollback ───────────────────────────────────────────────────────────────
 async def rollback(job_id: str) -> Dict[str, Any]:
     """Revert an applied fix to the pre-apply SHA, rebuild if needed."""
+    from app.core import audit as _audit
+    _audit.record("autofix", "rollback", target=job_id)
     job = _require(job_id)
     if not job.pre_sha:
         raise RuntimeError("没有可回滚的提交记录")
@@ -359,6 +369,8 @@ async def rollback(job_id: str) -> Dict[str, Any]:
 
 # ── reject / clear ─────────────────────────────────────────────────────────
 def reject(job_id: str) -> Dict[str, Any]:
+    from app.core import audit as _audit
+    _audit.record("autofix", "reject", target=job_id)
     global _active
     job = _require(job_id)
     _cleanup_worktree(job)

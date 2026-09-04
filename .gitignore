@@ -8,6 +8,7 @@ venv/
 # Node
 node_modules/
 dist/
+dist-e2e/
 *.log
 *.tsbuildinfo
 
@@ -40,3 +41,4 @@ dist.bak*
 
 # Local uploads
 saved-images/
+server/ci-migrate/

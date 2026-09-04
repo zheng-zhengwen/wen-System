@@ -88,8 +88,11 @@ export const createSessionViewModel = (
     isOpenCodeSession: session.__provider === 'opencode',
     isHermesSession: session.__provider === 'hermes',
     isAgySession: session.__provider === 'agy',
-    isIvyeaSession: session.__provider === 'ivyea',
-    isActive: diffInMinutes < 10,
+    isawenSession: session.__provider === 'awen',
+    // **"最近动过"不是"正在跑"。** 这个字段以前叫 isActive、判据是"10 分钟内更新过"，
+    // 于是一条十分钟前跑完的会话和一条正在跑的会话长得一模一样 —— 而用户看这枚标记
+    // 想知道的恰恰是后者（能不能关页面、要不要等它）。真正在跑的看 processingSessions。
+    isRecent: diffInMinutes < 10,
     sessionName: getSessionName(session, t),
     sessionTime: getSessionTime(session),
     messageCount: Number(session.messageCount || 0),
@@ -137,12 +140,12 @@ export const getAllSessions = (project: Project): SessionWithProvider[] => {
     __provider: 'agy' as const,
   }));
 
-  const ivyeaSessions = (project.ivyeaSessions || []).map((session) => ({
+  const awenSessions = (project.awenSessions || []).map((session) => ({
     ...session,
-    __provider: 'ivyea' as const,
+    __provider: 'awen' as const,
   }));
 
-  return [...mainSessions, ...cursorSessions, ...codexSessions, ...geminiSessions, ...opencodeSessions, ...hermesSessions, ...agySessions, ...ivyeaSessions].sort(
+  return [...mainSessions, ...cursorSessions, ...codexSessions, ...geminiSessions, ...opencodeSessions, ...hermesSessions, ...agySessions, ...awenSessions].sort(
     (a, b) => getSessionDate(b).getTime() - getSessionDate(a).getTime(),
   );
 };

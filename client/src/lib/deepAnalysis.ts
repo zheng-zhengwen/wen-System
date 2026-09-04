@@ -2,18 +2,18 @@
 //
 // Instead of pasting the (possibly long) report into the chat input, we hand
 // the full markdown over as a document: the native composer writes it into the
-// chosen project's working dir (.ivyea-ops-reports/<file>.md) and the prompt
+// chosen project's working dir (.awenops-reports/<file>.md) and the prompt
 // asks the agent to Read it. See:
-//   • AppContent.tsx               — reads `ivyea-ops-agent-handoff`
+//   • AppContent.tsx               — reads `awenops-agent-handoff`
 //   • useChatComposerState.ts      — uploads the doc + prefills the prompt
 
 // Subfolder (under the project working dir) the report file is written to. A
 // dotfolder keeps it out of the way / less likely to be committed by accident.
-export const REPORTS_SUBDIR = ".ivyea-ops-reports";
+export const REPORTS_SUBDIR = ".awenops-reports";
 
 export type ReportDoc = {
   filename: string; // e.g. luggage-2026-06-05T13-55-20.md
-  relPath: string; // .ivyea-ops-reports/<filename> (relative to project cwd)
+  relPath: string; // .awenops-reports/<filename> (relative to project cwd)
   content: string; // full markdown report
 };
 
@@ -42,5 +42,5 @@ export function reportReference(doc: ReportDoc): string {
 
 // Stash the handoff for the native agents app and let the caller navigate.
 export function writeAgentHandoff(handoff: AgentHandoff): void {
-  sessionStorage.setItem("ivyea-ops-agent-handoff", JSON.stringify(handoff));
+  sessionStorage.setItem("awenops-agent-handoff", JSON.stringify(handoff));
 }

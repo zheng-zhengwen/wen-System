@@ -123,7 +123,7 @@ function ServerDot({ running, t }: { running: boolean; t: any }) {
         <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
         <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
       </span>
-      <span className="font-mono text-[10px] uppercase tracking-wide text-emerald-600 dark:text-emerald-400">
+      <span className="font-mono text-[length:var(--fs-10)] uppercase tracking-wide text-emerald-600 text-emerald-400">
         {t('pluginSettings.runningStatus')}
       </span>
     </span>
@@ -186,10 +186,10 @@ function PluginCard({
                 <span className="text-sm font-semibold leading-none text-foreground">
                   {plugin.displayName}
                 </span>
-                <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                <span className="rounded bg-muted px-1.5 py-0.5 text-[length:var(--fs-10)] text-muted-foreground">
                   v{plugin.version}
                 </span>
-                <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                <span className="rounded bg-muted px-1.5 py-0.5 text-[length:var(--fs-10)] text-muted-foreground">
                   {plugin.slot}
                 </span>
                 <ServerDot running={!!plugin.serverRunning} t={t} />
@@ -243,7 +243,7 @@ function PluginCard({
               title={confirmingUninstall ? t('pluginSettings.confirmUninstall') : t('pluginSettings.uninstallPlugin')}
               aria-label={t('pluginSettings.uninstallPlugin')}
               className={`rounded p-1.5 transition-colors ${confirmingUninstall
-                ? 'bg-red-50 text-red-500 hover:bg-red-100 dark:bg-red-900/20 dark:hover:bg-red-900/30'
+                ? 'bg-red-50 text-red-500 hover:bg-red-100 bg-red-900/20 hover:bg-red-900/30'
                 : 'text-muted-foreground hover:bg-muted hover:text-red-500'
                 }`}
             >
@@ -256,8 +256,8 @@ function PluginCard({
 
         {/* Confirm uninstall banner */}
         {confirmingUninstall && (
-          <div className="mt-3 flex items-center justify-between gap-3 rounded border border-red-200 bg-red-50 px-3 py-2 dark:border-red-800/50 dark:bg-red-950/30">
-            <span className="text-sm text-red-600 dark:text-red-400">
+          <div className="mt-3 flex items-center justify-between gap-3 rounded border border-red-200 bg-red-50 px-3 py-2 border-red-800/50 bg-red-950/30">
+            <span className="text-sm text-red-600 text-red-400">
               {t('pluginSettings.confirmUninstallMessage', { name: plugin.displayName })}
             </span>
             <div className="flex gap-1.5">
@@ -269,7 +269,7 @@ function PluginCard({
               </button>
               <button
                 onClick={onUninstall}
-                className="rounded border border-red-300 px-2.5 py-1 text-sm font-medium text-red-600 transition-colors hover:bg-red-100 dark:border-red-700 dark:text-red-400 dark:hover:bg-red-900/30"
+                className="rounded border border-red-300 px-2.5 py-1 text-sm font-medium text-red-600 transition-colors hover:bg-red-100 border-red-700 text-red-400 hover:bg-red-900/30"
               >
                 {t('pluginSettings.remove')}
               </button>
@@ -332,7 +332,7 @@ function PluginRecommendationCard({
   const Icon = recommendation.icon;
   const isOfficial = recommendation.source === 'official';
   const accentClass = isOfficial ? 'bg-blue-500/30' : 'bg-amber-500/40';
-  const hoverClass = isOfficial ? 'hover:border-blue-400 dark:hover:border-blue-500' : 'hover:border-amber-400 dark:hover:border-amber-500';
+  const hoverClass = isOfficial ? 'hover:border-blue-400 hover:border-blue-500' : 'hover:border-amber-400 hover:border-amber-500';
   const iconClass = isOfficial ? 'text-blue-500' : 'text-amber-500';
 
   return (
@@ -349,7 +349,7 @@ function PluginRecommendationCard({
                 <span className="text-sm font-semibold leading-none text-foreground">
                   {t(`pluginSettings.${recommendation.translationKey}.name`)}
                 </span>
-                <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                <span className="rounded bg-muted px-1.5 py-0.5 text-[length:var(--fs-10)] text-muted-foreground">
                   {t('pluginSettings.tab')}
                 </span>
               </div>

@@ -9,11 +9,14 @@ request can batch its queries on one connection (the router opens it via
 from __future__ import annotations
 
 import json
+import logging
 import posixpath
 import sqlite3
 import uuid
 from pathlib import Path
 from typing import Any, Optional
+
+logger = logging.getLogger("awen.agents.repos")
 
 
 # --- path / display-name helpers (shared/utils.ts) --------------------------
@@ -44,11 +47,10 @@ def generate_display_name(project_name: str, actual_project_dir: Optional[str] =
         if isinstance(name, str) and name:
             return name
     except Exception:
-        pass
-    if project_path.startswith("/"):
-        parts = [p for p in project_path.split("/") if p]
-        return parts[-1] if parts else project_path
-    return project_path
+        logger.debug("json.loads 失败（旁路，已忽略）", exc_info=True)
+    # Project paths are normalized to forward slashes on Windows too, so
+    # POSIX basename works uniformly even though the input may be "C:/...".
+    return posixpath.basename(project_path) or project_path
 
 
 # --- projects repository (projects.db.ts) -----------------------------------

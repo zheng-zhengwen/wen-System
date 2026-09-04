@@ -21,10 +21,10 @@ def client(tmp_path: Path, monkeypatch):
     studio = tmp_path / "skill-studio"
     skills.mkdir()
     studio.mkdir()
-    monkeypatch.setenv("IVYEA_OPS_SKILLS_ROOT", str(skills))
-    monkeypatch.setenv("IVYEA_OPS_STUDIO_ROOT", str(studio))
-    monkeypatch.setenv("IVYEA_OPS_SECRET", "test-secret")
-    monkeypatch.setenv("IVYEA_OPS_ALLOWED_ORIGINS", _ORIGIN)
+    monkeypatch.setenv("AWENOPS_SKILLS_ROOT", str(skills))
+    monkeypatch.setenv("AWENOPS_STUDIO_ROOT", str(studio))
+    monkeypatch.setenv("AWENOPS_SECRET", "test-secret")
+    monkeypatch.setenv("AWENOPS_ALLOWED_ORIGINS", _ORIGIN)
 
     import importlib
     from app.core import config as cfg_mod

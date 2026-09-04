@@ -10,7 +10,7 @@ cd "$(dirname "$0")/.."
 # Backend in background
 (
   cd server
-  IVYEA_OPS_DEV=1 python3 -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8001
+  AWENOPS_DEV=1 python3 -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8001
 ) &
 BACK=$!
 trap "kill $BACK 2>/dev/null || true" EXIT

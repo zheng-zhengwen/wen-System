@@ -12,7 +12,7 @@ const TOOLS = [
   { key: "traffic", icon: "⊘", title: "流量异动诊断", desc: "自有 ASIN 流量下跌根因分析", component: TrafficDiagnosis },
   { key: "reviews", icon: "⊙", title: "评论聚类", desc: "差评差异化成因识别与修复建议", component: ReviewClustering },
   { key: "listing", icon: "⊡", title: "Listing 批量改写", desc: "多 ASIN 标题 / 五点 / QA 批量生成", component: ListingRewrite },
-  { key: "history", icon: "≡", title: "分析历史", desc: "IvyeaAgent 生成的分析报告都保存在这里", component: DeepHistory },
+  { key: "history", icon: "≡", title: "分析历史", desc: "awenAgent 生成的分析报告都保存在这里", component: DeepHistory },
 ] as const;
 
 type ToolKey = (typeof TOOLS)[number]["key"];
@@ -37,9 +37,9 @@ export default function DeepAnalysis() {
             >
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
                 <span style={{ fontSize: 18 }}>{t.icon}</span>
-                <span style={{ fontSize: 12, fontWeight: 600, color: "var(--t)" }}>{t.title}</span>
+                <span style={{ fontSize: "var(--fs-12)", fontWeight: 600, color: "var(--t)" }}>{t.title}</span>
               </div>
-              <div style={{ fontSize: 10, color: "var(--t3)", lineHeight: 1.5 }}>{t.desc}</div>
+              <div style={{ fontSize: "var(--fs-10)", color: "var(--t3)", lineHeight: 1.5 }}>{t.desc}</div>
             </div>
           ))}
         </div>
@@ -49,7 +49,7 @@ export default function DeepAnalysis() {
           <button
             className="tbtn"
             onClick={() => setActive(null)}
-            style={{ marginBottom: 12, fontSize: 11 }}
+            style={{ marginBottom: 12, fontSize: "var(--fs-11)" }}
           >
             ← 返回工具列表
           </button>

@@ -16,14 +16,15 @@ _HDR = {"Origin": _ORIGIN}
 @pytest.fixture
 def ctx(tmp_path: Path, monkeypatch):
     db_path = tmp_path / "agents.db"
-    monkeypatch.setenv("IVYEA_OPS_SECRET", "test-secret")
-    monkeypatch.setenv("IVYEA_OPS_ALLOWED_ORIGINS", _ORIGIN)
+    monkeypatch.setenv("AWENOPS_SECRET", "test-secret")
+    monkeypatch.setenv("AWENOPS_ALLOWED_ORIGINS", _ORIGIN)
     monkeypatch.setenv("AGENTS_DB_PATH", str(db_path))
 
     # Isolate HOME so the projects-list synchronizer scans an empty ~/.claude
     # (otherwise it would pull in the host's real sessions and pollute the test).
     (tmp_path / "home").mkdir()
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))
 
     from app.core import config as cfg_mod
     importlib.reload(cfg_mod)
@@ -34,6 +35,7 @@ def ctx(tmp_path: Path, monkeypatch):
     db_mod.init_db()
     from app.agents import synchronizer as sync_mod
     importlib.reload(sync_mod)  # re-evaluate _CLAUDE_HOME against the isolated HOME
+    from app.agents import repos as repos_mod
 
     # Seed a project + two claude sessions; one session has a transcript file.
     proj_dir = tmp_path / "proj"
@@ -48,18 +50,19 @@ def ctx(tmp_path: Path, monkeypatch):
     ]), encoding="utf-8")
 
     with db_mod.db_conn() as conn:
+        project_path = repos_mod.normalize_project_path(str(proj_dir))
         conn.execute(
             "INSERT INTO projects(project_id, project_path, custom_project_name, isStarred, isArchived)"
-            " VALUES(?,?,?,?,?)", ("p1", str(proj_dir), None, 0, 0))
+            " VALUES(?,?,?,?,?)", ("p1", project_path, None, 0, 0))
         conn.execute(
             "INSERT INTO sessions(session_id, provider, custom_name, project_path, jsonl_path, isArchived,"
             " created_at, updated_at) VALUES(?,?,?,?,?,?,?,?)",
-            (sid, "claude", "First session", str(proj_dir), str(transcript), 0,
+            (sid, "claude", "First session", project_path, str(transcript), 0,
              "2026-01-01T00:00:00Z", "2026-01-01T00:00:02Z"))
         conn.execute(
             "INSERT INTO sessions(session_id, provider, custom_name, project_path, jsonl_path, isArchived,"
             " created_at, updated_at) VALUES(?,?,?,?,?,?,?,?)",
-            ("sess-archived", "claude", "Old", str(proj_dir), None, 1,
+            ("sess-archived", "claude", "Old", project_path, None, 1,
              "2025-12-01T00:00:00Z", "2025-12-01T00:00:00Z"))
 
     from app import main as main_mod
@@ -155,7 +158,7 @@ def test_token_usage(ctx):
     r = c.get(f"/api/agents/projects/p1/sessions/{sid}/token-usage", params={"provider": "claude"})
     assert r.status_code == 200, r.text
     body = r.json()
-    assert set(["used", "total", "inputTokens", "outputTokens", "breakdown"]).issubset(body.keys())
+    assert {"used", "total", "inputTokens", "outputTokens", "breakdown"}.issubset(body.keys())
     # non-claude provider is reported unsupported
     r2 = c.get(f"/api/agents/projects/p1/sessions/{sid}/token-usage", params={"provider": "codex"})
     assert r2.json().get("unsupported") is True

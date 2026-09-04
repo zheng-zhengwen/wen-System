@@ -1,0 +1,38 @@
+/**
+ * 剥掉每轮注入给模型的上下文（与后端 console_sessions.clean_preview 同一组标记）。
+ *
+ * 会话正文里除了用户真正打的字，还夹着技能说明书、知识检索结果、任务范围锁定这些
+ * 运行时上下文 —— 它们是给模型看的，直接摆进气泡就是一大坨噪音。
+ *
+ * 从 Console.tsx 提到这里：AI 问答收编进同一个会话库之后，两个板块恢复历史会话时
+ * 都得剥同一组标记，各写一份迟早会漂。
+ */
+const INJECTION_MARKERS = [
+  "\n\n[awen Skill：",
+  "\n\n[awen 本地知识检索",
+  "\n\n[awen 记忆召回",
+  "\n\n[awen 内置亚马逊知识库",
+  "\n\n[任务范围锁定",
+  "\n\n[工程上下文]",
+  // 附图的文字版（视觉模型代读的内容）。气泡里给的是原图缩略图，不是这段文字。
+  "\n\n[用户附图",
+  // 会话附件（只给这一轮用、没进知识库的文档）的正文。气泡里给的是文件名小标，
+  // 不是这几万字。**后端 console_sessions._INJECTION_MARKERS 里有同一份表**，
+  // 两边都得加 —— 漏了哪边，那一边就会把整份 PDF 糊进用户自己的气泡。
+  "\n\n[用户附件",
+];
+
+export function stripInjected(text: string): string {
+  let out = text;
+  for (const marker of INJECTION_MARKERS) {
+    const i = out.indexOf(marker);
+    if (i >= 0) out = out.slice(0, i);
+  }
+  // 收尾是被截断的半截标记（服务端把消息砍短过）→ 一并切掉
+  for (const marker of INJECTION_MARKERS) {
+    for (let size = marker.length; size > 2; size -= 1) {
+      if (out.endsWith(marker.slice(0, size))) { out = out.slice(0, -size); break; }
+    }
+  }
+  return out.trim();
+}

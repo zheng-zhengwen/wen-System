@@ -1,5 +1,5 @@
 /*
- * ttyd iframe-side styles for the IvyeaOps terminal toolbar
+ * ttyd iframe-side styles for the awenops terminal toolbar
  *
  * Selection-mode overrides. The .tb-select-mode class on <html> is toggled
  * via postMessage from the parent. We apply user-select:text unconditionally
@@ -24,7 +24,7 @@ html.tb-select-mode body {
   -webkit-overflow-scrolling: touch;
 }
 
-/* Slim scrollbar to match the IvyeaOps workbench (the default ttyd/xterm bar is
+/* Slim scrollbar to match the awenops workbench (the default ttyd/xterm bar is
  * too chunky). Webkit-only on purpose: setting scrollbar-width/-color would make
  * Chrome ignore this custom sizing and fall back to its native preset. */
 .xterm .xterm-viewport::-webkit-scrollbar { width: 6px; height: 6px; }

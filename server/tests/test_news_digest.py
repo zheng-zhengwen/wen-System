@@ -25,7 +25,7 @@ def test_extract_fenced_and_prose_wrapped():
 
 
 def test_extract_duplicate_array_with_citation_note():
-    # Real-world ivyea-agent shape: array emitted twice + citation postscript.
+    # Real-world awen-agent shape: array emitted twice + citation postscript.
     text = (
         '[{"i": 0, "summary_zh": "第一版"}]\n'
         '[{"i": 0, "summary_zh": "第二版 [K3]"}]\n\n'

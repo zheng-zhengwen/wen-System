@@ -12,8 +12,8 @@ def sandbox(tmp_path: Path, monkeypatch):
     studio = tmp_path / "skill-studio"
     skills.mkdir()
     studio.mkdir()
-    monkeypatch.setenv("IVYEA_OPS_SKILLS_ROOT", str(skills))
-    monkeypatch.setenv("IVYEA_OPS_STUDIO_ROOT", str(studio))
+    monkeypatch.setenv("AWENOPS_SKILLS_ROOT", str(skills))
+    monkeypatch.setenv("AWENOPS_STUDIO_ROOT", str(studio))
 
     import importlib
     from app.core import skill_paths as sp_mod

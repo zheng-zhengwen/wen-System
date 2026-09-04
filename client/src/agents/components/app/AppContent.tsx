@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next';
 
 import Sidebar from '../sidebar/view/Sidebar';
 import MainContent from '../main-content/view/MainContent';
-import CommandPalette from '../command-palette/CommandPalette';
+import CommandPalette from '../command-palette/CommandPaletteHost';
 import { useWebSocket } from '../../contexts/WebSocketContext';
 import { PaletteOpsProvider, usePaletteOpsRegister } from '../../contexts/PaletteOpsContext';
 import { useDeviceSettings } from '../../hooks/useDeviceSettings';
@@ -111,12 +111,12 @@ function AppContentInner() {
     handoffConsumedRef.current = true;
     let raw: string | null = null;
     try {
-      raw = sessionStorage.getItem('ivyea-ops-agent-handoff');
+      raw = sessionStorage.getItem('awenops-agent-handoff');
     } catch {
       return;
     }
     if (!raw) return;
-    sessionStorage.removeItem('ivyea-ops-agent-handoff');
+    sessionStorage.removeItem('awenops-agent-handoff');
     try {
       const payload = JSON.parse(raw) as {
         provider?: string;
@@ -127,14 +127,14 @@ function AppContentInner() {
         localStorage.setItem('selected-provider', payload.provider);
       }
       if (typeof payload.prompt === 'string' && payload.prompt) {
-        localStorage.setItem('ivyea-ops-agent-initial-input', payload.prompt);
+        localStorage.setItem('awenops-agent-initial-input', payload.prompt);
       }
       // The full report travels as a document; the composer uploads it into the
       // selected working dir once a project is selected (see useChatComposerState).
       if (payload.doc && typeof payload.doc.content === 'string') {
-        localStorage.setItem('ivyea-ops-agent-handoff-doc', JSON.stringify(payload.doc));
+        localStorage.setItem('awenops-agent-handoff-doc', JSON.stringify(payload.doc));
       } else {
-        localStorage.removeItem('ivyea-ops-agent-handoff-doc');
+        localStorage.removeItem('awenops-agent-handoff-doc');
       }
     } catch {
       return;
@@ -206,7 +206,7 @@ function AppContentInner() {
     <div className="fixed inset-0 flex bg-background" style={{ bottom: 'var(--keyboard-height, 0px)' }}>
       {!isMobile ? (
         <div className="h-full flex-shrink-0 border-r border-border/50">
-          <Sidebar {...sidebarSharedProps} />
+          <Sidebar {...sidebarSharedProps} processingSessions={processingSessions} />
         </div>
       ) : (
         <div
@@ -232,7 +232,7 @@ function AppContentInner() {
             onClick={(event) => event.stopPropagation()}
             onTouchStart={(event) => event.stopPropagation()}
           >
-            <Sidebar {...sidebarSharedProps} />
+            <Sidebar {...sidebarSharedProps} processingSessions={processingSessions} />
           </div>
         </div>
       )}

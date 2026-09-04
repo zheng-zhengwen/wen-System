@@ -91,11 +91,11 @@ export default function CommitHistoryItem({
                 </div>
                 <div>
                   <div className="text-muted-foreground/60">Added</div>
-                  <div className="font-semibold text-green-600 dark:text-green-400">+{fileSummary.totalInsertions}</div>
+                  <div className="font-semibold text-green-600 text-green-400">+{fileSummary.totalInsertions}</div>
                 </div>
                 <div>
                   <div className="text-muted-foreground/60">Removed</div>
-                  <div className="font-semibold text-red-600 dark:text-red-400">-{fileSummary.totalDeletions}</div>
+                  <div className="font-semibold text-red-600 text-red-400">-{fileSummary.totalDeletions}</div>
                 </div>
               </div>
             )}
@@ -115,7 +115,7 @@ export default function CommitHistoryItem({
                       }`}
                     >
                       <span
-                        className={`inline-flex h-4 w-4 flex-shrink-0 items-center justify-center rounded border text-[9px] font-bold ${getStatusBadgeClass(file.status)}`}
+                        className={`inline-flex h-4 w-4 flex-shrink-0 items-center justify-center rounded border text-[length:var(--fs-9)] font-bold ${getStatusBadgeClass(file.status)}`}
                       >
                         {file.status}
                       </span>
@@ -127,11 +127,11 @@ export default function CommitHistoryItem({
                       </span>
                       <span className="flex-shrink-0 font-mono text-muted-foreground/60">
                         {file.insertions > 0 && (
-                          <span className="text-green-600 dark:text-green-400">+{file.insertions}</span>
+                          <span className="text-green-600 text-green-400">+{file.insertions}</span>
                         )}
                         {file.insertions > 0 && file.deletions > 0 && '/'}
                         {file.deletions > 0 && (
-                          <span className="text-red-600 dark:text-red-400">-{file.deletions}</span>
+                          <span className="text-red-600 text-red-400">-{file.deletions}</span>
                         )}
                       </span>
                     </div>

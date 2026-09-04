@@ -16,9 +16,27 @@ export default class ErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
-    // Surface the stack in the dev console; production bundles strip this
-    // anyway. No remote reporting yet — add when we wire in Sentry/similar.
-    console.error("[IvyeaOps] render error:", error, info.componentStack);
+    console.error("[awenops] render error:", error, info.componentStack);
+
+    // **报到服务端。** 只打 console 等于这条信息只存在于用户的浏览器里 ——
+    // 用户说"知识库偶尔白屏、刷新才好"，而维护者这边什么都看不到，只能靠猜。
+    // 现在它会落进服务端日志（journalctl -u awenops），带上是哪一页、什么错、
+    // 组件栈。用裸 fetch 而不是 axios 实例：这一刻应用已经崩了，能少依赖一层是一层。
+    try {
+      fetch("/api/client-error", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        keepalive: true,          // 用户此时很可能马上刷新，keepalive 让请求活过卸载
+        body: JSON.stringify({
+          message: String(error?.message || error),
+          stack: String(error?.stack || "").slice(0, 4000),
+          component_stack: String(info?.componentStack || "").slice(0, 4000),
+          path: location.pathname + location.search,
+          ua: navigator.userAgent,
+        }),
+      }).catch(() => { /* 上报失败就算了，绝不能在错误处理里再抛一次 */ });
+    } catch { /* 同上 */ }
   }
 
   reset = () => this.setState({ error: null });
@@ -31,7 +49,7 @@ export default class ErrorBoundary extends Component<Props, State> {
           padding: 24,
           maxWidth: 640,
           margin: "40px auto",
-          fontSize: 12,
+          fontSize: "var(--fs-12)",
           color: "var(--t2)",
           lineHeight: 1.7,
         }}
@@ -46,7 +64,7 @@ export default class ErrorBoundary extends Component<Props, State> {
         >
           ⚠
         </div>
-        <div style={{ fontSize: 13, color: "var(--t)", marginBottom: 8 }}>
+        <div style={{ fontSize: "var(--fs-13)", color: "var(--t)", marginBottom: 8 }}>
           页面渲染出错
         </div>
         <pre
@@ -55,7 +73,7 @@ export default class ErrorBoundary extends Component<Props, State> {
             border: "1px solid var(--b)",
             borderRadius: "var(--r)",
             padding: 10,
-            fontSize: 10,
+            fontSize: "var(--fs-10)",
             color: "var(--t3)",
             whiteSpace: "pre-wrap",
             wordBreak: "break-word",

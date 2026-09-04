@@ -29,7 +29,8 @@ function fmtWhen(ts: number): string {
 
 function Delta({ v, kind }: { v?: number; kind?: "price" | "bsr" | "count" }) {
   if (v == null || v === 0) return null;
-  const up = v > 0;
+  // BSR 越小越好，不能把名次数字变大误画成上升。
+  const up = kind === "bsr" ? v < 0 : v > 0;
   const mag = kind === "price" ? Math.abs(v).toFixed(2) : fmtVol(Math.abs(v));
   return <span className={"asin-delta " + (up ? "up" : "down")}>{up ? "▲" : "▼"}{mag}</span>;
 }

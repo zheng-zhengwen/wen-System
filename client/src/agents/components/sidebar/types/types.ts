@@ -42,6 +42,8 @@ export type SidebarProps = {
   selectedSession: ProjectSession | null;
   onProjectSelect: (project: Project) => void;
   onSessionSelect: (session: ProjectSession) => void;
+  /** 此刻真的有一轮在跑的会话 id（左栏据此打闪烁标记）。 */
+  processingSessions?: Set<string>;
   onNewSession: (project: Project) => void;
   onSessionDelete?: (sessionId: string) => void;
   onLoadMoreSessions?: (projectId: string) => Promise<void> | void;
@@ -65,8 +67,9 @@ export type SessionViewModel = {
   isOpenCodeSession: boolean;
   isHermesSession?: boolean;
   isAgySession?: boolean;
-  isIvyeaSession?: boolean;
-  isActive: boolean;
+  isawenSession?: boolean;
+  /** 最近动过（10 分钟内更新）——**不是**「正在跑」，后者看 processingSessions。 */
+  isRecent: boolean;
   sessionName: string;
   sessionTime: string;
   messageCount: number;
