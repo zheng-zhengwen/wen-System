@@ -1,0 +1,230 @@
+name: CI
+
+# 为什么要有这个：在此之前 awenops **没有任何跑测试的 CI**（只有 release.yml），
+# 而同步到 GitHub 之后 Windows 用户占多数 —— 也就是说，主要用户所在的平台恰恰是
+# 唯一没被验证过的平台。release.yml 里那个 windows 作业只打包 exe、只冒烟测
+# bundled agent-serve 的 /health，服务本身和各板块一个都没碰过。
+#
+# 编码那一栏（PYTHONUTF8）不是摆设：中文版 Windows 默认 GBK，任何不带 encoding=
+# 的文本读写都会 UnicodeDecodeError。护栏留在这里，回归了当场就红。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint:
+    name: ruff (后端 lint 门禁)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # 配置在 server/ruff.toml。选的规则是"当前全仓零违规"的那批 ——
+      # 一旦变红，必然是这次改动引入的，不会有"历史债太多所以忽略它"的余地。
+      - uses: astral-sh/ruff-action@v3
+        with:
+          args: check
+          src: server
+
+  server:
+    name: server tests (${{ matrix.os }} · py${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # macOS 之前只在 release.yml 里被打包、从来没跑过测试 —— 也就是说
+        # "支持 macOS" 这句话一直没有任何东西在验证它。
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ["3.9", "3.12"]
+        exclude:
+          # macos-latest 是 arm64，setup-python 上面没有 3.9 的构建。
+          # macOS 用户装的是发行版包，跟着 3.12 那栏走就够。
+          - os: macos-latest
+            python: "3.9"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r server/requirements.txt
+          pip install pytest pytest-asyncio anyio pytest-timeout
+      # awenAgent 必须装上：Windows 免-Python 包是把 agent 打进 exe 的，
+      # tests/test_frozen_agent_serve.py 验的就是"exe 能跑内置 agent"这个契约。
+      # 不装的话那 3 项直接失败，而它恰恰是 Windows 用户最依赖的一环。
+      # 跟 release.yml 一样默认取最新 release tag，取不到回退 main。
+      - name: Install awenAgent (bundled in the Windows exe)
+        shell: bash
+        env:
+          # GITHUB_TOKEN 不会自动出现在步骤环境里，得显式给 —— 不给的话下面那个
+          # Authorization 头就是空的，等于又退回匿名限流那条路。
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          ref="${AWEN_AGENT_REF:-}"
+          if [ -z "$ref" ]; then
+            # 带 token：匿名调 api.github.com 是按 IP 限流的，托管 runner 出口 IP 共享，
+            # 撞额度只是时间问题（release 那边的 macOS 作业就这么静默回退过一次）。
+            ref=$(curl -fsSL \
+                    -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+                    -H "Accept: application/vnd.github+json" \
+                    https://api.github.com/repos/zheng-zhengwen/awen-agent/releases/latest \
+                  | python -c "import json,sys; print(json.load(sys.stdin).get('tag_name',''))" 2>/dev/null || true)
+          fi
+          # CI 里回退 main 是可以接受的（测的是本仓库的代码，agent 只是依赖），
+          # 但**必须说出来** —— 否则"这次测的到底是哪个 agent"只能靠猜。
+          # release.yml 那边不一样：那里回退会让用户拿到装着未发布代码的包，所以直接失败。
+          if [ -z "$ref" ]; then
+            echo "::warning::取不到 awen-agent 最新 release，本次改用 main 跑测试"
+            ref=main
+          fi
+          echo "installing awen-agent@$ref"
+          pip install "git+https://github.com/zheng-zhengwen/awen-agent.git@$ref"
+      # --timeout 而不是任由它挂：挂起在 CI 上表现为"作业转 6 小时然后被杀"，
+      # 日志要等作业结束才可读，等于什么线索都拿不到。有了每测试超时，挂起会变成
+      # 一条指名道姓的失败。thread 方法在 Windows 上也有效（signal 方法只支持 POSIX）。
+      - name: Test
+        working-directory: server
+        run: python -m pytest tests -q --timeout=120 --timeout-method=thread
+        env:
+          PYTHONUTF8: "1"   # Windows 中文编码护栏
+
+  # server/app/tests 单独成一个作业，原因有二：
+  #   1. 它慢一个数量级（224 项要 7 分钟，上面那批 327 项只要 20 秒），塞进矩阵
+  #      会让每个平台都多等 7 分钟；
+  #   2. 它此前**从来没进过 CI** —— 于是 require_module 绕过 dependency_overrides
+  #      的问题让它 61 项常年红着而无人知晓。单独一个作业既能挡住回归，又不拖慢
+  #      主矩阵的反馈速度。
+  # 只跑 ubuntu：这批是纯业务逻辑，跨平台风险由上面的矩阵覆盖。
+  app-tests:
+    name: server tests · app/tests (ubuntu · py3.12)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r server/requirements.txt
+          pip install pytest pytest-asyncio anyio pytest-timeout
+      - name: Test
+        working-directory: server
+        run: python -m pytest app/tests -q --timeout=180 --timeout-method=thread
+        env:
+          PYTHONUTF8: "1"
+
+  # 跨平台搬家：在 Linux 上导出备份，在 Windows 上还原并逐行核对。
+  #
+  # 为什么值得单独一个作业：这个仓库反复吃过"宣称支持某平台、却没有任何东西在
+  # 验证它"的亏（macOS 一直只打包不测试、app/tests 从没进过 CI 所以 61 项常年红）。
+  # 「换台机器数据能完整搬过去」是自托管产品最不能出错的承诺之一，而路径分隔符、
+  # 文本编码、隐藏文件这些恰恰是最容易在跨平台时悄悄坏掉的地方。
+  migrate-cross-platform:
+    name: 跨平台迁移 (Linux 导出 → Windows 还原)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -r server/requirements.txt
+      - name: 造数据并导出
+        working-directory: server
+        shell: bash
+        run: python ../scripts/ci_migrate_export.py
+        env: { PYTHONUTF8: "1" }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: migrate-archive
+          path: server/ci-migrate/*.zip
+          retention-days: 1
+
+  migrate-restore-windows:
+    name: 跨平台迁移 · Windows 还原
+    runs-on: windows-latest
+    needs: [migrate-cross-platform]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -r server/requirements.txt
+      - uses: actions/download-artifact@v4
+        with:
+          name: migrate-archive
+          path: server/ci-migrate
+      - name: 还原并核对
+        working-directory: server
+        shell: bash
+        run: python ../scripts/ci_migrate_verify.py
+        env: { PYTHONUTF8: "1" }
+
+  powershell-syntax:
+    # Windows 安装脚本此前**没有任何门禁** —— 改坏了只有用户装的时候才会发现，
+    # 而那时候他连 awenops 都还没跑起来，报错也回不到我们这里。
+    # 这里只做解析（不执行），足够挡住语法错、引号/花括号不配平、
+    # 反引号续行后带了尾随空格这类静默断行。
+    name: PowerShell 脚本语法门禁
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 解析全部 .ps1
+        shell: pwsh
+        run: |
+          $bad = 0
+          Get-ChildItem -Recurse -Filter *.ps1 |
+            Where-Object { $_.FullName -notmatch '\\node_modules\\' } |
+            ForEach-Object {
+              $bytes = [IO.File]::ReadAllBytes($_.FullName)
+              $hasBom = $bytes.Length -ge 3 -and
+                $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF
+              $offset = if ($hasBom) { 3 } else { 0 }
+              $hasNonAscii = $false
+              for ($i = $offset; $i -lt $bytes.Length; $i++) {
+                if ($bytes[$i] -ge 0x80) { $hasNonAscii = $true; break }
+              }
+              if ($hasNonAscii -and -not $hasBom) {
+                $bad++
+                Write-Host "::error file=$($_.FullName)::含 Unicode 的 PowerShell 脚本必须使用 UTF-8 BOM（兼容 Windows PowerShell 5.1）"
+              }
+              $errors = $null
+              [System.Management.Automation.Language.Parser]::ParseFile(
+                $_.FullName, [ref]$null, [ref]$errors) | Out-Null
+              if ($errors -and $errors.Count -gt 0) {
+                $bad++
+                Write-Host "::error file=$($_.FullName)::$($errors.Count) 处语法错误"
+                $errors | ForEach-Object { Write-Host "  行 $($_.Extent.StartLineNumber): $($_.Message)" }
+              } else {
+                Write-Host "ok  $($_.Name)"
+              }
+            }
+          if ($bad -gt 0) { exit 1 }
+
+  client:
+    name: client build + typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+      # npm ci 而不是 npm install：lockfile 必须能在**公共 registry** 上装通。
+      # 本机 ~/.npmrc 指着腾讯云内网镜像，曾把 resolved 全写死成内网地址，
+      # 到了 CI/用户机上直接装崩。这一步顺便当那件事的回归护栏。
+      - name: Install
+        working-directory: client
+        run: npm ci
+      - name: Typecheck
+        working-directory: client
+        run: npx tsc --noEmit -p tsconfig.json
+      - name: 门禁：不许直接读后端 detail
+        working-directory: client
+        # 见 scripts/check-errtext.mjs：422 的 detail 是对象数组，直接渲染会把
+        # 整页崩成「渲染失败」。清零之后靠这条挡回潮。
+        run: node scripts/check-errtext.mjs
+      - name: Build
+        working-directory: client
+        run: npm run build

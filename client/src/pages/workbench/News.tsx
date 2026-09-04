@@ -9,6 +9,7 @@ import {
   listNewsDates,
   refreshNews,
 } from "../../api/news";
+import { errText } from "../../lib/errText";
 
 const CATS: { key: NewsCategory | "all"; label: string }[] = [
   { key: "all", label: "全部" },
@@ -60,7 +61,7 @@ function HeatBadge({ n }: { n: number }) {
     <span
       title={`热度 ${v}/5（AI 评估的重要度）`}
       style={{
-        fontSize: 9,
+        fontSize: "var(--fs-9)",
         color,
         border: `1px solid ${v >= 4 ? "currentColor" : "var(--b)"}`,
         borderRadius: 3,
@@ -109,7 +110,7 @@ function NewsCard({
             display: "block",
             color: "var(--t)",
             textDecoration: "none",
-            fontSize: 12,
+            fontSize: "var(--fs-12)",
             fontWeight: 500,
             marginBottom: 4,
           }}
@@ -117,7 +118,7 @@ function NewsCard({
           {n.is_official && (
             <span
               style={{
-                fontSize: 9,
+                fontSize: "var(--fs-9)",
                 color: "var(--amber)",
                 marginRight: 6,
                 padding: "1px 5px",
@@ -134,7 +135,7 @@ function NewsCard({
         {n.summary_zh && (
           <div
             style={{
-              fontSize: 10.5,
+              fontSize: "var(--fs-105)",
               color: "var(--t2)",
               lineHeight: 1.55,
               marginBottom: 5,
@@ -146,7 +147,7 @@ function NewsCard({
         {n.reason_zh && (
           <div
             style={{
-              fontSize: 10,
+              fontSize: "var(--fs-10)",
               color: "var(--acc)",
               lineHeight: 1.5,
               marginBottom: 5,
@@ -164,7 +165,7 @@ function NewsCard({
               onClick={() => onTagClick(t)}
               title={activeTag === t ? "取消标签筛选" : `只看「${t}」`}
               style={{
-                fontSize: 9,
+                fontSize: "var(--fs-9)",
                 color: activeTag === t ? "var(--acc)" : "var(--t3)",
                 border: `1px solid ${activeTag === t ? "var(--acc)" : "var(--b)"}`,
                 borderRadius: 3,
@@ -190,7 +191,7 @@ function NewsCard({
             target="_blank"
             rel="noopener noreferrer"
             style={{
-              fontSize: 9,
+              fontSize: "var(--fs-9)",
               color: "var(--acc)",
               textDecoration: "none",
               marginLeft: 6,
@@ -218,7 +219,7 @@ function SectionHeader({
   return (
     <div
       style={{
-        fontSize: 10,
+        fontSize: "var(--fs-10)",
         color: subtle ? "var(--t3)" : "var(--amber)",
         letterSpacing: ".1em",
         padding: "10px 0 6px 0",
@@ -229,7 +230,7 @@ function SectionHeader({
         gap: 6,
       }}
     >
-      <span style={{ fontSize: 12 }}>{icon}</span>
+      <span style={{ fontSize: "var(--fs-12)" }}>{icon}</span>
       <span>{label}</span>
       <span style={{ color: "var(--t3)", fontWeight: 400 }}>· {count} 条</span>
     </div>
@@ -252,10 +253,10 @@ export default function News() {
   const loadDates = useCallback(async () => {
     try {
       const r = await listNewsDates();
-      setDates(r);
+      setDates(r ?? { dates: [], latest: null });
       setPicked((prev) => prev ?? r.latest);
     } catch (e: any) {
-      setErr(e?.response?.data?.detail ?? e.message ?? "日期加载失败");
+      setErr(errText(e, "日期加载失败"));
     }
   }, []);
 
@@ -270,7 +271,7 @@ export default function News() {
       const d = await getNewsDay({ date: target ?? undefined });
       setDay(d);
     } catch (e: any) {
-      setErr(e?.response?.data?.detail ?? e.message ?? "加载失败");
+      setErr(errText(e, "加载失败"));
     } finally {
       setLoading(false);
     }
@@ -282,7 +283,10 @@ export default function News() {
 
   const filtered = useMemo<NewsItem[]>(() => {
     if (!day) return [];
-    let items = cat === "all" ? day.items : day.items.filter((i) => i.category === cat);
+    // day.items 缺失时整页会被错误边界换掉。接口降级/代理错误页都可能给回别的形状，
+    // 一个字段不该让整页消失。
+    const all = Array.isArray(day.items) ? day.items : [];
+    let items = cat === "all" ? all : all.filter((i) => i.category === cat);
     if (pickedOnly) items = items.filter((i) => i.importance >= 4);
     if (activeTag) items = items.filter((i) => (i.tags ?? []).includes(activeTag));
     const kw = q.trim().toLowerCase();
@@ -340,7 +344,7 @@ export default function News() {
         }, 10000);
       }
     } catch (e: any) {
-      setFlash(e?.response?.data?.detail ?? e.message ?? "刷新失败");
+      setFlash(errText(e, "刷新失败"));
     } finally {
       setRefreshing(false);
       setTimeout(() => setFlash(null), 30000);
@@ -394,7 +398,7 @@ export default function News() {
           onChange={(e) => setQ(e.target.value)}
           placeholder="搜索标题 / 摘要 / 标签…"
           style={{
-            fontSize: 10,
+            fontSize: "var(--fs-10)",
             background: "none",
             border: "1px solid var(--b)",
             borderRadius: 4,
@@ -428,7 +432,7 @@ export default function News() {
       {flash && (
         <div
           className="card"
-          style={{ marginBottom: 10, fontSize: 10, color: "var(--t3)" }}
+          style={{ marginBottom: 10, fontSize: "var(--fs-10)", color: "var(--t3)" }}
         >
           {flash}
         </div>
@@ -441,7 +445,7 @@ export default function News() {
           style={{
             display: "flex",
             gap: 12,
-            fontSize: 9,
+            fontSize: "var(--fs-9)",
             color: "var(--t3)",
             marginBottom: 10,
             flexWrap: "wrap",
@@ -462,7 +466,7 @@ export default function News() {
             <button
               onClick={() => setActiveTag(null)}
               style={{
-                fontSize: 9,
+                fontSize: "var(--fs-9)",
                 color: "var(--acc)",
                 background: "none",
                 border: "1px solid var(--acc)",
@@ -491,7 +495,7 @@ export default function News() {
         )}
 
         {!loading && filtered.length === 0 && (
-          <div style={{ padding: 12, fontSize: 10, color: "var(--t3)" }}>
+          <div style={{ padding: 12, fontSize: "var(--fs-10)", color: "var(--t3)" }}>
             {day && day.items.length === 0
               ? "该日尚未生成任何资讯。点击「立即刷新」现场抓取 RSS 并 AI 汇总。"
               : "当前筛选条件下无资讯（试试清掉搜索词 / 标签 / 精选开关）"}

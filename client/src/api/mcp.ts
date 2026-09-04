@@ -1,24 +1,42 @@
-// MCP server management — wraps /api/mcp/* (Claude Code user-scope servers).
 import { api } from "./client";
 
-export interface MCPServer {
+export interface McpToken {
+  id: string;
   name: string;
-  type: string;        // "stdio" | "http" | "sse"
-  command: string;
-  args: string[];
-  url: string;
-  env_keys: string[];
+  scopes: string;
+  created_at: number;
+  expires_at: number | null;
+  last_used_at: number | null;
+  last_used_ip: string;
+  revoked: number;
 }
 
-export async function listMCPServers(): Promise<MCPServer[]> {
-  const { data } = await api.get<{ servers: MCPServer[] }>("/mcp/servers");
-  return data.servers;
+export interface IssuedToken extends McpToken {
+  /** 明文令牌。**只在生成的这一次返回里出现**，之后服务端只留哈希。 */
+  token: string;
 }
 
-export async function addMCPServer(name: string, config: Record<string, unknown>): Promise<void> {
-  await api.post("/mcp/servers", { name, config });
+export interface McpClientConfig {
+  endpoint: string;
+  claude_desktop: unknown;
+  cursor: unknown;
+  note: string;
 }
 
-export async function removeMCPServer(name: string): Promise<void> {
-  await api.delete(`/mcp/servers/${encodeURIComponent(name)}`);
+export async function listMcpTokens(): Promise<{ tokens: McpToken[]; scopes: string[] }> {
+  return (await api.get("/mcp-admin/tokens")).data;
+}
+
+export async function issueMcpToken(
+  name: string, scopes: string[], ttlDays: number,
+): Promise<IssuedToken> {
+  return (await api.post("/mcp-admin/tokens", { name, scopes, ttl_days: ttlDays })).data;
+}
+
+export async function revokeMcpToken(id: string): Promise<void> {
+  await api.delete(`/mcp-admin/tokens/${id}`);
+}
+
+export async function getMcpClientConfig(token = ""): Promise<McpClientConfig> {
+  return (await api.get("/mcp-admin/config", { params: { token } })).data;
 }

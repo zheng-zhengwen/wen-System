@@ -3,7 +3,6 @@
 // 不占用浏览器 URL,也不与 ops 外层的 BrowserRouter 冲突。
 import { MemoryRouter as Router, Route, Routes } from 'react-router-dom';
 import { I18nextProvider } from 'react-i18next';
-import { ThemeProvider } from './contexts/ThemeContext';
 import { AuthProvider, ProtectedRoute } from './components/auth';
 import { TaskMasterProvider } from './contexts/TaskMasterContext';
 import { TasksSettingsProvider } from './contexts/TasksSettingsContext';
@@ -15,26 +14,24 @@ import i18n from './i18n/config.js';
 export default function AgentsApp() {
   return (
     <I18nextProvider i18n={i18n}>
-      <ThemeProvider>
-        <AuthProvider>
-          <WebSocketProvider>
-            <PluginsProvider>
-              <TasksSettingsProvider>
-                <TaskMasterProvider>
-                  <ProtectedRoute>
-                    <Router>
-                      <Routes>
-                        <Route path="/" element={<AppContent />} />
-                        <Route path="/session/:sessionId" element={<AppContent />} />
-                      </Routes>
-                    </Router>
-                  </ProtectedRoute>
-                </TaskMasterProvider>
-              </TasksSettingsProvider>
-            </PluginsProvider>
-          </WebSocketProvider>
-        </AuthProvider>
-      </ThemeProvider>
+      <AuthProvider>
+        <WebSocketProvider>
+          <PluginsProvider>
+            <TasksSettingsProvider>
+              <TaskMasterProvider>
+                <ProtectedRoute>
+                  <Router>
+                    <Routes>
+                      <Route path="/" element={<AppContent />} />
+                      <Route path="/session/:sessionId" element={<AppContent />} />
+                    </Routes>
+                  </Router>
+                </ProtectedRoute>
+              </TaskMasterProvider>
+            </TasksSettingsProvider>
+          </PluginsProvider>
+        </WebSocketProvider>
+      </AuthProvider>
     </I18nextProvider>
   );
 }

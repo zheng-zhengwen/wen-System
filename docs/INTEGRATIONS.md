@@ -1,12 +1,12 @@
 # 外部集成
 
-IvyeaOps 可独立运行。下面这些功能都是**可选**的：只有当你在同一台主机上装了
+awenops 可独立运行。下面这些功能都是**可选**的：只有当你在同一台主机上装了
 对应工具时才需要配置。
 
 所有集成路径的配置方式：
 
 - 网页 `系统配置 → 智能体 → 外部集成路径`，**或**
-- 在 `server/.env` 里填对应的 `IVYEA_OPS_*` 环境变量作为兜底。
+- 在 `server/.env` 里填对应的 `AWENOPS_*` 环境变量作为兜底。
 
 UI 的 **系统状态** 面板会显示哪些集成已就绪。
 
@@ -49,11 +49,10 @@ Hermes / Claude 并列。`codex_db`（以及飞书中继旁车安装的变体 `f
 - `kiro_cli_db` + `kiro_cli_sessions_dir` —— CLI 会话的 token 估算（没有精确
   计数器，从 `context_usage_percentage` 估算）。
 
-### GBrain / Bun（`bun_bin`）
+### Bun（`bun_bin`）
 
-GBrain 是一个 Bun 链接的知识库 CLI。设置 `bun_bin`（`/root/.bun/bin`）会把它加到
-gbrain spawn 的 PATH 前面，让 bun 运行时可被发现。gbrain 可执行文件本身在
-`GBrain 知识库`（键 `gbrain_bin`）下配置。
+设置 `bun_bin`（`/root/.bun/bin`）会把 Bun 加到子进程 PATH 前面，
+供依赖 Bun 运行时的 CLI 使用。
 
 ## 新增一个集成
 

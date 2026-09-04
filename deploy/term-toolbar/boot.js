@@ -1,8 +1,8 @@
 /*
- * ttyd iframe-side bridge for the IvyeaOps terminal toolbar.
+ * ttyd iframe-side bridge for the awenops terminal toolbar.
  *
  * Runs inside the ttyd iframe. The mobile toolbar UI lives in the parent
- * page (IvyeaOps); this script only:
+ * page (awenops); this script only:
  *   1. Captures the ttyd WebSocket to send raw bytes to the pty
  *   2. Listens for postMessage from the parent to dispatch keys
  *   3. Adds a capture-phase scroll fallback for xterm scrollback
@@ -17,7 +17,7 @@
 (function () {
   'use strict';
 
-  // Derive the IvyeaOps origin from the embedding referrer at load time so
+  // Derive the awenops origin from the embedding referrer at load time so
   // the bridge works against any deployment hostname (not just ours). If
   // the iframe is opened standalone (no referrer) we fall back to '*',
   // which only relaxes outbound postMessage targeting; inbound messages

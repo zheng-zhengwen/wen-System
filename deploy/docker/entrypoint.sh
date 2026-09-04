@@ -2,25 +2,25 @@
 set -e
 
 echo "====================================="
-echo "  IvyeaOps - starting"
+echo "  awenops - starting"
 echo "====================================="
 
 mkdir -p /app/data
 
-export IVYEA_OPS_DATA_DIR=/app/data
-export IVYEA_OPS_HOST=0.0.0.0
-export IVYEA_OPS_PORT=8001
+export AWENOPS_DATA_DIR=/app/data
+export AWENOPS_HOST=0.0.0.0
+export AWENOPS_PORT=8001
 export PYTHONPATH=/app/server
 export PYTHONUNBUFFERED=1
 
 # Generate password hash from ADMIN_PASSWORD env var
-if [ -n "$ADMIN_PASSWORD" ] && [ -z "$IVYEA_OPS_PASSWORD_HASH" ]; then
-    export IVYEA_OPS_PASSWORD_HASH=$(python3 -c "import bcrypt,sys; print(bcrypt.hashpw(sys.argv[1].encode(), bcrypt.gensalt()).decode())" "$ADMIN_PASSWORD")
+if [ -n "$ADMIN_PASSWORD" ] && [ -z "$AWENOPS_PASSWORD_HASH" ]; then
+    export AWENOPS_PASSWORD_HASH=$(python3 -c "import bcrypt,sys; print(bcrypt.hashpw(sys.argv[1].encode(), bcrypt.gensalt()).decode())" "$ADMIN_PASSWORD")
 fi
 
 # Generate secret if not set
-if [ -z "$IVYEA_OPS_SECRET" ]; then
-    export IVYEA_OPS_SECRET=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))")
+if [ -z "$AWENOPS_SECRET" ]; then
+    export AWENOPS_SECRET=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))")
 fi
 
 echo "  Starting backend..."

@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import os
 import re
-from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
@@ -115,7 +114,11 @@ async def execute_command(body: ExecuteBody) -> dict:
     project_base = os.path.abspath(os.path.join(project_path, ".claude", "commands")) if project_path else None
 
     def _under(base):
-        rel = os.path.relpath(resolved, base)
+        try:
+            rel = os.path.relpath(resolved, base)
+        except ValueError:
+            # Windows paths on different drives are never relative to each other.
+            return False
         return rel != "" and not rel.startswith("..") and not os.path.isabs(rel)
 
     if not (_under(user_base) or (project_base and _under(project_base))):

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { getStats, SkillStats } from "../../api/skill";
+import { errText } from "../../lib/errText";
 
 function fmtBytes(n: number): string {
   if (n < 1024) return `${n} B`;
@@ -25,7 +26,7 @@ export default function StatsOverview() {
     let alive = true;
     getStats()
       .then((d) => alive && setData(d))
-      .catch((e) => alive && setErr(e?.response?.data?.detail ?? e.message ?? "加载失败"));
+      .catch((e) => alive && setErr(errText(e, "加载失败")));
     return () => {
       alive = false;
     };
@@ -66,7 +67,7 @@ export default function StatsOverview() {
       <div className="card mb14">
         <div className="ct">分类分布</div>
         {categories.length === 0 ? (
-          <div style={{ color: "var(--t3)", fontSize: 11 }}>尚无分类</div>
+          <div style={{ color: "var(--t3)", fontSize: "var(--fs-11)" }}>尚无分类</div>
         ) : (
           <div className="sks-cat-grid">
             {categories.map(([name, count]) => (
@@ -88,7 +89,7 @@ export default function StatsOverview() {
       <div className="card">
         <div className="ct">最近编辑</div>
         {data.recently_edited.length === 0 ? (
-          <div style={{ color: "var(--t3)", fontSize: 11 }}>空</div>
+          <div style={{ color: "var(--t3)", fontSize: "var(--fs-11)" }}>空</div>
         ) : (
           data.recently_edited.map((s) => (
             <Link

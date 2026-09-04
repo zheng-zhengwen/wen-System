@@ -6,7 +6,6 @@ import { markdown } from "@codemirror/lang-markdown";
 import { yaml } from "@codemirror/lang-yaml";
 import { python } from "@codemirror/lang-python";
 import { javascript } from "@codemirror/lang-javascript";
-import { oneDark } from "@codemirror/theme-one-dark";
 
 export type CodeEditorProps = {
   value: string;
@@ -100,7 +99,7 @@ export default function CodeEditor({
       value={value}
       onChange={onChange}
       extensions={extensions}
-      theme={oneDark}
+      theme={undefined}
       editable={!readonly}
       readOnly={readonly}
       basicSetup={{

@@ -8,7 +8,7 @@ import type { DataSourceId } from "../../../lib/dataSource";
 import { runPool } from "../../../lib/pool";
 import { useToast } from "../../../components/toast";
 
-const STORAGE_KEY = "ivyea-ops-pulse-keywords-v1";
+const STORAGE_KEY = "awenops-pulse-keywords-v1";
 
 type CardState =
   | { kind: "idle" }
@@ -157,7 +157,7 @@ function SummaryBar({ keywords, states }: { keywords: string[]; states: Record<s
           {i > 0 && <div className="pulse-summary-sep" />}
           <div className="pulse-summary-item">
             <div className="pulse-summary-val" style={{ color: it.color as any }}>
-              {loading > 0 && it.label === "查询中" ? <><span className="pulse-spin" style={{ fontSize: 11 }}>◌</span> {it.val}</> : it.val}
+              {loading > 0 && it.label === "查询中" ? <><span className="pulse-spin" style={{ fontSize: "var(--fs-11)" }}>◌</span> {it.val}</> : it.val}
             </div>
             <div className="pulse-summary-label">{it.label}</div>
           </div>
@@ -461,6 +461,7 @@ export default function KeywordMonitor({ marketplace, dataSource }: { marketplac
   const [states, setStates] = useState<Record<string, CardState>>({});
   const [input, setInput] = useState("");
   const [refreshing, setRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   const notify = useToast();
   const sourceName = dataSource === "sellersprite" ? "卖家精灵" : "Sorftime";
@@ -471,6 +472,7 @@ export default function KeywordMonitor({ marketplace, dataSource }: { marketplac
   // Cache-first load (+ one-time migration of legacy localStorage list). No
   // Provider call on open — cards render from source-isolated server cache.
   const loadCache = async () => {
+    setLoadError("");
     try {
       // Migrate any legacy localStorage keywords to the server (list only).
       const legacy = loadLegacyKeywords();
@@ -491,7 +493,9 @@ export default function KeywordMonitor({ marketplace, dataSource }: { marketplac
           : { kind: "idle" };
       }
       setStates(next);
-    } catch { /* ignore */ }
+    } catch (e: any) {
+      setLoadError(e?.message || "读取关键词列表失败");
+    }
   };
 
   useEffect(() => { loadCache(); /* eslint-disable-next-line */ }, [marketplace, dataSource]);
@@ -536,7 +540,14 @@ export default function KeywordMonitor({ marketplace, dataSource }: { marketplac
 
   const removeKeyword = async (kw: string) => {
     const id = idByKw(kw);
-    if (id) await deleteKeyword(id).catch(() => notify("warn", `「${kw}」服务端删除失败，刷新后可能回来`));
+    if (id) {
+      try {
+        await deleteKeyword(id);
+      } catch (e: any) {
+        notify("error", `删除「${kw}」失败：${e?.message || "请求失败"}`);
+        return;
+      }
+    }
     setItems(p => p.filter(it => !(it.keyword === kw && it.marketplace === marketplace)));
     setStates(p => { const n = { ...p }; delete n[kw]; return n; });
   };
@@ -587,7 +598,9 @@ export default function KeywordMonitor({ marketplace, dataSource }: { marketplac
         </button>
       </div>
 
-      {keywords.length === 0 ? (
+      {loadError && <div className="pulse-err">⚠ {loadError}</div>}
+
+      {!loadError && (keywords.length === 0 ? (
         /* ── Empty / Onboarding ── */
         <div className="pulse-onboard">
           <div className="pulse-onboard-icon">◈</div>
@@ -623,7 +636,7 @@ export default function KeywordMonitor({ marketplace, dataSource }: { marketplac
             ))}
           </div>
         </>
-      )}
+      ))}
     </div>
   );
 }

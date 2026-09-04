@@ -1,5 +1,5 @@
-# ═══════════════════════════════════════════════════
-# IvyeaOps — Smart Installer for Windows
+﻿# ═══════════════════════════════════════════════════
+# awenops — Smart Installer for Windows
 # Auto-detects & installs all dependencies
 # ═══════════════════════════════════════════════════
 
@@ -15,7 +15,7 @@ function Test-Command($cmd) {
 
 Write-Host ""
 Write-Host "  ╔═══════════════════════════════════════╗" -ForegroundColor Cyan
-Write-Host "  ║     IvyeaOps — Smart Installer         ║" -ForegroundColor Cyan
+Write-Host "  ║     awenops — Smart Installer         ║" -ForegroundColor Cyan
 Write-Host "  ╚═══════════════════════════════════════╝" -ForegroundColor Cyan
 Write-Host ""
 
@@ -101,18 +101,18 @@ if (Test-Command "hermes") {
 Write-Host ""
 
 # ── Step 4: Clone repo ──
-Write-Status "Step 4/5 — Getting IvyeaOps..." "info"
+Write-Status "Step 4/5 — Getting awenops..." "info"
 Write-Host ""
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoDir = $scriptDir
 
 if (Test-Path "$repoDir\docker-compose.yml") {
-    Write-Status "Already in IvyeaOps directory" "ok"
+    Write-Status "Already in awenops directory" "ok"
 } else {
-    Write-Status "Cloning IvyeaOps..." "info"
-    $repoDir = "$env:USERPROFILE\ivyea-ops"
-    git clone https://github.com/Hector-xue/IvyeaOps.git $repoDir
+    Write-Status "Cloning awenops..." "info"
+    $repoDir = "$env:USERPROFILE\awenops"
+    git clone https://github.com/zheng-zhengwen/wen-System.git $repoDir
     Set-Location $repoDir
     Write-Status "Cloned to $repoDir" "ok"
 }
@@ -128,7 +128,9 @@ Set-Location $repoDir
 if (!(Test-Path ".env")) {
     $chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
     $pass = -join (1..12 | ForEach-Object { $chars[(Get-Random -Maximum $chars.Length)] })
-    "ADMIN_PASSWORD=*** | "PORT=8080" | Set-Content .env
+    # 两行写进 .env：ADMIN_PASSWORD 由 config 自动 bcrypt 成 hash；
+    # PORT 给 docker-compose 用（"${PORT:-8080}:80"），不是给应用读的。
+    "ADMIN_PASSWORD=$pass", "PORT=8080" | Set-Content .env
     Write-Status "Created .env" "ok"
     Write-Host ""
     Write-Host "  ╔═══════════════════════════════════════╗" -ForegroundColor Yellow
@@ -165,7 +167,7 @@ for ($i = 0; $i -lt 30; $i++) {
 Write-Host ""
 Write-Host "  ╔═══════════════════════════════════════╗" -ForegroundColor Green
 Write-Host "  ║                                       ║" -ForegroundColor Green
-Write-Host "  ║   IvyeaOps is ready!                   ║" -ForegroundColor Green
+Write-Host "  ║   awenops is ready!                   ║" -ForegroundColor Green
 Write-Host "  ║                                       ║" -ForegroundColor Green
 Write-Host "  ║   Open: http://localhost:$port           ║" -ForegroundColor Green
 Write-Host "  ║                                       ║" -ForegroundColor Green

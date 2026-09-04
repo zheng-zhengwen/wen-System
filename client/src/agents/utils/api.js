@@ -1,6 +1,6 @@
 import { IS_PLATFORM } from "../constants/config";
 
-// 所有路径走原生后端 /api/agents（FastAPI 同源，ivyea_ops_session cookie 鉴权）。
+// 所有路径走原生后端 /api/agents（FastAPI 同源，awenops_session cookie 鉴权）。
 const _apiUrl = (path) => path.replace(/^\/api/, '/api/agents');
 
 // Utility function for authenticated API calls

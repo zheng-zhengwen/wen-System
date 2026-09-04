@@ -1,4 +1,4 @@
-"""Sync IvyeaOps settings into the runner config files.
+"""Sync awenops settings into the runner config files.
 
 Called whenever hub_settings are saved, and once per boot with the full
 settings dict. Idempotent — safe to call repeatedly.
@@ -9,7 +9,7 @@ Responsibilities:
   2. Sorftime key      → mcp_servers.sorftime URL query param
   3. SIF key           → mcp_servers.sif_mcp Bearer token
   4. SellerSprite key  → mcp_servers.sellersprite (stdio MCP)
-  5. All three keys    → ~/.ivyea/mcp.json, so IvyeaAgent (the default brain)
+  5. All three keys    → ~/.awen/mcp.json, so awenAgent (the default brain)
                           can reach the same data sources — without this a
                           fresh install has the keys in System Settings and an
                           agent with zero MCP servers.
@@ -17,15 +17,16 @@ Responsibilities:
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
-import subprocess
 
-from app.core.proc import no_window_kwargs
 from pathlib import Path
 from typing import Any, Dict
 
-import yaml  # PyYAML — available in the IvyeaOps venv
+import yaml  # PyYAML — available in the awenops venv
+
+logger = logging.getLogger("awen.services.hermes_config_sync")
 
 
 _HERMES_CFG  = Path.home() / ".hermes" / "config.yaml"
@@ -34,8 +35,8 @@ _MCP_SCRIPT  = Path(__file__).resolve().parents[2] / "tools" / "sellersprite_mcp
 
 
 def _agent_mcp_file() -> Path:
-    """IvyeaAgent's MCP registry — honours IVYEA_HOME like the agent does."""
-    home = os.environ.get("IVYEA_HOME") or str(Path.home() / ".ivyea")
+    """awenAgent's MCP registry — honours AWEN_HOME like the agent does."""
+    home = os.environ.get("AWEN_HOME") or str(Path.home() / ".awen")
     return Path(home) / "mcp.json"
 
 # Map provider id → (env_var_name, default_base_url)
@@ -52,19 +53,6 @@ _PROVIDER_ENV: Dict[str, tuple[str, str]] = {
     "kimi":       ("KIMI_API_KEY",                   "https://api.kimi.com/coding/v1"),
     "xiaomi":     ("XIAOMI_API_KEY",                 "https://token-plan-sgp.xiaomimimo.com/v1"),
     "custom":     ("",                               ""),
-}
-
-# GBrain embedding providers → env var name (key is read from the environment
-# by the `gbrain serve` subprocess, which inherits Hermes' env). ollama needs
-# no key (local).
-_GBRAIN_EMBED_ENV: Dict[str, str] = {
-    "openai":    "OPENAI_API_KEY",
-    "zhipu":     "ZHIPUAI_API_KEY",
-    "dashscope": "DASHSCOPE_API_KEY",
-    "minimax":   "MINIMAX_API_KEY",
-    "voyage":    "VOYAGE_API_KEY",
-    "google":    "GOOGLE_GENERATIVE_AI_API_KEY",
-    "ollama":    "",
 }
 
 
@@ -131,12 +119,12 @@ def sync_sellersprite(key: str) -> None:
 
 
 def sync_agent_mcp(updates: Dict[str, Any]) -> None:
-    """Mirror the data-source keys into ~/.ivyea/mcp.json for IvyeaAgent.
+    """Mirror the data-source keys into ~/.awen/mcp.json for awenAgent.
 
-    Only writes: a server is registered/refreshed when IvyeaOps holds a key for
+    Only writes: a server is registered/refreshed when awenops holds a key for
     it, and otherwise left exactly as it is. Nothing is ever removed — boot
     replays this with the *full* settings dict, so an unset key there is
-    indistinguishable from a cleared one, and a user who ran ``ivyea mcp add``
+    indistinguishable from a cleared one, and a user who ran ``awen mcp add``
     themselves must not lose their entry. Servers are marked ``trusted``: they
     are read-only data APIs whose keys the operator entered in System Settings,
     and an approval prompt no one can answer would just stall unattended runs.
@@ -194,11 +182,11 @@ def sync_agent_mcp(updates: Dict[str, Any]) -> None:
     try:
         path.chmod(0o600)   # it holds API keys
     except OSError:
-        pass
+        logger.debug("path.chmod 失败（旁路，已忽略）", exc_info=True)
 
 
 def _python_bin() -> str:
-    return os.environ.get("IVYEA_OPS_PYTHON", "python3")
+    return os.environ.get("AWENOPS_PYTHON", "python3")
 
 
 def _read_env_file() -> Dict[str, str]:
@@ -310,162 +298,6 @@ def sync_llm_model(
     _save(cfg)
 
 
-# Known embedding model → native dimension. Used to keep GBrain's pglite
-# vector column in sync (it's created vector(1536) by default for OpenAI).
-_EMBED_MODEL_DIMS = {
-    "nomic-embed-text": 768, "mxbai-embed-large": 1024, "all-minilm": 384,
-    "text-embedding-3-large": 1536, "text-embedding-3-small": 1536,
-    "embedding-3": 1024,                # zhipu
-    "text-embedding-v3": 1024,          # dashscope
-    "embo-01": 1536,                    # minimax
-    "voyage-3": 1024, "voyage-3-large": 1024,
-    "text-embedding-004": 768,          # google
-}
-_GBRAIN_CONFIG = Path.home() / ".gbrain" / "config.json"
-
-
-def _gbrain_bin() -> str | None:
-    import shutil
-    found = shutil.which("gbrain")
-    if found:
-        return found
-    name = "gbrain.exe" if os.name == "nt" else "gbrain"
-    for cand in (Path.home() / ".bun" / "bin" / name, Path("/usr/local/bin/gbrain")):
-        if cand.exists():
-            return str(cand)
-    return None
-
-
-def _migrate_gbrain_dims(new_dims: int) -> bool:
-    """ALTER the pglite embedding column to ``new_dims`` if it differs.
-
-    GBrain refuses to embed when the model's dim != the column's dim. We run
-    the official migration recipe (drop index → alter type → null vectors →
-    recreate index) via GBrain's own pglite + vector extension. Idempotent.
-    """
-    import json
-    import subprocess
-    cfg_path = _GBRAIN_CONFIG
-    if not cfg_path.exists():
-        return False
-    try:
-        cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
-    except Exception:
-        return False
-    db_path = cfg.get("database_path")
-    if not db_path or not Path(db_path).exists():
-        return False
-
-    gbrain_pkg = Path.home() / ".bun" / "install" / "global" / "node_modules" / "gbrain"
-    if not gbrain_pkg.exists():
-        return False
-
-    script = f"""
-import {{ PGlite }} from "@electric-sql/pglite";
-import {{ vector }} from "@electric-sql/pglite/vector";
-import {{ pg_trgm }} from "@electric-sql/pglite/contrib/pg_trgm";
-const db = new PGlite({json.dumps(db_path)}, {{ extensions: {{ vector, pg_trgm }} }});
-await db.waitReady;
-const r = await db.query(`SELECT atttypmod FROM pg_attribute
-  WHERE attrelid='content_chunks'::regclass AND attname='embedding'`);
-const cur = r.rows[0]?.atttypmod;
-if (cur === {new_dims}) {{ console.log("noop"); await db.close(); process.exit(0); }}
-await db.exec(`DROP INDEX IF EXISTS idx_chunks_embedding;
-  ALTER TABLE content_chunks ALTER COLUMN embedding TYPE vector({new_dims});
-  UPDATE content_chunks SET embedding=NULL, embedded_at=NULL;
-  CREATE INDEX idx_chunks_embedding ON content_chunks USING hnsw (embedding vector_cosine_ops);`);
-console.log("migrated");
-await db.close();
-"""
-    bun = str(Path.home() / ".bun" / "bin" / ("bun.exe" if os.name == "nt" else "bun"))
-    if not Path(bun).exists():
-        return False
-    try:
-        proc = subprocess.run([bun, "-e", script], cwd=str(gbrain_pkg),
-                              capture_output=True, text=True, timeout=120,
-                              **no_window_kwargs())
-        return "migrated" in proc.stdout or "noop" in proc.stdout
-    except Exception:
-        return False
-
-
-def sync_gbrain_embedding(provider: str, model: str, api_key: str) -> None:
-    """Configure GBrain semantic-search embedding — the version that actually works.
-
-    Three things, learned the hard way:
-      1. API key → ~/.hermes/.env (the `gbrain serve` subprocess inherits it).
-      2. embedding_model MUST be written to ~/.gbrain/config.json in
-         ``provider:model`` form. `gbrain config set` writes the pglite DB,
-         but loadConfig() reads config.json — they don't agree, so set is a
-         no-op for this key. Bare model names fall back to OpenAI.
-      3. The pglite vector column dim must match the model; ALTER it if not.
-    """
-    import json
-    provider = (provider or "").strip()
-    model = (model or "").strip()
-    api_key = (api_key or "").strip()
-    if not provider:
-        return
-
-    # 1. API key into Hermes env.
-    env_var = _GBRAIN_EMBED_ENV.get(provider, "")
-    if env_var and api_key:
-        _write_env_file({env_var: api_key})
-
-    if not model:
-        return
-
-    # 2. Write embedding_model (provider:model) + dimensions into config.json.
-    full_model = model if ":" in model else f"{provider}:{model}"
-    bare_model = full_model.split(":", 1)[1]
-    dims = _EMBED_MODEL_DIMS.get(bare_model)
-
-    # config.json only exists after the local DB has been initialised. If it's
-    # missing (e.g. GBrain freshly installed, DB not yet inited), initialise it
-    # first — otherwise picking an embedding provider in 系统配置 would silently do
-    # nothing and the 知识库 board would keep showing "未配置 Embedding".
-    if not _GBRAIN_CONFIG.exists():
-        try:
-            from app.services import gbrain_service as _gb
-            _gb.ensure_db_ready()
-        except Exception:
-            pass
-
-    if _GBRAIN_CONFIG.exists():
-        try:
-            cfg = json.loads(_GBRAIN_CONFIG.read_text(encoding="utf-8"))
-        except Exception:
-            cfg = {}
-        cfg["embedding_model"] = full_model
-        if dims:
-            cfg["embedding_dimensions"] = dims
-        tmp = _GBRAIN_CONFIG.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
-        tmp.replace(_GBRAIN_CONFIG)
-    else:
-        import logging
-        logging.getLogger(__name__).warning(
-            "sync_gbrain_embedding: ~/.gbrain/config.json 不存在且无法初始化，"
-            "embedding_model 未写入（GBrain 可能未正确安装）。")
-
-    # 3. Migrate the vector column dimension if the model needs it.
-    if dims:
-        _migrate_gbrain_dims(dims)
-
-    # Also push via CLI (harmless; some GBrain read paths use it).
-    gbrain = _gbrain_bin()
-    if gbrain:
-        import subprocess
-        _bun_bin = str(Path.home() / ".bun" / "bin")
-        env = {**os.environ, "PATH": os.pathsep.join([_bun_bin, os.environ.get("PATH", "")])}
-        try:
-            subprocess.run([gbrain, "config", "set", "embedding_model", full_model],
-                           env=env, capture_output=True, timeout=20,
-                           **no_window_kwargs())
-        except Exception:
-            pass
-
-
 # ── Public entry point ────────────────────────────────────────────────────────
 
 _LLM_KEYS = {
@@ -473,7 +305,6 @@ _LLM_KEYS = {
     "hermes_fallback_provider", "hermes_fallback_model",
     "hermes_fallback_api_key", "hermes_fallback_base_url",
 }
-_GBRAIN_EMBED_KEYS = {"gbrain_embed_provider", "gbrain_embed_model", "gbrain_embed_api_key"}
 
 
 def on_settings_saved(updates: Dict[str, Any]) -> None:
@@ -514,18 +345,8 @@ def on_settings_saved(updates: Dict[str, Any]) -> None:
         except Exception as exc:  # noqa: BLE001
             _log.warning("hermes sellersprite sync failed: %s", exc)
 
-    # Same keys, IvyeaAgent's own registry (~/.ivyea/mcp.json).
+    # Same keys, awenAgent's own registry (~/.awen/mcp.json).
     try:
         sync_agent_mcp(updates)
     except Exception as exc:  # noqa: BLE001
-        _log.warning("ivyea-agent mcp sync failed: %s", exc)
-
-    if _GBRAIN_EMBED_KEYS & updates.keys():
-        try:
-            sync_gbrain_embedding(
-                provider=updates.get("gbrain_embed_provider", ""),
-                model=updates.get("gbrain_embed_model", ""),
-                api_key=updates.get("gbrain_embed_api_key", ""),
-            )
-        except Exception as exc:  # noqa: BLE001
-            _log.warning("gbrain embedding sync failed: %s", exc)
+        _log.warning("awen-agent mcp sync failed: %s", exc)

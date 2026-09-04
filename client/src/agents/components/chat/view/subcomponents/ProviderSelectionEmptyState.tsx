@@ -8,7 +8,10 @@ import type {
   ProviderModelsDefinition,
 } from "../../../../types/app";
 import SessionProviderLogo from "../../../llm-logo-provider/SessionProviderLogo";
-import { NextTaskBanner } from "../../../task-master";
+// **直接引到具体文件，不要走 task-master 的桶文件**：桶把 TaskMasterPanel
+// 也一并导出，从桶里取任何一个东西都会把整个任务面板（约 84 kB）拽回首屏块，
+// MainContent 那边的 lazy 就白做了。
+import NextTaskBanner from "../../../task-master/view/NextTaskBanner";
 import {
   Dialog,
   DialogTrigger,
@@ -31,7 +34,7 @@ const PROVIDER_META: { id: LLMProvider; name: string }[] = [
   { id: "opencode", name: "OpenCode" },
   { id: "hermes", name: "Hermes" },
   { id: "agy", name: "Antigravity" },
-  { id: "ivyea", name: "IvyeaAgent" },
+  { id: "awen", name: "awenAgent" },
 ];
 
 const MOD_KEY =
@@ -57,7 +60,7 @@ type ProviderSelectionEmptyStateProps = {
   setHermesModel: (model: string) => void;
   agyModel: string;
   setAgyModel: (model: string) => void;
-  ivyeaModel: string;
+  awenModel: string;
   providerModelCatalog: Partial<Record<LLMProvider, ProviderModelsDefinition>>;
   providerModelsLoading: boolean;
   tasksEnabled: boolean;
@@ -97,7 +100,7 @@ function getCurrentModel(
   if (p === "opencode") return o;
   if (p === "hermes") return h;
   if (p === "agy") return a;
-  if (p === "ivyea") return iv;
+  if (p === "awen") return iv;
   return cu;
 }
 
@@ -108,7 +111,7 @@ function getProviderDisplayName(p: LLMProvider) {
   if (p === "opencode") return "OpenCode";
   if (p === "hermes") return "Hermes";
   if (p === "agy") return "Antigravity";
-  if (p === "ivyea") return "IvyeaAgent";
+  if (p === "awen") return "awenAgent";
   return "Gemini";
 }
 
@@ -132,7 +135,7 @@ export default function ProviderSelectionEmptyState({
   setHermesModel,
   agyModel,
   setAgyModel,
-  ivyeaModel,
+  awenModel,
   providerModelCatalog,
   providerModelsLoading,
   tasksEnabled,
@@ -164,7 +167,7 @@ export default function ProviderSelectionEmptyState({
     opencodeModel,
     hermesModel,
     agyModel,
-    ivyeaModel,
+    awenModel,
   );
 
   const currentModelLabel = useMemo(() => {
@@ -195,8 +198,8 @@ export default function ProviderSelectionEmptyState({
       } else if (providerId === "agy") {
         setAgyModel(modelValue);
         localStorage.setItem("agy-model", modelValue);
-      } else if (providerId === "ivyea") {
-        localStorage.setItem("ivyea-model", modelValue);   // 单一 default，无需本地 state
+      } else if (providerId === "awen") {
+        localStorage.setItem("awen-model", modelValue);   // 单一 default，无需本地 state
       } else {
         setCursorModel(modelValue);
         localStorage.setItem("cursor-model", modelValue);
@@ -224,7 +227,7 @@ export default function ProviderSelectionEmptyState({
             <h2 className="text-lg font-semibold tracking-tight text-foreground sm:text-xl">
               {t("providerSelection.title")}
             </h2>
-            <p className="mt-1 text-[13px] text-muted-foreground">
+            <p className="mt-1 text-[length:var(--fs-13)] text-muted-foreground">
               {t("providerSelection.description")}
             </p>
           </div>
@@ -251,7 +254,7 @@ export default function ProviderSelectionEmptyState({
                         {currentModelLabel}
                       </span>
                     </div>
-                    <p className="mt-0.5 text-[11px] text-muted-foreground">
+                    <p className="mt-0.5 text-[length:var(--fs-11)] text-muted-foreground">
                       {t("providerSelection.clickToChange", {
                         defaultValue: "Click to change model",
                       })}
@@ -356,9 +359,9 @@ export default function ProviderSelectionEmptyState({
                   model: agyModel,
                   defaultValue: "Ready with Antigravity {{model}}",
                 }),
-                ivyea: t("providerSelection.readyPrompt.ivyea", {
-                  model: ivyeaModel,
-                  defaultValue: "Ready with IvyeaAgent {{model}}",
+                awen: t("providerSelection.readyPrompt.awen", {
+                  model: awenModel,
+                  defaultValue: "Ready with awenAgent {{model}}",
                 }),
               }[provider]
             }
@@ -370,7 +373,7 @@ export default function ProviderSelectionEmptyState({
               values={{ shortcut: MOD_KEY === "⌘" ? "⌘K" : "Ctrl+K" }}
               components={{
                 kbd: (
-                  <kbd className="inline-flex items-center gap-0.5 rounded border border-border/60 bg-muted/40 px-1.5 py-0.5 font-mono text-[10px]" />
+                  <kbd className="inline-flex items-center gap-0.5 rounded border border-border/60 bg-muted/40 px-1.5 py-0.5 font-mono text-[length:var(--fs-10)]" />
                 ),
               }}
             />

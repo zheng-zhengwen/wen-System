@@ -17,8 +17,56 @@ permissions:
   contents: write
 
 jobs:
+  # 三个包（Linux/通用 zip、Windows exe、macOS .app）必须捆绑**同一个** awenAgent 版本。
+  #
+  # 此前每个作业各自去问一次 GitHub API，各自带一句 `|| AGENT_REF=main` 的静默兜底。
+  # v1.6.0 那次发版就露了馅：Linux 和 Windows 解析到 v1.10.3，macOS 的 curl 没成、
+  # 悄悄回退到了 main。那次 main 恰好等于 v1.10.3，没造成差异 —— 但只要 main 领先于
+  # 最新 tag 一步，同一个版本号的三个包里就会装着不同的 agent，且没有任何报错。
+  #
+  # 所以：解析一次，输出给所有人用；解析不出来就让发版失败，不猜。
+  agent-ref:
+    name: 确定要捆绑的 awenAgent 版本
+    runs-on: ubuntu-latest
+    outputs:
+      ref: ${{ steps.pick.outputs.ref }}
+    steps:
+      - name: 解析 awen-agent 的最新 release tag
+        id: pick
+        env:
+          # 带上 token：匿名调 api.github.com 走的是**按 IP** 的限流，GitHub 托管 runner
+          # 的出口 IP 是共享的，撞额度只是时间问题 —— macOS 那次多半就是这么失败的。
+          GH_TOKEN: ${{ github.token }}
+          OVERRIDE: ${{ vars.AWEN_AGENT_REF }}
+        run: |
+          set -euo pipefail
+          ref="${OVERRIDE:-}"
+          if [ -n "$ref" ]; then
+            echo "使用仓库变量 AWEN_AGENT_REF 指定的版本：$ref"
+          else
+            for attempt in 1 2 3; do
+              ref=$(curl -fsSL \
+                      -H "Authorization: Bearer $GH_TOKEN" \
+                      -H "Accept: application/vnd.github+json" \
+                      "https://api.github.com/repos/zheng-zhengwen/awen-agent/releases/latest" \
+                    | python3 -c "import json,sys;print(json.load(sys.stdin).get('tag_name') or '')" 2>/dev/null) || ref=""
+              [ -n "$ref" ] && break
+              echo "第 $attempt 次没取到，5 秒后重试"
+              sleep 5
+            done
+          fi
+          if [ -z "$ref" ]; then
+            echo "::error::取不到 awen-agent 的最新 release tag。这里**故意不回退到 main** ——"
+            echo "::error::悄悄换成 main 会让发行包装上未发布的 agent 代码，而且三个平台的包可能各装各的。"
+            echo "::error::要临时指定版本，请设仓库变量 AWEN_AGENT_REF（如 v1.10.3）后重跑。"
+            exit 1
+          fi
+          echo "bundling awen-agent ref: $ref"
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
   build-and-release:
     runs-on: ubuntu-latest
+    needs: agent-ref
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -101,7 +149,7 @@ jobs:
         run: |
           TAG="${{ steps.tag.outputs.tag }}"
           printf '%s\n' "$TAG" > VERSION
-          STAGE="staging/IvyeaOps"
+          STAGE="staging/awenops"
           mkdir -p "$STAGE"
           # 复制整棵仓库（含刚构建出的 client/dist），排除开发/运行期产物。
           rsync -a \
@@ -115,23 +163,54 @@ jobs:
             --exclude='server/.env' \
             ./ "$STAGE/"
           test -f "$STAGE/client/dist/index.html"   # 确保预构建前端进了包
-          # Ship IvyeaAgent source so install.sh / install-components.ps1 install it
+          # Ship awenAgent source so install.sh / install-components.ps1 install it
           # OFFLINE from the bundle (no git/proxy failures at the user's end).
-          AGENT_REF="${IVYEA_AGENT_REF:-}"
-          if [ -z "$AGENT_REF" ]; then
-            # 默认打包 ivyea-agent 的**最新 release tag**(可复现、总是已发布版本),
-            # 而非 main HEAD(可能含未发布 WIP)。API 拿不到则回退 main。
-            AGENT_REF=$(curl -fsSL "https://api.github.com/repos/Hector-xue/ivyea-agent/releases/latest" 2>/dev/null | python3 -c "import json,sys;print(json.load(sys.stdin).get('tag_name') or '')" 2>/dev/null || true)
-            [ -z "$AGENT_REF" ] && AGENT_REF="main"
-          fi
-          echo "bundling ivyea-agent ref: $AGENT_REF"
-          git clone --depth 1 --branch "$AGENT_REF" https://github.com/Hector-xue/ivyea-agent.git "$STAGE/agent" \
-            || git clone --depth 1 https://github.com/Hector-xue/ivyea-agent.git "$STAGE/agent"
+          # 版本由 agent-ref 作业统一解析（见文件顶部那段注释），三个平台的包共用同一个。
+          AGENT_REF="${{ needs.agent-ref.outputs.ref }}"
+          echo "bundling awen-agent ref: $AGENT_REF"
+          # 克隆失败不再回退默认分支：那是同一个"悄悄换个版本"的坑，
+          # 用户拿到的包会和版本号说的不是一回事。
+          git clone --depth 1 --branch "$AGENT_REF" https://github.com/zheng-zhengwen/awen-agent.git "$STAGE/agent"
           rm -rf "$STAGE/agent/.git"
           test -f "$STAGE/agent/pyproject.toml"   # bundled agent source present
-          ( cd staging && zip -rq "../IvyeaOps-${TAG}.zip" IvyeaOps )
-          cp "IvyeaOps-${TAG}.zip" "IvyeaOps.zip"   # 版本无关的稳定名，供 releases/latest/download 一键下载
-          ls -lh "IvyeaOps-${TAG}.zip" "IvyeaOps.zip"
+          # 包里的 agent 自报版本必须和捆绑的 tag 一致。对不上时用户那边的表现是
+          # 「有更新」徽标一直亮着且消不掉（agent 仓库为此吃过两次亏），这里挡住。
+          BUNDLED=$(python3 -c "import re,pathlib;print(re.search(r'__version__ = \"([^\"]+)\"', pathlib.Path('$STAGE/agent/awen_agent/__init__.py').read_text(encoding='utf-8')).group(1))")
+          echo "bundled awenAgent $BUNDLED"
+          [ "v$BUNDLED" = "$AGENT_REF" ] || {
+            echo "::error::捆绑的 agent 自报 $BUNDLED，与 tag $AGENT_REF 不一致"; exit 1; }
+          ( cd staging && zip -rq "../awenops-${TAG}.zip" awenops )
+          cp "awenops-${TAG}.zip" "awenops.zip"   # 版本无关的稳定名，供 releases/latest/download 一键下载
+          ls -lh "awenops-${TAG}.zip" "awenops.zip"
+
+      - name: 从 CHANGELOG 取本版说明
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.tag.outputs.tag }}"
+          # 取 `## [vX.Y.Z]` 到下一个 `## [` 之间那一段。**取不到就让发版失败**：
+          # 一个没有"新增了什么、修复了什么"的 Release，对使用者等于没发。
+          awk -v tag="$TAG" '
+            $0 ~ "^## \\[" tag "\\]" { flag = 1; next }
+            flag && /^## \[/ { exit }
+            flag { print }
+          ' CHANGELOG.md > CHANGELOG_SECTION.md
+          if [ ! -s CHANGELOG_SECTION.md ]; then
+            echo "::error::CHANGELOG.md 里没有 $TAG 这一节。发版前要把 Unreleased 改成本版号。"
+            exit 1
+          fi
+          echo "取到 $(wc -l < CHANGELOG_SECTION.md) 行版本说明"
+
+      - name: 拼出发版说明（本版改动 + 安装说明）
+        run: |
+          set -euo pipefail
+          {
+            cat CHANGELOG_SECTION.md
+            echo
+            echo "---"
+            echo
+            cat .github/release-body.md
+          } > RELEASE_NOTES.md
+          head -3 RELEASE_NOTES.md
 
       - name: Create / update GitHub Release
         uses: softprops/action-gh-release@v2
@@ -140,32 +219,13 @@ jobs:
           name: ${{ steps.tag.outputs.tag }}
           generate_release_notes: true
           files: |
-            IvyeaOps-${{ steps.tag.outputs.tag }}.zip
-            IvyeaOps.zip
-          body: |
-            **预构建发行包** —— 已包含编译好的前端 `client/dist` 和 Windows Python 3.12 后端依赖包 `server/vendor/wheels`。
-            Windows 安装脚本会优先从预置 wheelhouse 离线安装后端依赖；如果用户是源码包、Python 版本不匹配或离线包缺失，
-            会自动回退在线 pip 安装。安装脚本检测到已自带前端，会**跳过 Node 安装与前端构建**（含小内存机的 swap 步骤）。
-
-            ### Windows 用户（无需安装 Node）
-            下载下方 `IvyeaOps.zip` → 解压 → 双击「安装 IvyeaOps.bat」。
-
-            ### Linux / macOS（尤其小内存服务器，免构建免 swap）
-            ```bash
-            curl -L https://github.com/Hector-xue/IvyeaOps/releases/latest/download/IvyeaOps.zip -o IvyeaOps.zip
-            unzip IvyeaOps.zip && cd IvyeaOps && bash scripts/install.sh
-            ```
-
-            ### Windows x64 免 Python 版
-            如果不想安装 Python，可下载 `IvyeaOps-Windows-x64.zip` → 解压 → 双击 `IvyeaOpsServer.exe`。启动后会出现控制窗口，关闭窗口即停止服务；更新可在侧边栏点击「更新」或双击「更新 IvyeaOps Windows x64.bat」。
-
-            ### 开发者
-            也可 `git clone` 源码自行构建（需 Node 18+ 与 ≥2G 内存）。
-
+            awenops-${{ steps.tag.outputs.tag }}.zip
+            awenops.zip
+          body_path: RELEASE_NOTES.md
   build-windows-x64:
     name: Build Windows x64 exe bundle
     runs-on: windows-latest
-    needs: build-and-release
+    needs: [agent-ref, build-and-release]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -194,16 +254,20 @@ jobs:
         run: |
           python -m pip install --upgrade pip wheel pyinstaller
           python -m pip install -r server/requirements.txt
-          # Bundle IvyeaAgent INTO the exe so the 免-Python package needs no
+          # Bundle awenAgent INTO the exe so the 免-Python package needs no
           # separate pip/Python/git install — the #1 deploy-failure source.
-          # 默认打包 ivyea-agent 的最新 release tag(可复现、总是已发布版本);API 失败回退 main。
-          $agentRef = if ($env:IVYEA_AGENT_REF) { $env:IVYEA_AGENT_REF } else {
-            try { (Invoke-RestMethod -UseBasicParsing "https://api.github.com/repos/Hector-xue/ivyea-agent/releases/latest").tag_name } catch { "main" }
+          # 版本由 agent-ref 作业统一解析（见文件顶部那段注释），三个平台的包共用同一个。
+          $agentRef = "${{ needs.agent-ref.outputs.ref }}"
+          Write-Host "bundling awen-agent ref: $agentRef"
+          python -m pip install "git+https://github.com/zheng-zhengwen/awen-agent.git@$agentRef"
+          $bundled = python -c "import awen_agent; print(awen_agent.__version__)"
+          Write-Host "bundling awenAgent $bundled"
+          # 自报版本必须和 tag 一致 —— 对不上时用户那边的表现是「有更新」徽标一直亮着
+          # 且怎么更新都消不掉（agent 仓库为此吃过两次亏）。
+          if ("v$bundled" -ne $agentRef) {
+            Write-Host "::error::捆绑的 agent 自报 $bundled，与 tag $agentRef 不一致"
+            exit 1
           }
-          if (-not $agentRef) { $agentRef = "main" }
-          Write-Host "bundling ivyea-agent ref: $agentRef"
-          python -m pip install "git+https://github.com/Hector-xue/ivyea-agent.git@$agentRef"
-          python -c "import ivyea_agent; print('bundling IvyeaAgent', ivyea_agent.__version__)"
           # Build the PyInstaller arg list. --collect-all winpty bundles pywinpty's
           # native ConPTY DLLs so the server-terminal board works in the frozen exe.
           # Best-effort: if winpty isn't importable, build without it (the terminal
@@ -217,12 +281,12 @@ jobs:
           $piArgs = @("--noconfirm","--clean","--onedir","--windowed","--hidden-import","tkinter","--hidden-import","tkinter.messagebox")
           try { python -c "import winpty"; $piArgs += @("--collect-all","winpty"); Write-Host "bundling pywinpty (ConPTY)" }
           catch { Write-Host "winpty not importable; building without ConPTY bundle" }
-          $piArgs += @("--collect-all","ivyea_agent","--collect-submodules","ivyea_agent")
-          $piArgs += @("--icon","client/public/favicon.ico","--name","IvyeaOpsServer","--paths","server","server/ivyeaops_server.py")
+          $piArgs += @("--collect-all","awen_agent","--collect-submodules","awen_agent")
+          $piArgs += @("--icon","client/public/favicon.ico","--name","awenopsServer","--paths","server","server/awenops_server.py")
           pyinstaller @piArgs
-          if (!(Test-Path dist/IvyeaOpsServer/IvyeaOpsServer.exe)) { throw "IvyeaOpsServer.exe missing" }
+          if (!(Test-Path dist/awenopsServer/awenopsServer.exe)) { throw "awenopsServer.exe missing" }
           # Smoke: the exe must run the bundled agent serve from `agent-serve`.
-          $p = Start-Process -FilePath "dist/IvyeaOpsServer/IvyeaOpsServer.exe" -ArgumentList "agent-serve","--host","127.0.0.1","--port","8799" -PassThru
+          $p = Start-Process -FilePath "dist/awenopsServer/awenopsServer.exe" -ArgumentList "agent-serve","--host","127.0.0.1","--port","8799" -PassThru
           Start-Sleep -Seconds 12
           try { $r = Invoke-WebRequest -UseBasicParsing "http://127.0.0.1:8799/health" -TimeoutSec 5; Write-Host "bundled agent serve OK: $($r.Content)" }
           catch { $p | Stop-Process -Force; throw "bundled agent serve did not answer /health: $_" }
@@ -242,16 +306,16 @@ jobs:
         shell: pwsh
         run: |
           $tag = "${{ steps.tag.outputs.tag }}"
-          $stage = "staging/IvyeaOps"
+          $stage = "staging/awenops"
           # NOTE: do NOT pre-create $stage/docs — `Copy-Item -Recurse docs "$stage/docs"`
           # into an existing dir nests it as docs/docs (the manual then 404s). Let
           # Copy-Item create it so docs land at $stage/docs/*.md.
           New-Item -ItemType Directory -Force -Path $stage, "$stage/server", "$stage/client", "$stage/scripts" | Out-Null
           Set-Content -Path "$stage/VERSION" -Value $tag -Encoding ascii
-          # onedir: lay IvyeaOpsServer.exe + _internal\ at the bundle root (next to
+          # onedir: lay awenopsServer.exe + _internal\ at the bundle root (next to
           # server\, client\, …). sys.executable.parent then resolves to the bundle
           # root exactly as it did for onefile, so runtime_root()/path logic is unchanged.
-          Copy-Item -Recurse dist/IvyeaOpsServer/* "$stage/"
+          Copy-Item -Recurse dist/awenopsServer/* "$stage/"
           Copy-Item -Recurse client/dist "$stage/client/dist"
           Copy-Item -Recurse client/public "$stage/client/public"
           Copy-Item -Recurse docs "$stage/docs"
@@ -266,12 +330,12 @@ jobs:
           Copy-Item scripts/install-components.ps1 "$stage/scripts/install-components.ps1"
           Copy-Item scripts/update-exe.ps1 "$stage/scripts/update-exe.ps1"
           Copy-Item scripts/windows-action-gui.ps1 "$stage/scripts/windows-action-gui.ps1"
-          Copy-Item "停止 IvyeaOps.bat" "$stage/停止 IvyeaOps.bat"
-          Copy-Item "更新 IvyeaOps Windows x64.bat" "$stage/更新 IvyeaOps Windows x64.bat"
+          Copy-Item "停止 awenops.bat" "$stage/停止 awenops.bat"
+          Copy-Item "更新 awenops Windows x64.bat" "$stage/更新 awenops Windows x64.bat"
           if (Test-Path README.md) { Copy-Item README.md "$stage/README.md" }
-          Compress-Archive -Path staging/IvyeaOps -DestinationPath "IvyeaOps-Windows-x64-$tag.zip" -Force
-          Copy-Item "IvyeaOps-Windows-x64-$tag.zip" "IvyeaOps-Windows-x64.zip"
-          Get-ChildItem "IvyeaOps-Windows-x64-$tag.zip", "IvyeaOps-Windows-x64.zip" | Format-Table Name,Length
+          Compress-Archive -Path staging/awenops -DestinationPath "awenops-Windows-x64-$tag.zip" -Force
+          Copy-Item "awenops-Windows-x64-$tag.zip" "awenops-Windows-x64.zip"
+          Get-ChildItem "awenops-Windows-x64-$tag.zip", "awenops-Windows-x64.zip" | Format-Table Name,Length
 
       - name: Upload Windows x64 bundle to GitHub Release
         uses: softprops/action-gh-release@v2
@@ -279,13 +343,13 @@ jobs:
           tag_name: ${{ steps.tag.outputs.tag }}
           name: ${{ steps.tag.outputs.tag }}
           files: |
-            IvyeaOps-Windows-x64-${{ steps.tag.outputs.tag }}.zip
-            IvyeaOps-Windows-x64.zip
+            awenops-Windows-x64-${{ steps.tag.outputs.tag }}.zip
+            awenops-Windows-x64.zip
 
   build-macos-app:
     name: Build macOS self-contained .app
     runs-on: macos-latest
-    needs: build-and-release
+    needs: [agent-ref, build-and-release]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -313,27 +377,28 @@ jobs:
         run: |
           python -m pip install --upgrade pip wheel pyinstaller
           python -m pip install -r server/requirements.txt
-          # Bundle IvyeaAgent into the .app so it needs no separate install.
-          AGENT_REF="${IVYEA_AGENT_REF:-}"
-          if [ -z "$AGENT_REF" ]; then
-            # 默认打包 ivyea-agent 的**最新 release tag**(可复现、总是已发布版本),
-            # 而非 main HEAD(可能含未发布 WIP)。API 拿不到则回退 main。
-            AGENT_REF=$(curl -fsSL "https://api.github.com/repos/Hector-xue/ivyea-agent/releases/latest" 2>/dev/null | python3 -c "import json,sys;print(json.load(sys.stdin).get('tag_name') or '')" 2>/dev/null || true)
-            [ -z "$AGENT_REF" ] && AGENT_REF="main"
-          fi
-          echo "bundling ivyea-agent ref: $AGENT_REF"
-          python -m pip install "git+https://github.com/Hector-xue/ivyea-agent.git@${AGENT_REF}"
-          python -c "import ivyea_agent; print('bundling IvyeaAgent', ivyea_agent.__version__)"
-          # --windowed → a self-contained IvyeaOps.app (Python embedded, no install
+          # Bundle awenAgent into the .app so it needs no separate install.
+          # 版本由 agent-ref 作业统一解析（见文件顶部那段注释），三个平台的包共用同一个。
+          # **这个作业就是 v1.6.0 那次悄悄回退到 main 的当事人**：它自己去问 API、
+          # 失败了不吭声。现在它没有自己的解析逻辑，也就没有自己的兜底。
+          AGENT_REF="${{ needs.agent-ref.outputs.ref }}"
+          echo "bundling awen-agent ref: $AGENT_REF"
+          python -m pip install "git+https://github.com/zheng-zhengwen/awen-agent.git@${AGENT_REF}"
+          BUNDLED=$(python -c "import awen_agent; print(awen_agent.__version__)")
+          echo "bundling awenAgent $BUNDLED"
+          [ "v$BUNDLED" = "$AGENT_REF" ] || {
+            echo "::error::捆绑的 agent 自报 $BUNDLED，与 tag $AGENT_REF 不一致"; exit 1; }
+          python -c "import awen_agent; print('bundling awenAgent', awen_agent.__version__)"
+          # --windowed → a self-contained awenops.app (Python embedded, no install
           # needed). --onedir keeps deps in Contents/Frameworks (no per-launch extract,
           # mirrors the Windows x64 choice). Data dirs are copied into Contents/Resources
           # below; _runtime_root() resolves there on darwin.
           pyinstaller --noconfirm --clean --onedir --windowed \
-            --collect-all ivyea_agent --collect-submodules ivyea_agent \
-            --name IvyeaOps --paths server server/ivyeaops_server.py
-          test -d "dist/IvyeaOps.app" || { echo "IvyeaOps.app missing"; exit 1; }
+            --collect-all awen_agent --collect-submodules awen_agent \
+            --name awenops --paths server server/awenops_server.py
+          test -d "dist/awenops.app" || { echo "awenops.app missing"; exit 1; }
           # Smoke: the .app binary must run the bundled agent serve.
-          "dist/IvyeaOps.app/Contents/MacOS/IvyeaOps" agent-serve --host 127.0.0.1 --port 8799 &
+          "dist/awenops.app/Contents/MacOS/awenops" agent-serve --host 127.0.0.1 --port 8799 &
           SMOKE_PID=$!; sleep 12
           curl -fsS http://127.0.0.1:8799/health && echo " — bundled agent serve OK" || { kill $SMOKE_PID 2>/dev/null; echo "bundled agent serve failed"; exit 1; }
           kill $SMOKE_PID 2>/dev/null || true
@@ -352,7 +417,7 @@ jobs:
         shell: bash
         run: |
           tag="${{ steps.tag.outputs.tag }}"
-          res="dist/IvyeaOps.app/Contents/Resources"
+          res="dist/awenops.app/Contents/Resources"
           mkdir -p "$res/client"
           cp -R client/dist "$res/client/dist"
           cp -R client/public "$res/client/public"
@@ -361,9 +426,9 @@ jobs:
           [ -d amazon-image-workflow ] && cp -R amazon-image-workflow "$res/amazon-image-workflow" || true
           echo "$tag" > "$res/VERSION"
           # zip the .app (ditto preserves the bundle bit + symlinks)
-          ( cd dist && ditto -c -k --sequesterRsrc --keepParent "IvyeaOps.app" "../IvyeaOps-macOS-$tag.zip" )
-          cp "IvyeaOps-macOS-$tag.zip" "IvyeaOps-macOS.zip"
-          ls -lh IvyeaOps-macOS-*.zip
+          ( cd dist && ditto -c -k --sequesterRsrc --keepParent "awenops.app" "../awenops-macOS-$tag.zip" )
+          cp "awenops-macOS-$tag.zip" "awenops-macOS.zip"
+          ls -lh awenops-macOS-*.zip
 
       - name: Upload macOS .app to GitHub Release
         uses: softprops/action-gh-release@v2
@@ -371,5 +436,5 @@ jobs:
           tag_name: ${{ steps.tag.outputs.tag }}
           name: ${{ steps.tag.outputs.tag }}
           files: |
-            IvyeaOps-macOS-${{ steps.tag.outputs.tag }}.zip
-            IvyeaOps-macOS.zip
+            awenops-macOS-${{ steps.tag.outputs.tag }}.zip
+            awenops-macOS.zip

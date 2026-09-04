@@ -54,7 +54,7 @@ export default function DeepAnalysisPanel({
       const typeConf = types.find((t) => t.id === selectedType) ?? types[0];
       // Hand the full report over as a document (no truncation, no giant paste):
       // the native composer writes it into the working dir and the prompt asks
-      // the agent to Read it. See AppContent's `ivyea-ops-agent-handoff` reader.
+      // the agent to Read it. See AppContent's `awenops-agent-handoff` reader.
       const doc = buildReportDoc(slug || query, report);
       const prompt = typeConf.promptFn(query, marketplace, reportReference(doc));
       writeAgentHandoff({ provider: selectedAgent, prompt, doc });

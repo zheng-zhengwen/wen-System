@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { TerminalSession, terminalWebSocketUrl } from "../api/terminalLive";
 import "xterm/css/xterm.css";
 import XtermActionToolbar from "./XtermActionToolbar";
+import { xtermTheme } from "../lib/termTheme";
 import {
   enableNativeSelectionMode,
   getSelectedTerminalText,
@@ -34,6 +35,7 @@ export default function TerminalLivePane({ session, onExit, onLiveOutput }: Prop
   const mobileEnhancementCleanupRef = useRef<(() => void) | null>(null);
   const suppressResizeUntilRef = useRef(0);
   const delayedResizeTimerRef = useRef<number | null>(null);
+  const replayingSnapshotRef = useRef(false);
   const onExitRef = useRef<Props["onExit"]>(onExit);
   const onLiveOutputRef = useRef<Props["onLiveOutput"]>(onLiveOutput);
   const [connected, setConnected] = useState(false);
@@ -222,13 +224,12 @@ export default function TerminalLivePane({ session, onExit, onLiveOutput }: Prop
 
       term = new xterm.Terminal({
         fontFamily: "'JetBrains Mono','Fira Code','SF Mono',Menlo,Consolas,monospace",
+        // 这是 xterm 的构造参数，**不是 CSS 样式** —— 它要 number，
+        // 而且字号会参与终端的行列计算，不能塞 CSS 变量。
         fontSize: 12,
-        theme: {
-          background: "#000000",
-          foreground: "#e8e8e8",
-          cursor: "#4ade80",
-          selectionBackground: "rgba(74,222,128,.25)",
-        },
+        // xterm 把字符画在 canvas 上，CSS 变量进不来 —— 这里在运行时把当前主题
+        // xterm paints to canvas, so feed it the current CSS token values.
+        theme: xtermTheme(),
         cursorBlink: true,
         scrollback: 8000,
         convertEol: false,
@@ -250,7 +251,12 @@ export default function TerminalLivePane({ session, onExit, onLiveOutput }: Prop
       fitRef.current = fit;
 
       term.onData((data: string) => {
-        if (selectModeRef.current) return;
+        // A reconnect starts by replaying the PTY ring buffer. Terminal query
+        // sequences inside that historical snapshot make xterm generate replies
+        // such as ESC[?1;2c. They belong to the old query, not to the shell that
+        // is live now, so forwarding them turns them into visible PowerShell
+        // input and can corrupt a command the user is typing.
+        if (selectModeRef.current || replayingSnapshotRef.current) return;
         const ws = wsRef.current;
         const filtered = stripTerminalAutoReplies(data);
         if (!filtered) return;
@@ -272,6 +278,14 @@ export default function TerminalLivePane({ session, onExit, onLiveOutput }: Prop
           }, Math.max(32, suppressUntil - now + 16));
           return;
         }
+        const host = containerRef.current;
+        if (!host) return;
+        const rect = host.getBoundingClientRect();
+        // /terminal is a persistent board. When another board is active its
+        // wrapper is intentionally width:0, but ResizeObserver still fires.
+        // Fitting then collapses xterm/ConPTY to two columns and permanently
+        // hard-wraps PowerShell output. Wait for the board to be visible again.
+        if (rect.width < 80 || rect.height < 40) return;
         try {
           fit.fit();
           const ws = wsRef.current;
@@ -288,7 +302,7 @@ export default function TerminalLivePane({ session, onExit, onLiveOutput }: Prop
 
       connect();
 
-      term._ivyeaOpsCleanup = () => {
+      term._awenOpsCleanup = () => {
         window.removeEventListener("resize", onResize);
         ro.disconnect();
         if (delayedResizeTimerRef.current !== null) {
@@ -302,6 +316,7 @@ export default function TerminalLivePane({ session, onExit, onLiveOutput }: Prop
 
     return () => {
       disposed = true;
+      replayingSnapshotRef.current = false;
       const ws = wsRef.current;
       if (ws) {
         try {
@@ -314,7 +329,7 @@ export default function TerminalLivePane({ session, onExit, onLiveOutput }: Prop
       const t = termRef.current;
       if (t) {
         try {
-          t._ivyeaOpsCleanup?.();
+          t._awenOpsCleanup?.();
           t.dispose();
         } catch {
           // ignore
@@ -373,8 +388,11 @@ export default function TerminalLivePane({ session, onExit, onLiveOutput }: Prop
         const term = termRef.current;
         if (!term) return;
         if (msg.type === "snapshot") {
+          replayingSnapshotRef.current = true;
           term.reset();
-          term.write(msg.data || "");
+          term.write(msg.data || "", () => {
+            replayingSnapshotRef.current = false;
+          });
           onLiveOutputRef.current?.();
         } else if (msg.type === "output") {
           term.write(msg.data || "");

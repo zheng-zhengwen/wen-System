@@ -5,7 +5,7 @@ import asyncio
 
 import app.routers.market as market
 import app.routers.playbook as playbook
-from app.services import (ai_synthesis_service, ivyea_ops_tools,
+from app.services import (ai_synthesis_service, awenops_tools,
                           playbook_synthesis_service, sorftime_service)
 
 
@@ -24,7 +24,7 @@ def test_market_generate_report_persists_to_history(tmp_path, monkeypatch):
 
     monkeypatch.setattr(ai_synthesis_service, "synthesize", fake_synth)
 
-    res = asyncio.run(ivyea_ops_tools.call_tool("market_generate_report", {"query": "yoga mat"}))
+    res = asyncio.run(awenops_tools.call_tool("market_generate_report", {"query": "yoga mat"}))
     assert res["ok"] is True
     assert res["result"]["saved_to"] == "market_history"
     hist = market.get_history(_user="bridge")
@@ -47,7 +47,7 @@ def test_playbook_generate_report_persists_to_history(tmp_path, monkeypatch):
 
     monkeypatch.setattr(playbook_synthesis_service, "synthesize", fake_synth)
 
-    res = asyncio.run(ivyea_ops_tools.call_tool("playbook_generate_report", {"query": "yoga mat"}))
+    res = asyncio.run(awenops_tools.call_tool("playbook_generate_report", {"query": "yoga mat"}))
     assert res["ok"] is True
     assert res["result"]["saved_to"] == "playbook_history"
     hist = playbook.get_history(_user="bridge")
@@ -70,7 +70,7 @@ def test_deep_generate_report_persists_to_history(tmp_path, monkeypatch):
 
     monkeypatch.setattr(ai_synthesis_service, "generate_text", fake_gen)
 
-    res = asyncio.run(ivyea_ops_tools.call_tool(
+    res = asyncio.run(awenops_tools.call_tool(
         "deep_generate_report", {"tool": "keyword", "query": "yoga mat"}))
     assert res["ok"] is True
     assert res["result"]["saved_to"] == "deep_analysis_history"
@@ -78,20 +78,20 @@ def test_deep_generate_report_persists_to_history(tmp_path, monkeypatch):
     assert len(hist) == 1 and hist[0]["tool"] == "keyword" and hist[0]["report"]
 
 
-def test_synthesize_skip_agent_excludes_ivyea_agent(monkeypatch):
-    monkeypatch.setattr(ai_synthesis_service, "_text_provider_chain", lambda: ["ivyea-agent", "deepseek"])
+def test_synthesize_skip_agent_excludes_awen_agent(monkeypatch):
+    monkeypatch.setattr(ai_synthesis_service, "_text_provider_chain", lambda: ["awen-agent", "deepseek"])
     monkeypatch.setattr(ai_synthesis_service, "_build_prompt", lambda *a, **k: "p")
     called = {"agent": False}
 
     async def fake_agent(prompt, failures):
         called["agent"] = True
-        yield ("_attempt", "ivyea-agent")
+        yield ("_attempt", "awen-agent")
 
     async def fake_ds(prompt, failures):
         yield ("_attempt", "deepseek")
         yield ("deepseek", "ok")
 
-    monkeypatch.setattr(ai_synthesis_service, "_try_ivyea_agent", fake_agent)
+    monkeypatch.setattr(ai_synthesis_service, "_try_awen_agent", fake_agent)
     monkeypatch.setattr(ai_synthesis_service, "_try_deepseek", fake_ds)
 
     async def run():
@@ -103,9 +103,9 @@ def test_synthesize_skip_agent_excludes_ivyea_agent(monkeypatch):
     assert any(p == "deepseek" for p, _ in out)
 
 
-def test_default_text_chain_leads_with_ivyea_agent():
-    # Direction 1: panels default to IvyeaAgent (chain order), even with no config set.
-    assert ai_synthesis_service._text_provider_chain()[0] == "ivyea-agent"
+def test_default_text_chain_leads_with_awen_agent():
+    # Direction 1: panels default to awenAgent (chain order), even with no config set.
+    assert ai_synthesis_service._text_provider_chain()[0] == "awen-agent"
 
 
 def test_market_data_source_dispatch(monkeypatch, tmp_path):
@@ -241,7 +241,7 @@ def test_market_ui_uses_server_side_sorftime_key_even_when_hermes_is_first(monke
 
 
 def test_new_generate_tools_registered_and_listed():
-    names = {t.name for t in ivyea_ops_tools.TOOLS}
+    names = {t.name for t in awenops_tools.TOOLS}
     assert {"market_generate_report", "playbook_generate_report"} <= names
-    listed = {t["name"] for t in ivyea_ops_tools.list_tools(module="market")["tools"]}
+    listed = {t["name"] for t in awenops_tools.list_tools(module="market")["tools"]}
     assert "market_generate_report" in listed

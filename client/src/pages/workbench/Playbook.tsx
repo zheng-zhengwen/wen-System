@@ -213,7 +213,7 @@ export default function Playbook() {
       if (err?.name !== "AbortError") {
         const raw = String(err?.message || err);
         const friendly = /network error|Failed to fetch|TypeError/i.test(raw)
-          ? `与服务器的连接中断。常见原因：(1) AI 合成耗时过长被反代掐断；(2) ${actualSourceLabel} 暂不可用导致采集失败；(3) 服务端 502/503。请检查 IvyeaOps 服务日志，或稍后重试。`
+          ? `与服务器的连接中断。常见原因：(1) AI 合成耗时过长被反代掐断；(2) ${actualSourceLabel} 暂不可用导致采集失败；(3) 服务端 502/503。请检查 awenops 服务日志，或稍后重试。`
           : raw;
         setErrorMsg(friendly);
         setPhase("error");

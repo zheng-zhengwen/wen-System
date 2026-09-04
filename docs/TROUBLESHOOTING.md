@@ -23,18 +23,18 @@
 **`git clone github.com` 很慢或失败**
 推荐 gh 代理（零登录，Windows 也不弹凭据框）：
 ```bash
-git clone https://gh-proxy.com/https://github.com/Hector-xue/IvyeaOps.git
+git clone https://gh-proxy.com/https://github.com/zheng-zhengwen/wen-System.git
 ```
 
 **Gitee 镜像弹「Git Credential Manager 登录」框**
 仓库是公开的、本不需要账号，这是 Windows 凭据管理器 + Gitee 匿名限制所致。强制匿名即可：
 ```bash
-git -c credential.interactive=never clone https://gitee.com/hectorxue/IvyeaOps.git
+git -c credential.interactive=never clone https://gitee.com/hectorxue/awenops.git
 ```
 弹出来的框直接关掉也行。
 
 **`git pull` 报 `not a git repository`**
-你是下载的 ZIP（解压成 `IvyeaOps-main/`），不带 `.git`，所以用不了 git 命令。要么重新下载 ZIP 覆盖，要么改用上面的 `git clone`（以后 `git pull` 一条命令更新）。
+你是下载的 ZIP（解压成 `awenops-main/`），不带 `.git`，所以用不了 git 命令。要么重新下载 ZIP 覆盖，要么改用上面的 `git clone`（以后 `git pull` 一条命令更新）。
 
 ---
 
@@ -42,9 +42,9 @@ git -c credential.interactive=never clone https://gitee.com/hectorxue/IvyeaOps.g
 
 `install.sh` / `install.ps1` 会**自动检测大陆网络**（ping 不通 google 即判定），自动把 pip 切清华、npm 切淘宝、uv（Hermes 用）也切清华镜像。
 
-- 想强制开启：`IVYEA_CN=1 bash scripts/install.sh`
-- 想关闭（国际网络误判时）：`IVYEA_CN=0 bash scripts/install.sh`
-- **Hermes / GBrain 慢**：这俩是境外官方安装器（下载 uv/Node 等），可选、可稍后单独重试；镜像只能加速它们内部的 Python 依赖，二进制下载绕不开。不想等就先跳过，配个「全局兜底大模型」先用起来。
+- 想强制开启：`AWEN_CN=1 bash scripts/install.sh`
+- 想关闭（国际网络误判时）：`AWEN_CN=0 bash scripts/install.sh`
+- **Hermes 慢**：这俩是境外官方安装器（下载 uv/Node 等），可选、可稍后单独重试；镜像只能加速它们内部的 Python 依赖，二进制下载绕不开。不想等就先跳过，配个「全局兜底大模型」先用起来。
 
 ---
 
@@ -82,9 +82,11 @@ git -c credential.interactive=never clone https://gitee.com/hectorxue/IvyeaOps.g
 
 **原因**：脚本编码不对。Windows PowerShell 5.1 读**无 BOM 的 UTF-8** `.ps1` 时按系统 GBK 解码 → 中文乱 → 解析崩；而 `.bat` 反过来**不能有 BOM**（cmd 会让 `@echo off` 失效）。
 
-**解决**：用最新版脚本即可（`install.ps1` 已带 UTF-8 BOM、两个 `.bat` 已改纯 ASCII）。你若是旧 ZIP，重新拉一份最新代码再装：
+**解决**：用最新版脚本即可（所有含中文/Unicode 的 `.ps1` 都带 UTF-8 BOM、`.bat` 保持无 BOM，
+应用内安装日志还会把隐藏 PowerShell、pip 和 npm 的输出统一转换为 UTF-8）。你若是旧 ZIP，
+重新拉一份最新代码再装：
 ```powershell
-git clone https://gh-proxy.com/https://github.com/Hector-xue/IvyeaOps.git
+git clone https://gh-proxy.com/https://github.com/zheng-zhengwen/wen-System.git
 ```
 
 ---
@@ -118,7 +120,7 @@ cd <你的目录>\server
   taskkill /PID <那个PID> /F          # 杀掉
   ```
   （Linux：`lsof -i:8001` 或 `ss -ltnp | grep :8001` 找进程，`kill <pid>`。）然后只启动**一个**实例。
-- 或换端口：`.env` 里改 `IVYEA_OPS_PORT=8011` 后重启。
+- 或换端口：`.env` 里改 `AWENOPS_PORT=8011` 后重启。
 
 > 别同时开多个副本/多个实例，容易自己绕晕。
 
@@ -151,7 +153,7 @@ npm run build
   # 然后本机打开 http://127.0.0.1:8001
   ```
 - **正式 / 团队**：nginx 反代 + 域名 + HTTPS（见 [INSTALL.md](INSTALL.md)，内置 nginx/systemd/certbot 模板）。
-- **图省事（不推荐）**：`.env` 设 `IVYEA_OPS_HOST=0.0.0.0` 并放行防火墙端口，`http://服务器IP:8001`——等于裸暴露公网，务必配强密码/防火墙。
+- **图省事（不推荐）**：`.env` 设 `AWENOPS_HOST=0.0.0.0` 并放行防火墙端口，`http://服务器IP:8001`——等于裸暴露公网，务必配强密码/防火墙。
 
 ---
 
@@ -160,10 +162,10 @@ npm run build
 **Listing 生成提示词 / 文案「Network Error」**
 长 AI 请求被提前掐断。最新版已把前端超时拉到 15 分钟、nginx 对应接口放宽到 900s，慢的 hermes 也能跑完。仍失败时：
 - 确认配了**至少一个可用文本模型**：hermes（已装），或在「系统配置 → 应用模型 → 全局兜底大模型」配一个 OpenAI 兼容模型（推荐 **DeepSeek**：快、便宜、国内直连）。
-- 看后端日志定位：`journalctl -u ivyea-ops -n 50`（systemd）或服务窗口输出。
+- 看后端日志定位：`journalctl -u awenops -n 50`（systemd）或服务窗口输出。
 
 **`vision provider apimart failed: 403` / 图片分析失败**
-**apimart 只有图片生成功能，没有文本/视觉**（调 `/v1/messages` 必 403，这是预期、不是 key 失效）。要用「AI 图片分析（识别卖点）」需配 **openai key** 或一个**支持视觉的全局兜底模型**（如 GPT‑4o 系）。apimart 仅用于「AI 生图 / 生成主图图片」。
+**apimart 只有图片生成功能，没有文本/视觉**（调 `/v1/messages` 必 403，这是预期、不是 key 失效）。要用「AI 图片分析（识别卖点）」需配 **openai key** 或一个**支持视觉的全局兜底模型**（如 GPT‑4o 系）。apimart 仅用于生图（任务台作图 / Listing 主图）。
 
 **所有 AI 板块都失败**
 配一个「全局兜底大模型」即可全站可用——这是开箱即用的关键。首启向导有这一步。
@@ -174,7 +176,7 @@ npm run build
 
 默认只监听 `127.0.0.1`，**别的设备访问不到**。想让**同一 Wi‑Fi / 路由器**下的其他电脑、手机也能用同一台已装好的服务：
 
-- **一键**：双击 **「启动 IvyeaOps (局域网共享).bat」**。它会自动：
+- **一键**：双击 **「启动 awenops (局域网共享).bat」**。它会自动：
   1. 探测本机局域网 IP；
   2. 把服务绑到 `0.0.0.0`（所有网卡）；
   3. 把该 IP 加进 CSRF 白名单（**否则别的设备会登录 403**）；
@@ -186,9 +188,9 @@ npm run build
 - **IP 会变**：家用路由器多为 DHCP 动态分配，本机重启/重连后 IP 可能变，白名单和访问地址随之失效——**重新运行这个 .bat 即可**（每次都会重新探测）。想固定，在路由器里给这台电脑设**静态 IP / DHCP 保留**。
 - **登录还是 403**：说明访问用的地址不在白名单。确认你用的是 .bat 窗口里打印的那个 IP；若手动改了 `.env`，注意进程环境变量优先于 `.env`。
 - **别的设备连不上**：多半是防火墙没放行（UAC 被取消了）。手动加一条入站规则放行 TCP 8001，或右键 .bat「以管理员身份运行」一次。
-- **手动版（不想用脚本）**：`server\.env` 里设 `IVYEA_OPS_HOST=0.0.0.0`，并把 `IVYEA_OPS_ALLOWED_ORIGINS` 改成 `http://127.0.0.1:8001,http://<本机IP>:8001`，再放行防火墙端口。
+- **手动版（不想用脚本）**：`server\.env` 里设 `AWENOPS_HOST=0.0.0.0`，并把 `AWENOPS_ALLOWED_ORIGINS` 改成 `http://127.0.0.1:8001,http://<本机IP>:8001`，再放行防火墙端口。
 - **安全**：开了局域网共享 = 把控制台暴露给同网段所有人，**只在你信任的内网用**；务必设强管理员密码。不要直接把 8001 端口映射到公网（要对外请走 nginx 反代 + HTTPS，见第 9 节）。
 
 ---
 
-> 没覆盖到的问题：带上**完整报错**（前台运行服务/查看日志拿到的那几行）去 [GitHub Issues](https://github.com/Hector-xue/IvyeaOps/issues) 反馈。
+> 没覆盖到的问题：带上**完整报错**（前台运行服务/查看日志拿到的那几行）去 [GitHub Issues](https://github.com/zheng-zhengwen/wen-System/issues) 反馈。

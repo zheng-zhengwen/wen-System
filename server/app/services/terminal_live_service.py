@@ -1,4 +1,4 @@
-"""Persistent server-terminal sessions + history for IvyeaOps.
+"""Persistent server-terminal sessions + history for awenops.
 
 Separate from the old tmux snapshot table in routers/terminal.py.
 This DB stores one row per terminal session plus an append-only history log
@@ -8,6 +8,7 @@ sessions and inspect prior commands.
 from __future__ import annotations
 
 import os
+import logging
 import sqlite3
 import uuid
 from datetime import datetime, timezone
@@ -17,9 +18,11 @@ from typing import Any
 
 from app.core.config import settings
 
+logger = logging.getLogger("awen.services.terminal_live_service")
+
 DB_PATH = Path(
     os.environ.get(
-        "IVYEA_OPS_TERMINAL_LIVE_DB",
+        "AWENOPS_TERMINAL_LIVE_DB",
         str(settings.data_dir / "terminal_live.sqlite3"),
     )
 )
@@ -220,7 +223,7 @@ def delete_session(session_id: str) -> None:
             try:
                 conn.execute("ROLLBACK")
             except Exception:
-                pass
+                logger.debug("conn.execute 失败（旁路，已忽略）", exc_info=True)
             raise
 
 
@@ -418,7 +421,7 @@ def rotate_snapshot(session_id: str, content: str) -> dict[str, Any] | None:
             try:
                 conn.execute("ROLLBACK")
             except Exception:
-                pass
+                logger.debug("conn.execute 失败（旁路，已忽略）", exc_info=True)
             raise
 
         return {"id": new_id, "seq": new_seq, "stream": "snap_curr", "content": content, "created_at": ts}

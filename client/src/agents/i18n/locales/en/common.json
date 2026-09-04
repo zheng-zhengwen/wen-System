@@ -56,8 +56,6 @@
   "common": {
     "language": "Language",
     "theme": "Theme",
-    "darkMode": "Dark Mode",
-    "lightMode": "Light Mode",
     "name": "Name",
     "description": "Description",
     "enabled": "Enabled",

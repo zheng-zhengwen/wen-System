@@ -1,10 +1,10 @@
-﻿# Stop the hidden/background IvyeaOps Windows backend.
+# Stop the hidden/background awenops Windows backend.
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "SilentlyContinue"
 
 $RepoRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
-$PidFile = Join-Path $RepoRoot "data\ivyeaops.pid"
+$PidFile = Join-Path $RepoRoot "data\awenops.pid"
 $Stopped = $false
 
 if (Test-Path $PidFile) {
@@ -30,14 +30,14 @@ if (-not $Stopped) {
     }
 }
 
-# Also kill `IvyeaOpsServer.exe agent-serve` (:8765) -- it is an IvyeaOpsServer.exe
-# too, so a PID/port-8001-only stop misses it, leaving one IvyeaOpsServer.exe behind
+# Also kill `awenopsServer.exe agent-serve` (:8765) -- it is an awenopsServer.exe
+# too, so a PID/port-8001-only stop misses it, leaving one awenopsServer.exe behind
 # after "stop and exit". Kill every instance by image name (/IM, WITHOUT /T so we
 # don't tree-kill this stop script itself).
-try { & taskkill /F /IM IvyeaOpsServer.exe 2>$null | Out-Null; $Stopped = $true } catch {}
+try { & taskkill /F /IM awenopsServer.exe 2>$null | Out-Null; $Stopped = $true } catch {}
 
 if ($Stopped) {
-    Write-Host "[IvyeaOps] Background service stopped." -ForegroundColor Green
+    Write-Host "[awenops] Background service stopped." -ForegroundColor Green
 } else {
-    Write-Host "[IvyeaOps] No running background service found." -ForegroundColor Yellow
+    Write-Host "[awenops] No running background service found." -ForegroundColor Yellow
 }

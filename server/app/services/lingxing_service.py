@@ -20,13 +20,14 @@ will reuse :func:`is_operate_active`, :func:`classify_tool`, and the audit table
 from __future__ import annotations
 
 import asyncio
+import logging
 import json
 import sqlite3
 import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 import httpx
 
@@ -34,9 +35,11 @@ from app.core import hub_settings as _hs
 from app.core.config import settings
 from app.services import lingxing_openapi as _openapi
 
+logger = logging.getLogger("awen.services.lingxing_service")
+
 # --- MCP protocol constants -------------------------------------------------
 _PROTOCOL_VERSION = "2025-06-18"
-_CLIENT_INFO = {"name": "ivyea-ops-lingxing-gateway", "version": "0.1.0"}
+_CLIENT_INFO = {"name": "awenops-lingxing-gateway", "version": "0.1.0"}
 _REQUEST_TIMEOUT_S = 60.0
 _RATE_MIN_INTERVAL_S = 1.05  # >= 1/s with a small safety margin
 
@@ -218,7 +221,7 @@ def _audit(caller: str, tool: str, kind: str, args: Any, ok: bool,
             conn.close()
     except Exception:
         # Audit must never break the call path; swallow.
-        pass
+        logger.debug("json.dumps 失败（旁路，已忽略）", exc_info=True)
 
 
 def recent_audit(limit: int = 100) -> List[Dict[str, Any]]:
@@ -268,7 +271,17 @@ def _key() -> str:
 
 
 def _url() -> str:
-    return (_hs.get("lingxing_mcp_url") or "").strip()
+    """领星 MCP 地址。**http 会被升到 https。**
+
+    实测（2026-08-23）：``http://openmcp.lingxing.com/...`` 返回 302 跳到 https，
+    而 httpx 默认**不跟随重定向**、POST 更不会 —— 表现是"地址填得对、key 也对，
+    就是连不上"。历史默认值写的正是 http，存量安装库里存的也是 http，
+    所以这里在读的时候纠正：只改默认值救不了已经存了 http 的那些机器。
+    """
+    url = (_hs.get("lingxing_mcp_url") or "").strip()
+    if url.lower().startswith("http://") and "lingxing.com" in url.lower():
+        return "https://" + url[len("http://"):]
+    return url
 
 
 def is_master_enabled() -> bool:
@@ -305,7 +318,7 @@ def _ticket_counts() -> Dict[str, int]:
         finally:
             conn.close()
     except Exception:
-        pass
+        logger.debug("_connect 失败（旁路，已忽略）", exc_info=True)
     return out
 
 
@@ -320,6 +333,7 @@ def status() -> Dict[str, Any]:
                 (datetime.fromisoformat(exp) - datetime.now(timezone.utc)).total_seconds()))
         except ValueError:
             remaining = 0
+    from app.services import lingxing_ssh_proxy
     return {
         "key_present": bool(_key()),
         "url": _url(),
@@ -337,6 +351,7 @@ def status() -> Dict[str, Any]:
         "max_ops_per_run": cfg.get("lingxing_max_ops_per_run"),
         "max_change_pct": cfg.get("lingxing_max_change_pct"),
         "ticket_counts": _ticket_counts(),
+        "ssh": lingxing_ssh_proxy.public_status(),
     }
 
 
@@ -395,7 +410,11 @@ class _McpSession:
         self._server_proto: Optional[str] = None
 
     async def __aenter__(self) -> "_McpSession":
-        self._client = httpx.AsyncClient(timeout=_REQUEST_TIMEOUT_S)
+        from app.services import lingxing_ssh_proxy
+        try:
+            self._client = await lingxing_ssh_proxy.create_async_client(timeout=_REQUEST_TIMEOUT_S)
+        except lingxing_ssh_proxy.SSHProxyError as exc:
+            raise LingXingError(str(exc)) from exc
         await self._initialize()
         return self
 
@@ -405,7 +424,7 @@ class _McpSession:
             if self._client and self._session_id:
                 await self._client.delete(self._url, headers=self._req_headers())
         except Exception:
-            pass
+            logger.debug("self._client.delete 失败（旁路，已忽略）", exc_info=True)
         if self._client:
             await self._client.aclose()
         self._client = None
@@ -460,7 +479,7 @@ class _McpSession:
         try:
             await self._post({"jsonrpc": "2.0", "method": "notifications/initialized"})
         except LingXingError:
-            pass
+            logger.debug("self._post 失败（旁路，已忽略）", exc_info=True)
 
     async def list_tools(self) -> List[Dict[str, Any]]:
         if self._rate_limited:
@@ -574,7 +593,7 @@ async def call_openapi(route: str, params: Optional[Dict[str, Any]] = None, *,
     try:
         _openapi_limiter._min = max(0.05, float(_hs.get("lingxing_openapi_min_interval_ms")) / 1000.0)
     except (TypeError, ValueError):
-        pass
+        logger.debug("_openapi_limiter._min = max 失败（旁路，已忽略）", exc_info=True)
     await _openapi_limiter.acquire()
     t0 = time.monotonic()
     try:

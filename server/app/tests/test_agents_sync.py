@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import importlib
 import json
-import time
 from pathlib import Path
 
 import pytest
@@ -26,6 +25,7 @@ def sync_env(tmp_path: Path, monkeypatch):
         json.dumps({"sessionId": "sess1", "display": "history-name"}) + "\n", encoding="utf-8")
 
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
     monkeypatch.setenv("AGENTS_DB_PATH", str(tmp_path / "agents.db"))
     from app.agents import db as db_mod
     importlib.reload(db_mod); db_mod.init_db()

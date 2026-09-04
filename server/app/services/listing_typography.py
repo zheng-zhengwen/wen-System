@@ -7,12 +7,15 @@ one-size-fits-all dark rounded sticker.
 from __future__ import annotations
 
 import io
+import logging
 import os
 import re
 from pathlib import Path
 from typing import Optional
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageStat
+
+logger = logging.getLogger("awen.services.listing_typography")
 
 _POS = {
     "top-left": (0.07, 0.08, "left", "top"),
@@ -46,7 +49,7 @@ _REGULAR_FONTS = [
 
 
 def _font_path(bold: bool = True) -> Optional[str]:
-    env = (os.getenv("IVYEA_OPS_CALLOUT_FONT") or "").strip()
+    env = (os.getenv("AWENOPS_CALLOUT_FONT") or "").strip()
     if env and Path(env).exists():
         return env
     for candidate in (_BOLD_FONTS if bold else _REGULAR_FONTS + _BOLD_FONTS):
@@ -61,7 +64,7 @@ def _load_font(size: int, bold: bool = True) -> ImageFont.FreeTypeFont:
         try:
             return ImageFont.truetype(path, size)
         except Exception:
-            pass
+            logger.debug("ImageFont.truetype 失败（旁路，已忽略）", exc_info=True)
     return ImageFont.load_default()
 
 

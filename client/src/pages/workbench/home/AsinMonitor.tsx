@@ -32,6 +32,7 @@ export default function AsinMonitor({ kind, marketplace, dataSource, onChanged }
   const [states, setStates] = useState<Record<string, AsinState>>({});
   const [input, setInput] = useState("");
   const [refreshing, setRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   const notify = useToast();
 
@@ -39,6 +40,7 @@ export default function AsinMonitor({ kind, marketplace, dataSource, onChanged }
 
   // Cache-first load: source-isolated snapshots, no provider call.
   const loadCache = async () => {
+    setLoadError("");
     try {
       const [all, snaps] = await Promise.all([listWatch(dataSource), fetchWatchSnapshots(dataSource)]);
       const mine = all.filter(w => w.kind === kind && w.marketplace === marketplace);
@@ -56,7 +58,9 @@ export default function AsinMonitor({ kind, marketplace, dataSource, onChanged }
         }
       }
       setStates(next);
-    } catch { /* ignore */ }
+    } catch (e: any) {
+      setLoadError(e?.message || "读取监控列表失败");
+    }
   };
 
   useEffect(() => { loadCache(); /* eslint-disable-next-line */ }, [kind, marketplace, dataSource]);
@@ -96,7 +100,12 @@ export default function AsinMonitor({ kind, marketplace, dataSource, onChanged }
   };
 
   const handleRemove = async (item: WatchItem) => {
-    await deleteWatch(item.id).catch(() => notify("warn", `${item.asin} 服务端删除失败，刷新后可能回来`));
+    try {
+      await deleteWatch(item.id);
+    } catch (e: any) {
+      notify("error", `删除 ${item.asin} 失败：${e?.message || "请求失败"}`);
+      return;
+    }
     setItems(p => p.filter(i => i.id !== item.id));
     setStates(p => { const n = { ...p }; delete n[item.asin]; return n; });
   };
@@ -133,12 +142,14 @@ export default function AsinMonitor({ kind, marketplace, dataSource, onChanged }
         </button>
       </div>
 
-      {items.length === 0 ? (
+      {loadError && <div className="pulse-err">⚠ {loadError}</div>}
+
+      {!loadError && (items.length === 0 ? (
         <div className="pulse-onboard">
           <div className="pulse-onboard-icon">{kind === "own" ? "★" : "⊞"}</div>
           <div className="pulse-onboard-title">{emptyTitle}</div>
           <div className="pulse-onboard-sub">{emptySub}</div>
-          <div className="pulse-onboard-sub" style={{ marginTop: 8, fontSize: 11, color: "var(--t3)" }}>
+          <div className="pulse-onboard-sub" style={{ marginTop: 8, fontSize: "var(--fs-11)", color: "var(--t3)" }}>
             提示：打开页面显示的是缓存数据（不耗配额）；点「刷新」才实时拉取
           </div>
         </div>
@@ -156,7 +167,7 @@ export default function AsinMonitor({ kind, marketplace, dataSource, onChanged }
             />
           ))}
         </div>
-      )}
+      ))}
     </div>
   );
 }

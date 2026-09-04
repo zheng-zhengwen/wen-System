@@ -7,6 +7,7 @@ store. The deliverable is a white-hat, on-site-only Amazon launch playbook.
 from __future__ import annotations
 
 import asyncio
+import logging
 import json
 import sqlite3
 import time
@@ -17,9 +18,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from app.core.config import settings
 from app.core.security import require_user
 from app.services import sorftime_service, playbook_synthesis_service
+
+logger = logging.getLogger("awen.routers.playbook")
 
 router = APIRouter()
 
@@ -95,7 +97,7 @@ def save_history(*, mode: str, query: str, marketplace: str, price: str = "", co
                  provider: str = "", data_source: str = "sorftime", elapsed_s: float = 0.0, ts: int | None = None,
                  report: str = "", entry_id: str = "") -> str:
     """Persist one playbook report row; returns its id.
-    Shared by POST /history (frontend) and the IvyeaAgent panel bridge."""
+    Shared by POST /history (frontend) and the awenAgent panel bridge."""
     ts = int(ts if ts is not None else time.time())
     entry_id = entry_id or str(ts) or uuid.uuid4().hex
     with _history_connect() as conn:
@@ -126,8 +128,8 @@ def add_history(entry: HistoryEntryIn, _user: str = Depends(require_user)) -> di
 async def generate_report(mode: str, query: str, marketplace: str,
                           price: str = "", cost: str = "", data_source: str = "sorftime") -> dict:
     """Collect + synthesize + persist one launch-playbook (no SSE), then return it.
-    Used by the IvyeaAgent bridge so an agent-driven 打法 lands in the panel 历史.
-    Synthesis skips ivyea-agent to avoid agent→ops→agent nesting."""
+    Used by the awenAgent bridge so an agent-driven 打法 lands in the panel 历史.
+    Synthesis skips awen-agent to avoid agent→ops→agent nesting."""
     mode = mode if mode in ("keyword", "asin") else "keyword"
     marketplace = (marketplace or "US").strip().upper()
     data_source = _normalize_data_source(data_source)
@@ -267,7 +269,7 @@ async def _stream_synthesis(
             try:
                 await task
             except (asyncio.CancelledError, Exception):
-                pass
+                logger.debug("task 失败（旁路，已忽略）", exc_info=True)
 
 
 async def _run(req: PlaybookReq) -> AsyncGenerator[str, None]:
@@ -275,7 +277,7 @@ async def _run(req: PlaybookReq) -> AsyncGenerator[str, None]:
     data_source = _normalize_data_source(req.data_source)
     source_label = _source_label(data_source)
     yield _sse({"type": "source", "requested": data_source, "actual": data_source, "label": source_label})
-    # Data credentials belong to IvyeaOps, not to each user's Hermes home.
+    # Data credentials belong to awenops, not to each user's Hermes home.
     # Server-side MCP prefetch guarantees the saved Sorftime key is injected on
     # Windows first run and for every account.
     hermes_first = False

@@ -3,7 +3,7 @@ import { fetchCategory, fetchCategoryCached, type CategoryResult } from "../../.
 import { amazonDp } from "../../../lib/marketplaces";
 import type { DataSourceId } from "../../../lib/dataSource";
 
-const STORAGE_CAT = "ivyea-ops-home-category-q";
+const STORAGE_CAT = "awenops-home-category-q";
 
 function fmtVol(v: number | null | undefined): string {
   if (v == null) return "—";
@@ -50,6 +50,7 @@ export default function CategoryWatch({ marketplace, dataSource }: { marketplace
   const loadCache = async (q: string) => {
     const query = q.trim();
     if (!query) { setStatus("idle"); setResult(null); return; }
+    setErrMsg("");
     try {
       const { cached, ts } = await fetchCategoryCached(query, marketplace, mode, dataSource);
       if (cached) {
@@ -60,7 +61,11 @@ export default function CategoryWatch({ marketplace, dataSource }: { marketplace
         setStatus("idle");
         setResult(null);
       }
-    } catch { /* ignore */ }
+    } catch (e: any) {
+      setResult(null);
+      setStatus("err");
+      setErrMsg(e?.message || "读取类目缓存失败");
+    }
   };
 
   useEffect(() => { localStorage.setItem(STORAGE_CAT + "-mode", mode); }, [mode]);

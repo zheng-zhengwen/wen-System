@@ -1,25 +1,28 @@
 """GET /api/settings  ·  PATCH /api/settings  ·  GET /api/settings/health"""
 from __future__ import annotations
 
-import asyncio
+import logging
 from pathlib import Path
 from typing import Any, Dict, List
 
 import httpx
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from app.core import hub_settings as _hs
 from app.core.security import require_user
 from app.core.version import app_version
 
+logger = logging.getLogger("awen.routers.hub_settings")
+
 router = APIRouter()
 
 _SECRET_KEYS: List[str] = [
     "apimart_key", "sorftime_key", "sif_key", "sellersprite_key",
-    "hermes_api_key", "hermes_fallback_api_key", "gbrain_embed_api_key",
+    "hermes_api_key", "hermes_fallback_api_key",
     "alert_app_secret", "alert_webhook", "openai_api_key",
-    "ivyea_agent_token", "ivyea_agent_api_key", "lingxing_mcp_key", "lingxing_openapi_secret",
+    "awen_agent_token", "awen_agent_api_key", "lingxing_mcp_key", "lingxing_openapi_secret",
+    "lingxing_ssh_password",
     "vision_api_key",
 ]
 
@@ -29,11 +32,18 @@ _HERMES_SYNC_KEYS = {
     "hermes_provider", "hermes_model", "hermes_api_key", "hermes_base_url",
     "hermes_fallback_provider", "hermes_fallback_model",
     "hermes_fallback_api_key", "hermes_fallback_base_url",
-    "gbrain_embed_provider", "gbrain_embed_model", "gbrain_embed_api_key",
 }
 
-_IVYEA_AGENT_SYNC_KEYS = {
-    "ivyea_agent_provider", "ivyea_agent_model", "ivyea_agent_api_key", "ivyea_agent_base_url",
+_AWEN_AGENT_SYNC_KEYS = {
+    "awen_agent_provider", "awen_agent_model", "awen_agent_api_key", "awen_agent_base_url",
+}
+
+# 飞书凭据改了就要同步给 awenAgent —— 这一份同时供巡检卡片、审批回调、
+# 飞书对话使用。不同步的话，界面上换了应用，服务器告警走新应用、
+# 巡检卡片还在用旧的，而且没有任何地方看得出来。
+_FEISHU_SYNC_KEYS = {
+    "alert_app_id", "alert_app_secret", "alert_chat_id",
+    "alert_feishu_domain", "alert_webhook",
 }
 
 
@@ -46,29 +56,248 @@ class TestRequest(BaseModel):
     value: str | None = None
 
 
+def _settings_response(values: Dict[str, Any]) -> Dict[str, Any]:
+    """Return settings without putting the SSH password on the wire.
+
+    Existing settings consumers still receive their historical payload.  The
+    new credential starts with the stricter contract: presence is a separate
+    boolean/list entry and the value is always empty in HTTP responses.
+    """
+    public = dict(values)
+    configured = bool(public.get("lingxing_ssh_password"))
+    public["lingxing_ssh_password"] = ""
+    return {
+        "settings": public,
+        "secret_keys": _SECRET_KEYS,
+        "configured_secret_keys": ["lingxing_ssh_password"] if configured else [],
+    }
+
+
 @router.get("/settings")
 async def get_settings(_u: str = Depends(require_user)):
-    return {"settings": _hs.load(), "secret_keys": _SECRET_KEYS}
+    return _settings_response(_hs.load())
 
 
 @router.patch("/settings")
 async def patch_settings(body: SettingsPatch, _u: str = Depends(require_user)):
-    updated = _hs.save(body.settings)
+    from app.services import lingxing_ssh_proxy
+
+    try:
+        updates = lingxing_ssh_proxy.normalize_settings_patch(body.settings)
+    except lingxing_ssh_proxy.SSHProxyError as exc:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    updated = _hs.save(updates)
+    lingxing_ssh_proxy.settings_changed(updates.keys())
     # Sync data-source keys into Hermes config if any relevant key was touched.
     if _HERMES_SYNC_KEYS & body.settings.keys():
         try:
             from app.services.hermes_config_sync import on_settings_saved
             on_settings_saved(updated)
         except Exception:
-            pass  # non-fatal — settings are saved regardless
-    if _IVYEA_AGENT_SYNC_KEYS & body.settings.keys():
+            logger.debug("on_settings_saved 失败（旁路，已忽略）", exc_info=True)
+    if _AWEN_AGENT_SYNC_KEYS & body.settings.keys():
         try:
-            from app.services import ivyea_agent_service
-            ivyea_agent_service.ensure_available()
-            ivyea_agent_service.sync_model_settings(updated, force=True)
+            from app.services import awen_agent_service
+            awen_agent_service.ensure_available()
+            awen_agent_service.sync_model_settings(updated, force=True)
         except Exception:
-            pass  # non-fatal — settings are saved regardless
-    return {"settings": updated, "secret_keys": _SECRET_KEYS}
+            logger.debug("awen_agent_service.ensure_available 失败（旁路，已忽略）", exc_info=True)
+    if _FEISHU_SYNC_KEYS & body.settings.keys():
+        try:
+            from app.services import awen_agent_service
+            awen_agent_service.sync_feishu_settings(updated)
+        except Exception:
+            logger.debug("sync_feishu_settings 失败（旁路，已忽略）", exc_info=True)
+    return _settings_response(updated)
+
+
+# ── 飞书配置向导 ────────────────────────────────────────────────────────────
+# 状态与辅助动作都在 awenAgent 那边（凭据、白名单、巡检任务都归它管），
+# 这里只做一层带鉴权的转发，不在 ops 侧另存一份状态。
+
+class FeishuAction(BaseModel):
+    # 巡检档位（l1 / l2 / daily / weekly / monthly …）由 **awenAgent** 定义，
+    # 界面也是按它回的 patrol.defaults 渲染的。这里不再逐个列字段：
+    # 列了就得每加一档改一次 ops，忘了改的那一档会被 pydantic 静默丢掉 ——
+    # 表现是"界面上勾了周报、保存成功、什么都没发生"。
+    model_config = ConfigDict(extra="allow")
+
+    action: str
+    chat_id: str = ""
+    text: str = ""
+    # 白名单（谁能点审批按钮）
+    allowed_senders: List[str] | None = None
+    allowed_chats: List[str] | None = None
+    # 巡检任务
+    scope: str = "all"
+    sids: List[str] | None = None
+    exclude_sids: List[str] | None = None
+    channel: str = "feishu_app"
+
+
+@router.get("/settings/feishu")
+async def feishu_setup_status(probe: bool = False, _u: str = Depends(require_user)):
+    """向导要显示的全部状态。``probe=1`` 会真的去飞书换一次 token。"""
+    from app.services import awen_agent_service
+    try:
+        return awen_agent_service.feishu_status(probe=probe)
+    except Exception as exc:  # noqa: BLE001 —— agent 没起来时给人话，别 500
+        return {"ok": False, "error": str(exc),
+                "hint": "awenAgent 本地服务（默认 127.0.0.1:8765）没连上。"
+                        "服务器告警那条链路不受影响，但巡检卡片和审批需要它。"}
+
+
+@router.post("/settings/feishu")
+async def feishu_setup_action(body: FeishuAction, _u: str = Depends(require_user)):
+    """向导的动作：列群 / 列成员 / 发测试 / 存白名单 / 配巡检任务。"""
+    from app.services import awen_agent_service
+
+    payload = body.model_dump(exclude_none=True)
+    action = str(payload.pop("action", "")).strip()
+    try:
+        if action == "whitelist":
+            return awen_agent_service.configure_feishu({
+                k: v for k, v in payload.items()
+                if k in ("allowed_senders", "allowed_chats")
+            })
+        return awen_agent_service.feishu_action({"action": action, **payload})
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": str(exc)}
+
+
+# ── 亚马逊官方 API ──────────────────────────────────────────────────────────
+# 与飞书那组不同，凭据只存 awenAgent 一侧：这里没有"agent 挂了也要能用"的场景。
+
+class AmazonConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    # 空串一律当"不改"（界面上没填的框会老实传空串），要清除得在 clear 里点名
+    client_id: str = ""
+    client_secret: str = ""
+    refresh_token: str = ""
+    ads_client_id: str = ""
+    ads_client_secret: str = ""
+    ads_refresh_token: str = ""
+    seller_id: str | None = None
+    region: str | None = None
+    marketplaces: List[Dict[str, Any]] | None = None
+    clear: List[str] | None = None
+
+
+class AmazonAction(BaseModel):
+    action: str
+
+
+@router.get("/settings/amazon")
+async def amazon_status(_u: str = Depends(require_user)):
+    from app.services import awen_agent_service
+    try:
+        return awen_agent_service.amazon_status()
+    except Exception as exc:  # noqa: BLE001 —— agent 没起来时给人话，别 500
+        return {"ok": False, "error": str(exc),
+                "hint": "awenAgent 本地服务（默认 127.0.0.1:8765）没连上。"
+                        "亚马逊凭据存在它那边，它不在就没法读写。"}
+
+
+@router.post("/settings/amazon")
+async def amazon_configure(body: AmazonConfig, _u: str = Depends(require_user)):
+    from app.services import awen_agent_service
+    try:
+        return awen_agent_service.configure_amazon(body.model_dump(exclude_none=True))
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": str(exc)}
+
+
+@router.post("/settings/amazon/action")
+async def amazon_do(body: AmazonAction, _u: str = Depends(require_user)):
+    """verify（真打一次接口）/ profiles（列广告档案，用来填 profileId）。"""
+    from app.services import awen_agent_service
+    try:
+        return awen_agent_service.amazon_action(body.model_dump())
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": str(exc)}
+
+
+# ── 模型清单：把"填模型名"从背默写变成挑一个 ────────────────────────────────
+# 四个槽位（主脑 / 全局兜底 / 视觉 / 生图）此前都是自由文本框：用户得自己记住
+# "Qwen/Qwen3-VL-30B-A3B-Instruct" 这种字符串，记错了也要等到真调用时才报错。
+# 这里按槽位解析出 provider + 地址 + 密钥，去问那个端点到底支持哪些模型。
+
+_SLOT_KEYS: Dict[str, Dict[str, str]] = {
+    "agent":     {"provider": "awen_agent_provider", "api_key": "awen_agent_api_key",
+                  "base_url": "awen_agent_base_url"},
+    "assistant": {"provider": "assistant_provider", "api_key": "assistant_api_key",
+                  "base_url": "assistant_base_url"},
+    "vision":    {"provider": "vision_provider", "api_key": "vision_api_key",
+                  "base_url": "vision_base_url"},
+    # 生图槽留空时**沿用 apimart 那套账号** —— 和 routers/assistant.py 的 _image_cfg
+    # 完全同一套优先级。两边各写一份必然走偏：面板列出来的模型来自 A 端点，
+    # 真生成时打的却是 B 端点。
+    "image":     {"provider": "", "api_key": "image_api_key", "base_url": "image_base_url",
+                  "fallback_api_key": "apimart_key", "fallback_base_url": "apimart_base"},
+}
+
+
+class ModelCatalogBody(BaseModel):
+    """slot 决定去问哪个端点；provider/base_url/api_key 允许现给。
+
+    现给是必须的：系统配置页在**保存之前**就要能看清单，那时新填的 key 还没落库。
+    三者都留空才回落到库里存的那份。
+    """
+
+    slot: str = "agent"
+    provider: str = ""
+    base_url: str = ""
+    api_key: str = ""
+    refresh: bool = False
+
+
+def _slot_endpoint(body: ModelCatalogBody, cfg: Dict[str, Any]) -> Dict[str, Any]:
+    keys = _SLOT_KEYS.get(body.slot.strip().lower())
+    if keys is None:
+        return {}
+    provider = (body.provider or (cfg.get(keys.get("provider", "")) or "")).strip()
+    api_key = (body.api_key or (cfg.get(keys.get("api_key", "")) or "")).strip()
+    base_url = (body.base_url or (cfg.get(keys.get("base_url", "")) or "")).strip()
+    if not api_key and keys.get("fallback_api_key"):
+        api_key = str(cfg.get(keys["fallback_api_key"]) or "").strip()
+    if not base_url and keys.get("fallback_base_url"):
+        base_url = str(cfg.get(keys["fallback_base_url"]) or "").strip()
+    if not base_url and provider:
+        from app.services.ai_synthesis_service import ASSISTANT_PROVIDER_BASE
+        base_url = str(ASSISTANT_PROVIDER_BASE.get(provider, "") or "").strip()
+    return {"provider": provider, "base_url": base_url, "api_key": api_key,
+            "refresh": bool(body.refresh)}
+
+
+@router.post("/settings/model-catalog")
+async def model_catalog(body: ModelCatalogBody, _u: str = Depends(require_user)):
+    """列出某个槽位当前那套账号能用哪些模型。**永远不回显密钥。**"""
+    cfg = _hs.load()
+    payload = _slot_endpoint(body, cfg)
+    if not payload:
+        return {"ok": False, "error": "unknown_slot",
+                "catalog": {"ok": False, "models": [], "source": "none",
+                            "error": f"不认识的槽位：{body.slot}"}}
+    if not payload.get("provider") and not payload.get("base_url"):
+        return {"ok": False, "error": "not_configured",
+                "catalog": {"ok": False, "models": [], "source": "none",
+                            "error": "这个槽位还没选 Provider，也没填 Base URL。"}}
+    try:
+        from app.services import awen_agent_service
+        result = awen_agent_service.model_catalog(payload)
+    except Exception as exc:  # noqa: BLE001
+        # agent 没起来 / 是个不认识这个端点的老版本：面板不能因此打不开，
+        # 退回"手输模型名"那条路，并把原因说清楚。
+        logger.debug("model_catalog 走 agent 失败：%s", exc)
+        return {"ok": False, "error": "agent_unavailable",
+                "catalog": {"ok": False, "models": [], "source": "none",
+                            "error": f"取模型清单失败：{exc}"}}
+    catalog = result.get("catalog") if isinstance(result, dict) else None
+    return {"ok": bool(result.get("ok")) if isinstance(result, dict) else False,
+            "error": (result or {}).get("error", ""),
+            "catalog": catalog or {"ok": False, "models": [], "source": "none", "error": ""}}
 
 
 @router.post("/settings/test")
@@ -156,71 +385,62 @@ async def settings_health(_u: str = Depends(require_user)):
                 return {"ok": True, "detail": p}
         return {"ok": False, "detail": "未安装"}
 
-    def _check_ivyea_agent() -> Dict[str, Any]:
+    def _check_awen_agent() -> Dict[str, Any]:
         from app.core.config import settings as _cfg
-        from app.services import ivyea_agent_service as _ivyea
+        from app.services import awen_agent_service as _awen
         import shutil
 
-        status = _ivyea.ensure_available()
+        status = _awen.ensure_available()
         if status.get("available"):
             return {"ok": True, "detail": f"服务已连接 · {status.get('base_url')}"}
 
         candidates = [
-            shutil.which("ivyea") or "",
-            str(_cfg.root_dir / "server" / ".venv" / "bin" / "ivyea"),
-            str(_cfg.root_dir / "server" / ".venv" / "Scripts" / "ivyea.exe"),
-            str(Path.home() / ".local" / "bin" / "ivyea"),
+            shutil.which("awen") or "",
+            str(_cfg.root_dir / "server" / ".venv" / "bin" / "awen"),
+            str(_cfg.root_dir / "server" / ".venv" / "Scripts" / "awen.exe"),
+            str(Path.home() / ".local" / "bin" / "awen"),
         ]
         found = next((p for p in candidates if p and Path(p).exists()), "")
         if found:
             detail = status.get("error") or "服务未启动"
             return {"ok": True, "detail": f"CLI 已安装 · {found}；{detail}"}
-        return {"ok": False, "detail": "未安装 IvyeaAgent"}
-
-    imgflow_url = (cfg.get("imgflow_url") or "http://127.0.0.1:3001").rstrip("/")
-    gbrain_bin = cfg.get("gbrain_bin") or ""
-    if not gbrain_bin:
-        gbrain_bin = __import__("os").environ.get("IVYEA_OPS_GBRAIN_BIN", "/usr/local/bin/gbrain")
+        return {"ok": False, "detail": "未安装 awenAgent"}
 
     brain_root = cfg.get("brain_root") or ""
     if not brain_root:
-        brain_root = __import__("os").environ.get("IVYEA_OPS_BRAIN_ROOT") or str(Path.home() / "brain")
+        brain_root = __import__("os").environ.get("AWENOPS_BRAIN_ROOT") or str(Path.home() / "brain")
 
-    # Probe the local ollama server directly — the most reliable "installed &
-    # running" signal. `shutil.which` alone gives false negatives because the
-    # systemd service PATH often omits /usr/local/bin where ollama lives.
-    ollama_host = (cfg.get("gbrain_embed_base_url") or "http://127.0.0.1:11434").rstrip("/")
-    imgflow_result, ollama_http = await asyncio.gather(
-        _check_http(imgflow_url + "/"),
-        _check_http(ollama_host + "/api/tags", 1.5),
-    )
-
+    # 曾经这里还探一个本地 ollama —— 那是给 GBrain 的 embedding 用的
+    # （安装按钮拉的就是 `ollama pull nomic-embed-text`）。GBrain 已整体摘除，
+    # awenAgent 的语义检索是随包自带的 ONNX 模型，装完即用、不需要任何服务，
+    # 所以这一项连同它的状态行、安装按钮和 `ollama_base_url` 配置一起去掉了。
+    # （Ollama 作为**本地大模型 provider** 仍然可用，那是另一回事，见首启向导。）
     from app.core import integrations as _integ
 
-    def _check_ollama() -> Dict[str, Any]:
-        if ollama_http.get("ok"):
-            return {"ok": True, "detail": f"运行中 · {ollama_host}"}
-        import shutil
-        found = shutil.which("ollama")
-        if not found:
-            cands = [
-                *(f"{d}/ollama" for d in _integ.extra_path_dirs()),
-                "/usr/local/bin/ollama",
-                str(Path.home() / ".local" / "bin" / "ollama"),
-                str(Path.home() / "AppData" / "Local" / "Programs" / "Ollama" / "ollama.exe"),
-            ]
-            found = next((c for c in cands if Path(c).exists()), None)
-        return {"ok": True, "detail": f"已安装 · {found}"} if found else {"ok": False, "detail": "未安装"}
+    def _vision_detail(tier: int, label: str) -> str:
+        """把档位说成人话——重点是让 T3 的用户知道"能用，只是少了什么"。"""
+        if tier == 1:
+            return f"{label}：主脑模型自带视觉，全部图片分析可用"
+        if tier == 2:
+            return f"{label}：主脑不支持图片，已由独立视觉模型代读，全部图片分析可用"
+        if tier == 3:
+            return (f"{label}：未配置视觉模型，图片走本地量化——"
+                    "合规/比例/主体占比/配色/图上文字照常分析；"
+                    "版式逆向与审美判断需配置一个支持视觉的模型")
+        return "不可用：awenAgent 未连接且未配置视觉模型（影响 Listing 图片识别 / 视觉 Skill）"
 
     # AI readiness: can the standard text chain / vision actually run? Gives a
     # fresh install an at-a-glance answer for "why is AI not working".
     from app.services import ai_synthesis_service as _ai
     from app.services.runners import _find_bin as _fb
-    ivyea_agent_result = _check_ivyea_agent()
+    awen_agent_result = _check_awen_agent()
     _global_fb = bool(_ai.assistant_text_cfg().get("api_key"))
     _any_runner = any(_fb(n) for n in ("hermes", "codex", "claude"))
     _http_text = bool(_ai._deepseek_key() or _ai._apimart_key())
-    _text_ok = bool(ivyea_agent_result.get("ok")) or _global_fb or _any_runner or _http_text
+    _text_ok = bool(awen_agent_result.get("ok")) or _global_fb or _any_runner or _http_text
+    # 「重新检测」必须真的重测：先强制刷一次 agent 视觉链，把 5 秒缓存顶掉，
+    # 后面 has_vision_capability / vision_tier / vision_tier_label 复用这一次结果。
+    _ai._agent_vision_chain(fresh=True)
     _vision_ok = _ai.has_vision_capability()
     ai_chain = {
         "text": {
@@ -232,9 +452,13 @@ async def settings_health(_u: str = Depends(require_user)):
             "ok": _global_fb,
             "detail": "已配置" if _global_fb else "未配置（建议配置以保证开箱即用）",
         },
+        # 视觉不再是"有/无"两态，而是三档降级链——只报 ok 会让用户以为 T3
+        # 等于没有，而 T3 其实能做全部可测量的分析（合规/比例/占比/配色/图上文字）。
         "vision": {
             "ok": _vision_ok,
-            "detail": "可用" if _vision_ok else "未配置（影响 Listing 图片识别 / 视觉 Skill）",
+            "tier": _ai.vision_tier(),
+            "tier_label": _ai.vision_tier_label(),
+            "detail": _vision_detail(_ai.vision_tier(), _ai.vision_tier_label()),
         },
         "chain_order": ", ".join(_ai._text_provider_chain()),
     }
@@ -242,12 +466,9 @@ async def settings_health(_u: str = Depends(require_user)):
     return {
         "version": {"ok": True, "detail": app_version()},
         "ai_chain":  ai_chain,
-        "ivyea_agent": ivyea_agent_result,
+        "awen_agent": awen_agent_result,
         "apimart":   _check_key("apimart_key", "API Key 已设置"),
         "sorftime":  _check_key("sorftime_key", "API Key 已设置"),
-        "imgflow":   imgflow_result,
-        "gbrain_bin": _check_bin(gbrain_bin),
-        "ollama": _check_ollama(),
         "brain_root": {
             "ok": Path(brain_root).exists(),
             "detail": brain_root if Path(brain_root).exists() else f"目录不存在：{brain_root}",

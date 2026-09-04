@@ -98,19 +98,19 @@ export default function TaskBoardToolbar({
             value={searchTerm}
             onChange={(event) => onSearchTermChange(event.target.value)}
             placeholder={t('search.placeholder')}
-            className="w-full rounded-lg border border-gray-300 bg-white py-2 pl-10 pr-4 text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-white"
+            className="w-full rounded-lg border border-gray-300 bg-white py-2 pl-10 pr-4 text-gray-900 border-gray-600 bg-gray-800 text-white"
           />
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <div className="flex rounded-lg bg-gray-100 p-1 dark:bg-gray-800">
+          <div className="flex rounded-lg bg-gray-100 p-1 bg-gray-800">
             <button
               onClick={() => onViewModeChange('kanban')}
               className={cn(
                 'p-2 rounded-md',
                 viewMode === 'kanban'
-                  ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm'
-                  : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300',
+                  ? 'bg-white bg-gray-700 text-gray-900 text-white shadow-sm'
+                  : 'text-gray-500 text-gray-400 hover:text-gray-700 hover:text-gray-300',
               )}
               title={t('views.kanban')}
             >
@@ -122,8 +122,8 @@ export default function TaskBoardToolbar({
               className={cn(
                 'p-2 rounded-md',
                 viewMode === 'list'
-                  ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm'
-                  : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300',
+                  ? 'bg-white bg-gray-700 text-gray-900 text-white shadow-sm'
+                  : 'text-gray-500 text-gray-400 hover:text-gray-700 hover:text-gray-300',
               )}
               title={t('views.list')}
             >
@@ -135,8 +135,8 @@ export default function TaskBoardToolbar({
               className={cn(
                 'p-2 rounded-md',
                 viewMode === 'grid'
-                  ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm'
-                  : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300',
+                  ? 'bg-white bg-gray-700 text-gray-900 text-white shadow-sm'
+                  : 'text-gray-500 text-gray-400 hover:text-gray-700 hover:text-gray-300',
               )}
               title={t('views.grid')}
             >
@@ -149,8 +149,8 @@ export default function TaskBoardToolbar({
             className={cn(
               'flex items-center gap-2 px-3 py-2 rounded-lg border transition-colors',
               showFilters
-                ? 'bg-blue-50 dark:bg-blue-900 border-blue-200 dark:border-blue-700 text-blue-700 dark:text-blue-300'
-                : 'bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700',
+                ? 'bg-blue-50 bg-blue-900 border-blue-200 border-blue-700 text-blue-700 text-blue-300'
+                : 'bg-white bg-gray-800 border-gray-300 border-gray-600 text-gray-700 text-gray-300 hover:bg-gray-50 hover:bg-gray-700',
             )}
           >
             <Filter className="h-4 w-4" />
@@ -162,7 +162,7 @@ export default function TaskBoardToolbar({
             <>
               <button
                 onClick={onOpenHelp}
-                className="rounded-lg border border-gray-300 p-2 text-gray-600 hover:bg-gray-100 hover:text-blue-600 dark:border-gray-600 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-blue-400"
+                className="rounded-lg border border-gray-300 p-2 text-gray-600 hover:bg-gray-100 hover:text-blue-600 border-gray-600 text-gray-400 hover:bg-gray-700 hover:text-blue-400"
                 title={t('buttons.help')}
               >
                 <HelpCircle className="h-4 w-4" />
@@ -185,20 +185,20 @@ export default function TaskBoardToolbar({
                     </button>
 
                     {isPrdDropdownOpen && (
-                      <div className="absolute right-0 top-full z-30 mt-2 w-56 rounded-lg border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-800">
+                      <div className="absolute right-0 top-full z-30 mt-2 w-56 rounded-lg border border-gray-200 bg-white shadow-xl border-gray-700 bg-gray-800">
                         <div className="p-2">
                           <button
                             onClick={() => {
                               onCreatePrd();
                               setIsPrdDropdownOpen(false);
                             }}
-                            className="flex w-full items-center gap-2 rounded px-3 py-2 text-left text-sm font-medium text-purple-700 hover:bg-purple-50 dark:text-purple-300 dark:hover:bg-purple-900/30"
+                            className="flex w-full items-center gap-2 rounded px-3 py-2 text-left text-sm font-medium text-purple-700 hover:bg-purple-50 text-purple-300 hover:bg-purple-900/30"
                           >
                             <Plus className="h-4 w-4" />
                             {t('buttons.createNewPRD')}
                           </button>
 
-                          <div className="my-1 border-t border-gray-200 dark:border-gray-700" />
+                          <div className="my-1 border-t border-gray-200 border-gray-700" />
 
                           {existingPrds.map((prd) => (
                             <button
@@ -207,7 +207,7 @@ export default function TaskBoardToolbar({
                                 onOpenPrd(prd);
                                 setIsPrdDropdownOpen(false);
                               }}
-                              className="flex w-full items-center gap-2 rounded px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700"
+                              className="flex w-full items-center gap-2 rounded px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 text-gray-300 hover:bg-gray-700"
                             >
                               <FileText className="h-4 w-4" />
                               <span className="truncate">{prd.name}</span>

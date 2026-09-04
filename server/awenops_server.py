@@ -1,0 +1,559 @@
+"""PyInstaller-friendly awenops backend launcher."""
+from __future__ import annotations
+
+import os
+import logging
+import secrets
+import subprocess
+import sys
+import threading
+import time
+import urllib.request
+import webbrowser
+from pathlib import Path
+
+logger = logging.getLogger("awenops_server")
+
+
+def _force_utf8_stdio() -> None:
+    """把 stdout/stderr 钉成 UTF-8。**必须在任何分支之前跑。**
+
+    awenops 起内置 agent 时走 `<exe> agent-serve …`，子进程的 stdout 是
+    NUL / 日志文件 / 管道 —— 不是控制台。Windows 上 Python 这时按系统代码页
+    编码（中文机器 = GBK），而 agent 的开场白里有 ✓、正文全是中文：一个字符
+    编不出来就是 UnicodeEncodeError，serve 当场退出，用户只看到
+    "All connection attempts failed"。（实测崩过，v1.15.16 之前。）
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+        except Exception:
+            logger.debug("stream.reconfigure 失败（旁路，已忽略）", exc_info=True)
+
+
+_force_utf8_stdio()
+
+# Run the bundled awenAgent's serve straight from this exe — checked BEFORE the
+# heavy awenops imports so the frozen package needs no separate Python/pip/agent
+# install. awenops starts this via `<exe> agent-serve --host … --port …`.
+if len(sys.argv) > 1 and sys.argv[1] == "agent-serve":
+    from awen_agent.cli import main as _agent_main  # bundled via PyInstaller --collect-all
+    raise SystemExit(_agent_main(["serve", *sys.argv[2:]]))
+
+# Standalone awenAgent CLI straight from this exe: `<exe> awen <args>` == `awen <args>`.
+# Lets a Windows `awen` launcher run the *in-exe* agent (always in sync with awenops,
+# no separate Python/pip install needed). Checked BEFORE the heavy awenops imports.
+if len(sys.argv) > 1 and sys.argv[1] == "awen":
+    # This exe is a *windowed* (GUI-subsystem) PyInstaller build → it has no console, so
+    # sys.stdin/stdout/stderr are None. Attach to the launching terminal's console and
+    # reopen the std streams, otherwise the agent TUI can't read/write and any
+    # `sys.stdin.isatty()` used to crash with AttributeError.
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            ctypes.windll.kernel32.AttachConsole(-1)  # ATTACH_PARENT_PROCESS
+        except Exception:
+            logger.debug("ctypes.windll.kernel32.AttachConsole 失败（旁路，已忽略）", exc_info=True)
+        for _name, _dev, _mode in (("stdin", "CONIN$", "r"), ("stdout", "CONOUT$", "w"),
+                                    ("stderr", "CONOUT$", "w")):
+            if getattr(sys, _name, None) is None:
+                try:
+                    setattr(sys, _name, open(_dev, _mode, encoding="utf-8", errors="replace",
+                                             buffering=1))
+                except Exception:
+                    logger.debug("setattr 失败（旁路，已忽略）", exc_info=True)
+    from awen_agent.cli import main as _agent_main
+    raise SystemExit(_agent_main(sys.argv[2:]))
+
+import uvicorn
+
+
+def _runtime_root() -> Path:
+    if getattr(sys, "frozen", False):
+        exe_dir = Path(sys.executable).resolve().parent
+        # macOS .app: sys.executable is awenops.app/Contents/MacOS/awenops, but the
+        # data dirs (client/dist, skills, docs) ship in ../Resources. Windows onedir
+        # keeps them next to the exe, so only branch when we're clearly in a .app.
+        if sys.platform == "darwin" and exe_dir.name == "MacOS":
+            res = exe_dir.parent / "Resources"
+            if (res / "client" / "dist").exists() or (res / "client").exists():
+                return res
+        return exe_dir
+    return Path(__file__).resolve().parents[1]
+
+
+def _desktop_paths() -> list[Path]:
+    paths: list[Path] = []
+    for raw in (
+        os.environ.get("USERPROFILE", "") and os.path.join(os.environ["USERPROFILE"], "Desktop"),
+        os.path.expandvars(r"%OneDrive%\Desktop"),
+        os.path.expandvars(r"%PUBLIC%\Desktop"),
+    ):
+        if raw and "%" not in raw:
+            p = Path(raw)
+            if p.exists() and p not in paths:
+                paths.append(p)
+    return paths
+
+
+def _write_credentials(root: Path, password: str) -> Path:
+    credentials = "\n".join(
+        [
+            "awenops 本机登录信息",
+            "",
+            "访问地址: http://127.0.0.1:8001",
+            "用户名: admin",
+            f"密码: {password}",
+            "",
+            "首次登录后可在 系统配置 -> 账号安全 修改密码。",
+            "请只保存在自己的电脑上，不要发给他人。",
+        ]
+    )
+    data_dir = root / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    cred_file = data_dir / "awenops 登录信息.txt"
+    cred_file.write_text(credentials, encoding="utf-8")
+    for desktop in _desktop_paths():
+        try:
+            (desktop / "awenops 登录信息.txt").write_text(credentials, encoding="utf-8")
+        except Exception:
+            logger.debug("(desktop / awenops 登录信息.txt).write_text(c 失败（旁路，已忽略）", exc_info=True)
+    return cred_file
+
+
+def _create_desktop_shortcut(root: Path) -> None:
+    if not sys.platform.startswith("win") or not getattr(sys, "frozen", False):
+        return
+    exe = Path(sys.executable).resolve()
+    ps = r"""
+$ErrorActionPreference = 'SilentlyContinue'
+$Target = $env:AWEN_SHORTCUT_TARGET
+$WorkDir = $env:AWEN_SHORTCUT_WORKDIR
+$Candidates = @()
+try { $Candidates += [Environment]::GetFolderPath('Desktop') } catch {}
+try { $Candidates += (New-Object -ComObject WScript.Shell).SpecialFolders.Item('Desktop') } catch {}
+if ($env:OneDrive) { $Candidates += (Join-Path $env:OneDrive 'Desktop') }
+if ($env:PUBLIC) { $Candidates += (Join-Path $env:PUBLIC 'Desktop') }
+$Candidates = $Candidates | Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique
+foreach ($Desktop in $Candidates) {
+  try {
+    $Shell = New-Object -ComObject WScript.Shell
+    $Shortcut = $Shell.CreateShortcut((Join-Path $Desktop 'awenops.lnk'))
+    $Shortcut.TargetPath = $Target
+    $Shortcut.WorkingDirectory = $WorkDir
+    $Shortcut.Description = '启动 awenops 工作台'
+    $Shortcut.IconLocation = $Target
+    $Shortcut.Save()
+    break
+  } catch {}
+}
+"""
+    env = {**os.environ, "AWEN_SHORTCUT_TARGET": str(exe), "AWEN_SHORTCUT_WORKDIR": str(root)}
+    try:
+        kwargs = {}
+        if hasattr(subprocess, "CREATE_NO_WINDOW"):
+            kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+        subprocess.run(
+            ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps],
+            env=env,
+            cwd=str(root),
+            timeout=15,
+            **kwargs,
+        )
+    except Exception:
+        logger.debug("kwargs = {} 失败（旁路，已忽略）", exc_info=True)
+
+
+def _open_text_file(path: Path) -> None:
+    if not sys.platform.startswith("win"):
+        return
+    try:
+        os.startfile(str(path))  # type: ignore[attr-defined]
+    except Exception:
+        logger.debug("os.startfile 失败（旁路，已忽略）", exc_info=True)
+
+
+def _already_running(host: str, port: int) -> bool:
+    health_host = "127.0.0.1" if host in {"0.0.0.0", "::"} else host
+    try:
+        with urllib.request.urlopen(f"http://{health_host}:{port}/api/health", timeout=1) as resp:
+            return resp.status == 200
+    except Exception:
+        return False
+
+
+def _control_window_enabled() -> bool:
+    return (
+        getattr(sys, "frozen", False)
+        and sys.platform.startswith("win")
+        and os.getenv("AWENOPS_CONTROL_WINDOW", "1").lower() not in {"0", "false", "no"}
+    )
+
+
+def _ensure_awen_launcher() -> None:
+    """Windows：放一个能用的 `awen` 启动器（`<exe> awen %*` → 内置 awenAgent CLI），让 PowerShell
+    里输入 `awen` 就能打开内置 agent（随 awenops 更新，无需单独装 Python）。若 ~/.local/bin 下有
+    失效的 pip 空壳 `awen.exe`（.exe 在 PATHEXT 里优先于 .cmd、且 import awen_agent 报错），实测
+    它坏了就改名成 .disabled 让 awen.cmd 生效。幂等；出错不影响启动。"""
+    if not sys.platform.startswith("win") or not getattr(sys, "frozen", False):
+        return
+    try:
+        exe = Path(sys.executable).resolve()
+        home = Path(os.environ.get("USERPROFILE") or Path.home())
+        localbin = home / ".local" / "bin"
+        localbin.mkdir(parents=True, exist_ok=True)
+        # start "" /wait /b：GUI-subsystem exe 从 shell 直接跑不会阻塞，用 /b 在同一控制台跑、
+        # /wait 等它退出，配合 exe 内的 AttachConsole 让交互 TUI 占住当前 PowerShell 终端。
+        content = f'@echo off\r\nstart "" /wait /b "{exe}" awen %*\r\n'
+        cmd = localbin / "awen.cmd"
+        try:
+            if not cmd.exists() or cmd.read_text(encoding="utf-8", errors="replace") != content:
+                cmd.write_text(content, encoding="utf-8")
+        except OSError:
+            logger.debug("cmd.write_text 失败（旁路，已忽略）", exc_info=True)
+        broken = localbin / "awen.exe"
+        if broken.exists():
+            is_broken = True
+            try:  # CREATE_NO_WINDOW=0x08000000，别弹黑框
+                r = subprocess.run([str(broken), "--version"], capture_output=True,
+                                   timeout=20, creationflags=0x08000000)
+                is_broken = r.returncode != 0
+            except Exception:
+                is_broken = True
+            if is_broken:
+                try:
+                    disabled = localbin / "awen.exe.disabled"
+                    if disabled.exists():
+                        disabled.unlink()
+                    broken.rename(disabled)
+                except OSError:
+                    logger.debug("disabled = localbin / awen.exe.disabled 失败（旁路，已忽略）", exc_info=True)
+    except Exception:
+        logger.debug("Path 失败（旁路，已忽略）", exc_info=True)
+
+
+def _bootstrap_frozen_env() -> None:
+    if not getattr(sys, "frozen", False):
+        return
+    root = _runtime_root()
+    logs_dir = root / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    if sys.stdout is None:
+        sys.stdout = (logs_dir / "awenops.out.log").open("a", encoding="utf-8", buffering=1)
+    if sys.stderr is None:
+        sys.stderr = (logs_dir / "awenops.err.log").open("a", encoding="utf-8", buffering=1)
+    # 上面刚把 None 的流换成了日志文件对象，得对新流再钉一次（模块顶上那次
+    # 作用在旧流上）。控制台也一样：附了控制台时它默认走系统代码页。
+    _force_utf8_stdio()
+
+    env_file = root / "server" / ".env"
+    if env_file.exists():
+        try:
+            for line in env_file.read_text(encoding="utf-8").splitlines():
+                if line.startswith("ADMIN_PASSWORD="):
+                    _write_credentials(root, line.split("=", 1)[1])
+                    break
+        except Exception:
+            logger.debug("_write_credentials 失败（旁路，已忽略）", exc_info=True)
+        _create_desktop_shortcut(root)
+        return
+
+    password = os.getenv("AWENOPS_ADMIN_PASSWORD") or os.getenv("ADMIN_PASSWORD") or secrets.token_urlsafe(12)
+    secret = secrets.token_urlsafe(32)
+    (root / "server").mkdir(parents=True, exist_ok=True)
+    (root / "data").mkdir(parents=True, exist_ok=True)
+    env_file.write_text(
+        "\n".join(
+            [
+                "# Generated by awenopsServer.exe on first run.",
+                "AWENOPS_HOST=127.0.0.1",
+                "AWENOPS_PORT=8001",
+                "AWENOPS_DEV=0",
+                f"AWENOPS_SECRET={secret}",
+                "AWENOPS_USER=admin",
+                f"ADMIN_PASSWORD={password}",
+                "AWENOPS_ALLOWED_ORIGINS=http://127.0.0.1:8001",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    cred_file = _write_credentials(root, password)
+    _create_desktop_shortcut(root)
+    _open_text_file(cred_file)
+
+
+_bootstrap_frozen_env()
+_ensure_awen_launcher()
+
+from app.core.config import settings
+from app.core.version import app_version
+from app.main import app
+
+
+
+def _open_browser_when_ready() -> None:
+    browser_host = "127.0.0.1" if settings.host in {"0.0.0.0", "::"} else settings.host
+    url = f"http://{browser_host}:{settings.port}"
+    health_url = f"{url}/api/health"
+    for _ in range(40):
+        try:
+            with urllib.request.urlopen(health_url, timeout=1) as resp:
+                if resp.status == 200:
+                    webbrowser.open(url)
+                    return
+        except Exception:
+            time.sleep(0.5)
+    webbrowser.open(url)
+
+
+def _run_with_control_window() -> None:
+    try:
+        import tkinter as tk
+        from tkinter import messagebox
+    except Exception:
+        uvicorn.run(app, host=settings.host, port=settings.port)
+        return
+
+    browser_host = "127.0.0.1" if settings.host in {"0.0.0.0", "::"} else settings.host
+    url = f"http://{browser_host}:{settings.port}"
+    config = uvicorn.Config(app, host=settings.host, port=settings.port)
+    server = uvicorn.Server(config)
+    server_thread = threading.Thread(target=server.run, name="awenops-server", daemon=True)
+
+    # ── Polished native window: rounded cards / badges / buttons drawn on a
+    # Canvas (Tk widgets are square), inside a normal window so the taskbar entry
+    # and the native title bar (min/max/close) stay. Status goes in the title.
+    # Authored in 600x384 design coords; every primitive (rr/oval/line/rect/text)
+    # is scaled by S to crisp integer pixels at draw time. No post-hoc cv.scale —
+    # that put 1px borders on fractional pixels and blurred the text. Window ≈ 2/3.
+    W, H, S = 600, 388, 0.78
+    white = "#ffffff"
+    cbord = "#e5e7eb"      # card border
+    badge_bg = "#dcfce7"   # light-green icon badge
+    label_fg = "#4b5563"
+    val_fg = "#374151"
+    faint = "#9ca3af"
+    green = "#16a34a"
+    green_hi = "#15803d"
+    amber_bg = "#fffbeb"
+    amber_bd = "#fde68a"
+    amber_fg = "#b45309"
+    red = "#dc2626"
+    red_bd = "#fca5a5"
+    red_hi = "#fef2f2"
+    ui = "Microsoft YaHei UI"
+    mono = "Consolas"
+
+    # High-DPI fix: make the process DPI-aware BEFORE creating the window, so
+    # Windows stops bitmap-stretching the canvas (that stretch is what blurred the
+    # content while the DWM-drawn title bar stayed sharp). We then scale every
+    # coord & font to physical pixels ourselves via `dpi`.
+    try:
+        import ctypes
+        try:
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)  # per-monitor v2
+        except Exception:
+            ctypes.windll.user32.SetProcessDPIAware()
+    except Exception:
+        logger.debug("try 失败（旁路，已忽略）", exc_info=True)
+
+    root = tk.Tk()
+    root.title("awenops")
+    root.resizable(False, False)
+
+    # Real DPI scale of the window's monitor (1.0 @ 96dpi, 1.5 @ 150%, …). All
+    # design coords/fonts below are multiplied by K = S * dpi → physical pixels.
+    dpi = 1.0
+    try:
+        root.update_idletasks()
+        import ctypes
+        d = ctypes.windll.user32.GetDpiForWindow(root.winfo_id())
+        if d:
+            dpi = d / 96.0
+    except Exception:
+        try:
+            dpi = root.winfo_fpixels("1i") / 96.0
+        except Exception:
+            dpi = 1.0
+    if dpi < 1.0:
+        dpi = 1.0
+    K = S * dpi
+
+    WS, HS = round(W * K), round(H * K)
+    sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
+    # Size is driven by the canvas (width=WS,height=HS) + resizable(False); set
+    # ONLY the position here. Forcing "WSxHS" via geometry can be read as the total
+    # size INCLUDING the title bar on some Windows/DPI combos → the client area
+    # ends up shorter than the canvas and the bottom button row gets clipped.
+    root.geometry(f"+{(sw - WS) // 2}+{(sh - HS) // 3}")
+    try:
+        root.iconbitmap(str(_runtime_root() / "client" / "public" / "favicon.ico"))
+    except Exception:
+        logger.debug("root.iconbitmap 失败（旁路，已忽略）", exc_info=True)
+    root.configure(bg=white)
+
+    cv = tk.Canvas(root, width=WS, height=HS, bg=white, highlightthickness=0, bd=0)
+    cv.pack(fill="both", expand=True)
+
+    def s(n):
+        return round(n * K)
+
+    # Fonts use NEGATIVE sizes = pixels, so Tk does NOT apply its own point→pixel
+    # DPI scaling on top of ours (that double-scaling overflowed boxes → clipped
+    # borders). max(...) keeps a readable floor on low-DPI displays.
+    def fui(n, *a):
+        return (ui, -max(round(8 * dpi), round(n * K)), *a)
+
+    def fmono(n):
+        return (mono, -max(round(8 * dpi), round(n * K)))
+
+    def _w(kw):
+        if "width" in kw:
+            kw["width"] = max(1, round(kw["width"] * K))
+        return kw
+
+    # Primitive wrappers: author in design coords, draw at scaled integer pixels.
+    def oval(x1, y1, x2, y2, **kw):
+        cv.create_oval(s(x1), s(y1), s(x2), s(y2), **_w(kw))
+
+    def line(x1, y1, x2, y2, **kw):
+        cv.create_line(s(x1), s(y1), s(x2), s(y2), **_w(kw))
+
+    def rect(x1, y1, x2, y2, **kw):
+        cv.create_rectangle(s(x1), s(y1), s(x2), s(y2), **_w(kw))
+
+    def text(x, y, **kw):
+        cv.create_text(s(x), s(y), **kw)
+
+    def rr(x1, y1, x2, y2, r, fill, tags=()):
+        x1, y1, x2, y2, r = s(x1), s(y1), s(x2), s(y2), s(r)
+        cv.create_rectangle(x1 + r, y1, x2 - r, y2, fill=fill, outline=fill, tags=tags)
+        cv.create_rectangle(x1, y1 + r, x2, y2 - r, fill=fill, outline=fill, tags=tags)
+        for ax, ay, st in ((x1, y1, 90), (x2 - 2 * r, y1, 0),
+                           (x1, y2 - 2 * r, 180), (x2 - 2 * r, y2 - 2 * r, 270)):
+            cv.create_arc(ax, ay, ax + 2 * r, ay + 2 * r, start=st, extent=90,
+                          style="pieslice", fill=fill, outline=fill, tags=tags)
+
+    def card(x1, y1, x2, y2, r, fill, border):
+        rr(x1, y1, x2, y2, r, border)
+        rr(x1 + 1, y1 + 1, x2 - 1, y2 - 1, r - 1, fill)
+
+    stopping = False
+
+    def open_browser() -> None:
+        webbrowser.open(url)
+
+    def copy_url() -> None:
+        try:
+            root.clipboard_clear(); root.clipboard_append(url)
+        except Exception:
+            logger.debug("root.clipboard_clear 失败（旁路，已忽略）", exc_info=True)
+
+    def stop_server() -> None:
+        nonlocal stopping
+        if stopping:
+            return
+        stopping = True
+        root.title("awenops · 正在停止…")
+        server.should_exit = True
+
+        def finish() -> None:
+            server_thread.join(timeout=8)
+            root.after(0, root.destroy)
+
+        threading.Thread(target=finish, daemon=True).start()
+
+    # Main card (address + version rows)
+    card(24, 24, W - 24, 192, 14, white, cbord)
+    # address badge + globe icon
+    rr(44, 52, 84, 92, 10, badge_bg)
+    gx, gy = 64, 72
+    oval(gx - 12, gy - 12, gx + 12, gy + 12, outline=green, width=2)
+    oval(gx - 5, gy - 12, gx + 5, gy + 12, outline=green, width=1)
+    line(gx - 12, gy, gx + 12, gy, fill=green, width=1)
+    text(104, gy, text="地址", anchor="w", fill=label_fg, font=fui(12))
+    text(168, gy, text=url, anchor="w", fill=green, font=fmono(13),
+         tags=("link",))
+    # copy button
+    rr(468, 54, 560, 90, 9, cbord, ("copy", "copy_bg"))
+    rr(469, 55, 559, 89, 8, white, ("copy", "copy_bg"))
+    text(514, 72, text="⧉  复制", fill=val_fg, font=fui(11), tags=("copy",))
+    # divider
+    line(44, 122, W - 44, 122, fill=cbord)
+    # version badge + box icon
+    rr(44, 138, 84, 178, 10, badge_bg)
+    bx, by = 64, 158
+    rect(bx - 11, by - 9, bx + 11, by + 9, outline=green, width=2)
+    line(bx - 11, by - 2, bx + 11, by - 2, fill=green, width=1)
+    line(bx, by - 9, bx, by - 2, fill=green, width=1)
+    text(104, by, text="版本", anchor="w", fill=label_fg, font=fui(12))
+    text(168, by, text=app_version(), anchor="w", fill=val_fg, font=fmono(12))
+
+    # Warning bar
+    card(24, 212, W - 24, 256, 10, amber_bg, amber_bd)
+    text(46, 234, text="⚠", fill=amber_fg, font=fui(13), anchor="w")
+    text(72, 234, text="关闭窗口将停止后台服务", fill=amber_fg,
+         font=fui(10), anchor="w")
+
+    # Buttons
+    rr(24, 280, 292, 356, 13, green, ("open", "open_bg"))
+    text(158, 318, text=">_   打开控制台", fill=white,
+         font=fui(13, "bold"), tags=("open",))
+    rr(308, 280, W - 24, 356, 13, red_bd, ("stop", "stop_ring"))
+    rr(309, 281, W - 25, 355, 12, white, ("stop", "stop_bg"))
+    text(442, 318, text="⏻   停止并退出", fill=red,
+         font=fui(13, "bold"), tags=("stop",))
+
+    def _hover(tag_bg, normal, hi):
+        cv.tag_bind(tag_bg.replace("_bg", "").replace("_ring", ""), "<Enter>",
+                    lambda _e: (cv.itemconfigure(tag_bg, fill=hi, outline=hi),
+                                cv.config(cursor="hand2")))
+        cv.tag_bind(tag_bg.replace("_bg", "").replace("_ring", ""), "<Leave>",
+                    lambda _e: (cv.itemconfigure(tag_bg, fill=normal, outline=normal),
+                                cv.config(cursor="")))
+
+    cv.tag_bind("open", "<Button-1>", lambda _e: open_browser())
+    _hover("open_bg", green, green_hi)
+    cv.tag_bind("stop", "<Button-1>", lambda _e: stop_server())
+    _hover("stop_bg", white, red_hi)
+    cv.tag_bind("copy", "<Button-1>", lambda _e: copy_url())
+    _hover("copy_bg", white, "#f3f4f6")
+    cv.tag_bind("link", "<Button-1>", lambda _e: open_browser())
+    cv.tag_bind("link", "<Enter>", lambda _e: cv.config(cursor="hand2"))
+    cv.tag_bind("link", "<Leave>", lambda _e: cv.config(cursor=""))
+
+    root.protocol("WM_DELETE_WINDOW", stop_server)
+    server_thread.start()
+    threading.Thread(target=_open_browser_when_ready, daemon=True).start()
+
+    def poll() -> None:
+        if stopping:
+            return
+        if server_thread.is_alive():
+            running = _already_running(settings.host, settings.port)
+            root.title("awenops · 运行中" if running else "awenops · 启动中…")
+            root.after(1000, poll)
+            return
+        root.title("awenops · 已停止")
+        messagebox.showwarning("awenops", "awenops 服务已停止。如需排错，请查看 logs\\awenops.err.log。")
+        root.destroy()
+
+    root.after(1000, poll)
+    root.mainloop()
+    if server_thread.is_alive() and not server.should_exit:
+        server.should_exit = True
+        server_thread.join(timeout=8)
+
+
+if __name__ == "__main__":
+    if getattr(sys, "frozen", False) and _already_running(settings.host, settings.port):
+        browser_host = "127.0.0.1" if settings.host in {"0.0.0.0", "::"} else settings.host
+        webbrowser.open(f"http://{browser_host}:{settings.port}")
+        sys.exit(0)
+    if _control_window_enabled():
+        _run_with_control_window()
+        sys.exit(0)
+    if getattr(sys, "frozen", False) and os.getenv("AWENOPS_SERVER_OPEN_BROWSER", "1") != "0":
+        threading.Thread(target=_open_browser_when_ready, daemon=True).start()
+    uvicorn.run(app, host=settings.host, port=settings.port)

@@ -39,7 +39,7 @@ interface ChatMessagesPaneProps {
   setHermesModel: (model: string) => void;
   agyModel: string;
   setAgyModel: (model: string) => void;
-  ivyeaModel: string;
+  awenModel: string;
   providerModelCatalog: Partial<Record<LLMProvider, ProviderModelsDefinition>>;
   providerModelsLoading: boolean;
   tasksEnabled: boolean;
@@ -93,7 +93,7 @@ export default function ChatMessagesPane({
   setHermesModel,
   agyModel,
   setAgyModel,
-  ivyeaModel,
+  awenModel,
   providerModelCatalog,
   providerModelsLoading,
   tasksEnabled,
@@ -158,7 +158,7 @@ export default function ChatMessagesPane({
       className="relative flex-1 space-y-3 overflow-y-auto overflow-x-hidden px-0 py-3 sm:space-y-4 sm:p-4"
     >
       {isLoadingSessionMessages && chatMessages.length === 0 ? (
-        <div className="mt-8 text-center text-gray-500 dark:text-gray-400">
+        <div className="mt-8 text-center text-gray-500 text-gray-400">
           <div className="flex items-center justify-center space-x-2">
             <div className="h-4 w-4 animate-spin rounded-full border-b-2 border-gray-400" />
             <p>{t('session.loading.sessionMessages')}</p>
@@ -185,7 +185,7 @@ export default function ChatMessagesPane({
           setHermesModel={setHermesModel}
           agyModel={agyModel}
           setAgyModel={setAgyModel}
-          ivyeaModel={ivyeaModel}
+          awenModel={awenModel}
           providerModelCatalog={providerModelCatalog}
           providerModelsLoading={providerModelsLoading}
           tasksEnabled={tasksEnabled}
@@ -197,7 +197,7 @@ export default function ChatMessagesPane({
         <>
           {/* Loading indicator for older messages (hide when load-all is active) */}
           {isLoadingMoreMessages && !isLoadingAllMessages && !allMessagesLoaded && (
-            <div className="py-3 text-center text-gray-500 dark:text-gray-400">
+            <div className="py-3 text-center text-gray-500 text-gray-400">
               <div className="flex items-center justify-center space-x-2">
                 <div className="h-4 w-4 animate-spin rounded-full border-b-2 border-gray-400" />
                 <p className="text-sm">{t('session.loading.olderMessages')}</p>
@@ -207,7 +207,7 @@ export default function ChatMessagesPane({
 
           {/* Indicator showing there are more messages to load (hide when all loaded) */}
           {hasMoreMessages && !isLoadingMoreMessages && !allMessagesLoaded && (
-            <div className="border-b border-gray-200 py-2 text-center text-sm text-gray-500 dark:border-gray-700 dark:text-gray-400">
+            <div className="border-b border-gray-200 py-2 text-center text-sm text-gray-500 border-gray-700 text-gray-400">
               {totalMessages > 0 && (
                 <span>
                   {t('session.messages.showingOf', { shown: sessionMessagesCount, total: totalMessages })}{' '}
@@ -221,7 +221,7 @@ export default function ChatMessagesPane({
           {(showLoadAllOverlay || isLoadingAllMessages || loadAllJustFinished) && (
             <div className="pointer-events-none sticky top-2 z-20 flex justify-center">
               {loadAllJustFinished ? (
-                <div className="flex items-center space-x-2 rounded-full bg-green-600 px-4 py-1.5 text-xs font-medium text-white shadow-lg dark:bg-green-500">
+                <div className="flex items-center space-x-2 rounded-full bg-green-600 px-4 py-1.5 text-xs font-medium text-white shadow-lg bg-green-500">
                   <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
                   </svg>
@@ -229,7 +229,7 @@ export default function ChatMessagesPane({
                 </div>
               ) : (
                 <button
-                  className="pointer-events-auto flex items-center space-x-2 rounded-full bg-blue-600 px-4 py-1.5 text-xs font-medium text-white shadow-lg transition-all duration-200 hover:scale-105 hover:bg-blue-700 disabled:cursor-wait disabled:opacity-75 dark:bg-blue-500 dark:hover:bg-blue-600"
+                  className="pointer-events-auto flex items-center space-x-2 rounded-full bg-blue-600 px-4 py-1.5 text-xs font-medium text-white shadow-lg transition-all duration-200 hover:scale-105 hover:bg-blue-700 disabled:cursor-wait disabled:opacity-75 bg-blue-500 hover:bg-blue-600"
                   onClick={loadAllMessages}
                   disabled={isLoadingAllMessages}
                 >
@@ -249,14 +249,14 @@ export default function ChatMessagesPane({
 
           {/* Legacy message count indicator (for non-paginated view) */}
           {!hasMoreMessages && chatMessages.length > visibleMessageCount && (
-            <div className="border-b border-gray-200 py-2 text-center text-sm text-gray-500 dark:border-gray-700 dark:text-gray-400">
+            <div className="border-b border-gray-200 py-2 text-center text-sm text-gray-500 border-gray-700 text-gray-400">
               {t('session.messages.showingLast', { count: visibleMessageCount, total: chatMessages.length })} |
               <button className="ml-1 text-blue-600 underline hover:text-blue-700" onClick={loadEarlierMessages}>
                 {t('session.messages.loadEarlier')}
               </button>
               {' | '}
               <button
-                className="text-blue-600 underline hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+                className="text-blue-600 underline hover:text-blue-700 text-blue-400 hover:text-blue-300"
                 onClick={loadAllMessages}
               >
                 {t('session.messages.loadAll')}

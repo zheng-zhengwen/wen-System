@@ -19,7 +19,7 @@ export const DATA_SOURCES: DataSourceMeta[] = [
   { id: "sif", name: "SIF", ready: false, surfaces: [], note: "即将支持" },
 ];
 
-const KEY = "ivyea-ops-data-source";
+const KEY = "awenops-data-source";
 
 export function getDataSource(): DataSourceId {
   const v = (typeof localStorage !== "undefined" ? localStorage.getItem(KEY) : null) as DataSourceId | null;

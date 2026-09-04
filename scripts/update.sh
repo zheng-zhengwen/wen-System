@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Update IvyeaOps to the latest code — WITHOUT touching your data or config.
+# Update awenops to the latest code — WITHOUT touching your data or config.
 #
 # Safe by design: git pull only updates tracked code. Your server/.env, the
 # data/ directory (all *.sqlite3 DBs + hub_settings.json + uploads) and
@@ -14,9 +14,9 @@ cd "$(dirname "$0")/.."
 REPO_ROOT="$(pwd)"
 
 GREEN="\033[32m"; YELLOW="\033[33m"; RED="\033[31m"; RESET="\033[0m"
-info() { echo -e "${GREEN}[IvyeaOps]${RESET} $*"; }
-warn() { echo -e "${YELLOW}[IvyeaOps]${RESET} $*"; }
-die()  { echo -e "${RED}[IvyeaOps] ERROR${RESET} $*" >&2; exit 1; }
+info() { echo -e "${GREEN}[awenops]${RESET} $*"; }
+warn() { echo -e "${YELLOW}[awenops]${RESET} $*"; }
+die()  { echo -e "${RED}[awenops] ERROR${RESET} $*" >&2; exit 1; }
 
 [ -d .git ] || die "这不是 git 仓库（你可能是下载的 ZIP）。请改用 git clone 安装后再用本脚本更新，或重新下载最新 ZIP 覆盖代码（注意别覆盖 server/.env 和 data/）。"
 
@@ -38,16 +38,16 @@ info "更新完成 ✓  数据与配置原样保留。"
 # 发布流程末尾自动重启：systemd 部署直接重启，让新版本立即生效。
 # 否则运行中的旧进程会一直沿用启动时缓存的旧版本号，前端误报“有更新”。
 restart_cmd=""
-if command -v systemctl >/dev/null 2>&1 && systemctl cat ivyea-ops.service >/dev/null 2>&1; then
+if command -v systemctl >/dev/null 2>&1 && systemctl cat awenops.service >/dev/null 2>&1; then
   if [ "$(id -u)" = "0" ]; then
-    restart_cmd="systemctl restart ivyea-ops"
+    restart_cmd="systemctl restart awenops"
   elif command -v sudo >/dev/null 2>&1; then
-    restart_cmd="sudo systemctl restart ivyea-ops"
+    restart_cmd="sudo systemctl restart awenops"
   fi
 fi
 
 if [ -n "$restart_cmd" ]; then
-  info "重启 ivyea-ops 服务使新版本生效..."
+  info "重启 awenops 服务使新版本生效..."
   if $restart_cmd; then
     info "服务已重启 ✓  新版本已生效（不会再误报“有更新”）。"
   else
@@ -55,6 +55,6 @@ if [ -n "$restart_cmd" ]; then
   fi
 else
   info "现在重启服务使新代码生效："
-  echo "    • systemd 部署：   sudo systemctl restart ivyea-ops"
+  echo "    • systemd 部署：   sudo systemctl restart awenops"
   echo "    • 脚本启动的：     在运行窗口按 Ctrl+C 停掉，再  bash scripts/start.sh"
 fi

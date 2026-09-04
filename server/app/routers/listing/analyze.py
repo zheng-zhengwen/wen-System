@@ -2,9 +2,9 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Optional
 
-import httpx
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.core.security import require_user
@@ -13,10 +13,11 @@ from .ai import _call_ai, _collect_vision, _load_skill_knowledge, has_vision
 from .common import (
     _build_product_context, _copy_source, _img_datauri_from_path,
     _img_datauri_from_url, _keywords_from_text, _reference_images,
-    project_row, update_project,
+    _strip_json, project_row, update_project,
 )
 from .jobs import JobHandle, start_job
-from .scrape import _imgflow_base
+
+logger = logging.getLogger("awen.routers.listing.analyze")
 
 router = APIRouter()
 
@@ -105,7 +106,7 @@ def _fallback_analysis(row, scrape_data: dict, analysis_data: dict) -> dict:
 
 
 async def run_analyze(project_id: str, handle: Optional[JobHandle] = None) -> dict:
-    """Run skill-enhanced AI analysis + imgflow deep analysis (COSMO/Rufus/SIF)."""
+    """技能增强的 AI 结构化分析（含全部图片的视觉分析）。"""
 
     def progress(stage: str, message: str, value: float) -> None:
         if handle:
@@ -128,20 +129,7 @@ async def run_analyze(project_id: str, handle: Optional[JobHandle] = None) -> di
             "vision", f"视觉分析第 {lo}-{hi} 张（共 {total} 张）…", 0.1 + 0.4 * hi / total),
     )
 
-    # 1. Call imgflow deep analysis (COSMO/Rufus/SIF/Sorftime)
-    imgflow_analysis = {}
-    imgflow_id = row["imgflow_project_id"]
-    if imgflow_id:
-        progress("imgflow", "获取 imgflow 深度分析…", 0.55)
-        try:
-            async with httpx.AsyncClient(timeout=180) as client:
-                resp = await client.post(f"{_imgflow_base()}/analysis/{imgflow_id}")
-                if resp.status_code == 200:
-                    imgflow_analysis = resp.json()
-        except Exception:
-            pass
-
-    # 2. Skill-enhanced AI analysis
+    # 1. Skill-enhanced AI analysis
     progress("analyze", "AI 结构化分析中（走统一降级链）…", 0.65)
     prompt = f"""你是Amazon产品分析专家。基于以下专业知识和产品信息，进行深度分析。
 
@@ -154,8 +142,6 @@ async def run_analyze(project_id: str, handle: Optional[JobHandle] = None) -> di
 ## 产品图片视觉分析（采集 + 上传的全部图片）
 {image_insights or "（未配置视觉模型或暂无图片）"}
 
-## imgflow深度分析数据
-{json.dumps(imgflow_analysis, ensure_ascii=False)[:2000] if imgflow_analysis else "未获取到"}
 
 请输出结构化分析（JSON格式）：
 {{
@@ -189,15 +175,15 @@ async def run_analyze(project_id: str, handle: Optional[JobHandle] = None) -> di
         from .ai import text_chain_label
         warning = f"AI 当前不可用（{text_chain_label()} 均失败），已使用本地规则生成基础分析。原因：{str(e.detail)[:220]}"
 
-    combined = {"ai_analysis": content, "imgflow": imgflow_analysis, "image_insights": image_insights}
+    combined = {"ai_analysis": content, "image_insights": image_insights}
     if fallback_used:
         combined["fallback"] = True
         combined["warning"] = warning
-    try:
-        parsed = json.loads(content.strip().strip("```json").strip("```"))
-        combined["structured"] = parsed
-    except Exception:
-        combined["structured"] = None
+    # 这里原本是 content.strip().strip("```json").strip("```") —— str.strip(chars)
+    # 按**字符集**剥离而不是去前缀，等于把两端所有的 ` j s o n 字符都啃掉，
+    # 模型回复稍一变形就会把正文吃掉。同包已有更稳的 _strip_json（定位 {...} 区间），
+    # 直接复用。
+    combined["structured"] = _strip_json(content)
 
     progress("save", "保存分析结果…", 0.95)
     update_project(project_id, analysis_data=json.dumps(combined, ensure_ascii=False), status="analyzed")

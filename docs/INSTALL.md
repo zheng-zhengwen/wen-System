@@ -14,8 +14,8 @@ sudo dnf install -y python3 python3-pip nodejs nginx certbot \
 
 # 选一个目录克隆仓库
 sudo mkdir -p /opt && cd /opt
-git clone https://github.com/YOUR_USERNAME/IvyeaOps.git
-cd IvyeaOps
+git clone https://github.com/YOUR_USERNAME/awenops.git
+cd awenops
 ```
 
 ## 1. 后端
@@ -35,20 +35,20 @@ python3 -m venv .venv
 cp .env.example .env
 
 # 会话签名密钥
-.venv/bin/python -c "import secrets; print('IVYEA_OPS_SECRET=' + secrets.token_urlsafe(32))"
+.venv/bin/python -c "import secrets; print('AWENOPS_SECRET=' + secrets.token_urlsafe(32))"
 # 把这行粘进 .env
 
 # 管理员密码
 PYTHONPATH=. .venv/bin/python -m app.core.hashpw
-# 把输出的 IVYEA_OPS_PASSWORD_HASH=... 粘进 .env
+# 把输出的 AWENOPS_PASSWORD_HASH=... 粘进 .env
 ```
 
 编辑 `.env`：
 
-- `IVYEA_OPS_USER` —— 管理员登录名
-- `IVYEA_OPS_ALLOWED_ORIGINS=https://ops.example.com` —— 你的公网地址
-- `IVYEA_OPS_COOKIE_DOMAIN=` —— 留空即可，除非需要子域共享
-- `IVYEA_OPS_DEV=0` —— 生产模式
+- `AWENOPS_USER` —— 管理员登录名
+- `AWENOPS_ALLOWED_ORIGINS=https://ops.example.com` —— 你的公网地址
+- `AWENOPS_COOKIE_DOMAIN=` —— 留空即可，除非需要子域共享
+- `AWENOPS_DEV=0` —— 生产模式
 
 ## 2. 前端
 
@@ -66,7 +66,7 @@ npm run build
 cd ..
 cp deploy/install.conf.example deploy/install.conf
 $EDITOR deploy/install.conf
-# 至少设置 SERVER_NAME=ops.example.com、INSTALL_DIR=/opt/IvyeaOps
+# 至少设置 SERVER_NAME=ops.example.com、INSTALL_DIR=/opt/awenops
 # 并把 PYTHON_BIN 指向 server/.venv/bin/python
 
 bash scripts/render-deploy.sh
@@ -88,17 +88,17 @@ sudo certbot certonly --nginx -d ops.example.com
 
 ```bash
 # nginx
-sudo cp deploy/dist/nginx/ivyea-ops.conf /etc/nginx/conf.d/
+sudo cp deploy/dist/nginx/awenops.conf /etc/nginx/conf.d/
 sudo nginx -t && sudo systemctl reload nginx
 
 # systemd
-sudo cp deploy/dist/systemd/ivyea-ops.service /etc/systemd/system/
+sudo cp deploy/dist/systemd/awenops.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now ivyea-ops.service
+sudo systemctl enable --now awenops.service
 
 # CPU 告警 cron（可选，建议开启）
-sudo mkdir -p /var/log/IvyeaOps
-sudo cp deploy/dist/cron.d/ivyea-ops-cpu-alert /etc/cron.d/
+sudo mkdir -p /var/log/awenops
+sudo cp deploy/dist/cron.d/awenops-cpu-alert /etc/cron.d/
 ```
 
 ## 6. 冒烟测试
@@ -117,30 +117,30 @@ curl -sSI https://ops.example.com/ | head -5
 ## 升级更新
 
 ```bash
-cd /opt/IvyeaOps
+cd /opt/awenops
 git pull
 cd server && .venv/bin/pip install -r requirements.txt && cd ..
 cd client && npm install && npm run build && cd ..
-sudo systemctl restart ivyea-ops.service
+sudo systemctl restart awenops.service
 ```
 
 若上游的 `deploy/*.template` 有变化：
 
 ```bash
 bash scripts/render-deploy.sh
-sudo cp deploy/dist/nginx/ivyea-ops.conf /etc/nginx/conf.d/
+sudo cp deploy/dist/nginx/awenops.conf /etc/nginx/conf.d/
 sudo nginx -t && sudo systemctl reload nginx
-sudo cp deploy/dist/systemd/ivyea-ops.service /etc/systemd/system/
-sudo systemctl daemon-reload && sudo systemctl restart ivyea-ops
+sudo cp deploy/dist/systemd/awenops.service /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl restart awenops
 ```
 
 ## 常见问题排查
 
-- **登录 403 / “origin not allowed”** —— `.env` 里的 `IVYEA_OPS_ALLOWED_ORIGINS`
-  没包含浏览器实际访问的地址。加进去后 `systemctl restart ivyea-ops`。
-- **nginx 返回 502** —— 看 `systemctl status ivyea-ops` 和
-  `journalctl -u ivyea-ops -n 50`。多半是缺 Python 依赖或 PYTHONPATH 不对。
-- **Cookie 不生效** —— 如果你用的子域和配置的不一致，把 `IVYEA_OPS_COOKIE_DOMAIN`
+- **登录 403 / “origin not allowed”** —— `.env` 里的 `AWENOPS_ALLOWED_ORIGINS`
+  没包含浏览器实际访问的地址。加进去后 `systemctl restart awenops`。
+- **nginx 返回 502** —— 看 `systemctl status awenops` 和
+  `journalctl -u awenops -n 50`。多半是缺 Python 依赖或 PYTHONPATH 不对。
+- **Cookie 不生效** —— 如果你用的子域和配置的不一致，把 `AWENOPS_COOKIE_DOMAIN`
   设成共同的上级域（如 `.example.com`）。
 - **systemd `Restart=on-failure` 反复重启** —— 通常是 `.env` 语法错误（值里有未加
   引号的空格）。在 shell 里 `set -a; . .env; set +a` 可复现解析错误。

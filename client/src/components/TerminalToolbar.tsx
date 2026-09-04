@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, RefObject } from "react";
 
 /**
- * Mobile-only toolbar rendered in the IvyeaOps parent page, BELOW the
+ * Mobile-only toolbar rendered in the awenops parent page, BELOW the
  * ttyd iframe. Keys are forwarded to the iframe via postMessage so they
  * don't consume terminal screen real estate inside the iframe.
  *

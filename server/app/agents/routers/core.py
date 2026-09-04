@@ -22,7 +22,7 @@ async def system_update() -> dict:
     # Updates are managed by the ops deployment, not from inside agents.
     return {
         "success": False,
-        "message": "Updates are managed by the IvyeaOps deployment; in-app update is disabled.",
+        "message": "Updates are managed by the awenops deployment; in-app update is disabled.",
     }
 
 
@@ -30,7 +30,7 @@ async def system_update() -> dict:
 # hardcoded set in ProviderSelectionEmptyState.tsx / providers.py _PROVIDER_BIN).
 # We intersect the registry catalog with this so the deep-analysis picker never
 # offers an agent the chat view can't drive (e.g. kiro).
-_NATIVE_PROVIDERS = {"claude", "codex", "cursor", "gemini", "opencode", "hermes", "agy", "ivyea"}
+_NATIVE_PROVIDERS = {"claude", "codex", "cursor", "gemini", "opencode", "hermes", "agy", "awen"}
 
 
 @router.get("/catalog")

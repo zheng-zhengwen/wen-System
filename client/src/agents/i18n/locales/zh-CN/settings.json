@@ -118,10 +118,6 @@
     }
   },
   "appearanceSettings": {
-    "darkMode": {
-      "label": "深色模式",
-      "description": "切换浅色和深色主题"
-    },
     "projectSorting": {
       "label": "项目排序",
       "description": "项目在侧边栏中的排列方式",

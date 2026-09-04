@@ -1,17 +1,17 @@
 services:
   app:
     build: .
-    container_name: ivyea-ops
+    container_name: awenops
     restart: unless-stopped
     ports:
       - "${PORT:-8080}:80"
     volumes:
-      - ivyea-ops-data:/app/data
+      - awenops-data:/app/data
     env_file:
       - .env
     environment:
-      - IVYEA_OPS_DATA_DIR=/app/data
+      - AWENOPS_DATA_DIR=/app/data
 
 volumes:
-  ivyea-ops-data:
+  awenops-data:
     driver: local

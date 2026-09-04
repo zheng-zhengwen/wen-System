@@ -56,8 +56,6 @@
   "common": {
     "language": "言語",
     "theme": "テーマ",
-    "darkMode": "ダークモード",
-    "lightMode": "ライトモード",
     "name": "名前",
     "description": "説明",
     "enabled": "有効",

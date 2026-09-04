@@ -21,6 +21,7 @@ from __future__ import annotations
 from app.core.proc import no_window_kwargs
 
 import asyncio
+import logging
 import json
 import re
 import uuid
@@ -33,6 +34,8 @@ from app.core import hub_settings as _hs
 from app.services import ai_synthesis_service as _ai
 from app.services import lingxing_data as _data
 from app.services import lingxing_service as _gw
+
+logger = logging.getLogger("awen.services.lingxing_operate")
 
 PUT_SP_CAMPAIGN_ROUTE = "/basicOpen/adReport/manage/putSpCampaign"
 _RISK_THRESHOLD = 0.5
@@ -194,7 +197,7 @@ async def send_alert(text: str) -> None:
         async with httpx.AsyncClient(timeout=8) as c:
             await c.post(url, json={"msg_type": "text", "content": {"text": f"[领星操作] {text}"}})
     except Exception:
-        pass
+        logger.debug("c.post 失败（旁路，已忽略）", exc_info=True)
 
 
 # --- operate switch ---------------------------------------------------------
@@ -227,7 +230,7 @@ def _recently_touched_sync(sid: Any, days: int) -> Dict[str, str]:
             if datetime.fromisoformat(ts) < cutoff:
                 continue
         except Exception:
-            pass
+            logger.debug("if datetime.fromisoformat 失败（旁路，已忽略）", exc_info=True)
         k = str(intent.get("target_id") or intent.get("keyword_text") or "")
         if k:
             out[k] = ts
@@ -317,7 +320,7 @@ def _parse_review(text: str) -> Dict[str, Any]:
         return {"approve": False, "risk_score": 1.0, "reasons": "复核响应解析失败（fail-closed 视为不通过）"}
 
 
-# 可手动选择的 CLI 复核 agent。2026-08-06：ivyea-agent 走上面的 http/agent 分支，
+# 可手动选择的 CLI 复核 agent。2026-08-06：awen-agent 走上面的 http/agent 分支，
 # 这里只列外部 CLI；hermes 保留为手动可选项，但已不是任何默认。
 _CLI_AGENTS = ("claude", "codex", "hermes")
 
@@ -333,10 +336,10 @@ def _custom_models() -> Dict[str, Dict[str, Any]]:
 def available_providers() -> List[Dict[str, Any]]:
     """All selectable review providers + availability (for the config UI)."""
     from app.services.runners import _find_bin
-    from app.services import ivyea_agent_service as _ivyea
-    ivyea_status = _ivyea.availability()
+    from app.services import awen_agent_service as _awen
+    awen_status = _awen.availability()
     out = [
-        {"id": "ivyea-agent", "label": "IvyeaAgent", "kind": "agent", "ok": bool(ivyea_status.get("available"))},
+        {"id": "awen-agent", "label": "awenAgent", "kind": "agent", "ok": bool(awen_status.get("available"))},
         {"id": "assistant", "label": "全局兜底大模型", "kind": "http", "ok": bool(_ai.assistant_text_cfg().get("api_key"))},
         {"id": "deepseek", "label": "DeepSeek", "kind": "http", "ok": bool(_ai._deepseek_key())},
         {"id": "apimart", "label": "Apimart(Claude)", "kind": "http", "ok": bool(_ai._apimart_key())},
@@ -416,7 +419,7 @@ approve=是否批准；risk_score=重大风险概率(越高越危险)；理由�
 
 
 async def review_intent(intent: Dict[str, Any]) -> Dict[str, Any]:
-    provs = str(_hs.get("lingxing_review_providers") or "ivyea-agent,deepseek,assistant").replace("，", ",").split(",")
+    provs = str(_hs.get("lingxing_review_providers") or "awen-agent,deepseek,assistant").replace("，", ",").split(",")
     # the three personas are independent by design — run them concurrently
     tasks = []
     for i, (persona, framing) in enumerate(_REVIEWERS):
@@ -429,6 +432,93 @@ async def review_intent(intent: Dict[str, Any]) -> Dict[str, Any]:
 
 
 # --- ticket lifecycle -------------------------------------------------------
+# --- 直调「快车道」 ----------------------------------------------------------
+# 驾驶舱要能顺手改一个预算/竞价。走完整的三重 LLM 复核要十几秒，那就没人会用，
+# 于是运营又回到亚马逊后台去改 —— 一个没人用的安全流程，安全性等于零。
+#
+# 所以给**小幅止血动作**开一条快车道：跳过 LLM 复核，直接进"等人确认"。
+# 三条约束是硬的，写在代码里，任何调用方都绕不过：
+#
+#   ① **方向必须是止血**：数值只能调小，状态只能转 paused。
+#      放量（提预算 / 加 bid / enable）永远走全复核 —— 花钱的方向上，
+#      慢十几秒不算代价。
+#   ② **幅度 ≤ fast_lane_max_pct**（默认 15%）。
+#   ③ **只在「逐项确认」档生效**。自主执行档下没有人看着，复核就是最后一道闸，
+#      那时候省掉它等于无人监督地改线上数据。
+#
+# 没被跳过的只有确定性护栏（check_guardrails）和人工确认 —— 这两道**一道没少**，
+# 回滚快照照常在执行前抓。
+_STANCH_STATE = "paused"
+
+
+def fast_lane_decision(intent: Dict[str, Any]) -> Dict[str, Any]:
+    """判断这个意图能不能免 LLM 复核。返回 {eligible, reason, checks}。"""
+    checks: List[Dict[str, Any]] = []
+
+    def add(name: str, ok: bool, detail: str) -> bool:
+        checks.append({"name": name, "ok": bool(ok), "detail": detail})
+        return bool(ok)
+
+    cfg = _hs.load()
+    ok = add("switch", bool(cfg.get("lingxing_fast_lane_enabled")),
+             "快车道已开启" if cfg.get("lingxing_fast_lane_enabled") else "快车道未开启（默认关）")
+    # ③ 只在「逐项确认」档生效
+    ok = add("human_gate", bool(cfg.get("lingxing_operate_require_human", True)),
+             "逐项确认档，人还在闸口上" if cfg.get("lingxing_operate_require_human", True)
+             else "自主执行档：无人确认时不能再省掉复核") and ok
+
+    op = OP_TYPES.get(intent.get("op_type") or "")
+    ok = add("op_supported", bool(op) and op["category"] != "add",
+             "改数值/状态类操作" if (op and op["category"] != "add")
+             else "加词/否词不走快车道（没有幅度可度量）") and ok
+    if not op or op["category"] == "add":
+        return {"eligible": False, "reason": "操作类型不支持快车道", "checks": checks}
+
+    nf = op["num_field"]
+    change = intent.get("change") or {}
+    before = intent.get("before") or {}
+    new_state = change.get("state")
+
+    # ① 方向必须是止血
+    direction_ok, direction_detail = False, "没有可判定方向的改动"
+    if new_state and new_state != _STANCH_STATE:
+        direction_ok, direction_detail = False, f"状态改为 {new_state} 属于放量，走全复核"
+    elif change.get(nf) is not None and before.get(nf) not in (None, ""):
+        try:
+            old, new = float(before[nf]), float(change[nf])
+            direction_ok = new < old
+            direction_detail = (f"{op['num_label']} {old} → {new}（调小，止血）" if direction_ok
+                                else f"{op['num_label']} {old} → {new}（不是调小）")
+        except (TypeError, ValueError):
+            direction_ok, direction_detail = False, "数值无法比较"
+    elif new_state == _STANCH_STATE:
+        direction_ok, direction_detail = True, "暂停投放（止血）"
+    elif change.get(nf) is not None:
+        direction_ok, direction_detail = False, "拿不到当前值，无法确认是调小"
+    ok = add("stanch_direction", direction_ok, direction_detail) and ok
+
+    # ② 幅度封顶
+    max_pct = float(cfg.get("lingxing_fast_lane_max_pct") or 15)
+    pct_ok, pct_detail = True, "仅状态变更，无幅度"
+    if change.get(nf) is not None and before.get(nf):
+        try:
+            old, new = float(before[nf]), float(change[nf])
+            pct = abs(new - old) / old * 100 if old else 999
+            pct_ok = pct <= max_pct
+            pct_detail = f"幅度 {pct:.1f}% {'≤' if pct_ok else '>'} 上限 {max_pct:g}%"
+        except (TypeError, ValueError, ZeroDivisionError):
+            pct_ok, pct_detail = False, "无法计算幅度"
+    ok = add("magnitude", pct_ok, pct_detail) and ok
+
+    failed = [c["detail"] for c in checks if not c["ok"]]
+    return {
+        "eligible": bool(ok),
+        "reason": "小幅止血动作，免 AI 复核，仍需你点确认" if ok else "；".join(failed),
+        "checks": checks,
+        "max_pct": max_pct,
+    }
+
+
 def _verdict_status(reviewed_ok: bool, guard_ok: bool) -> str:
     if not guard_ok:
         return "guardrail_blocked"
@@ -462,7 +552,7 @@ async def _refresh_live_before(intent: Dict[str, Any]) -> None:
             intent["change_pct"] = round(
                 (float(change[nf]) - float(before[nf])) / float(before[nf]) * 100, 1)
         except (TypeError, ValueError, ZeroDivisionError):
-            pass
+            logger.debug("intent 失败（旁路，已忽略）", exc_info=True)
 
 
 async def _process_ticket(tid: str) -> None:
@@ -483,7 +573,15 @@ async def _process_ticket(tid: str) -> None:
             t["status"] = "guardrail_blocked"
             _save(t)
             return
+        fast = fast_lane_decision(intent)
+        t["fast_lane"] = fast
         _save(t)
+        if fast["eligible"]:
+            # 护栏已过 + 方向是止血 + 幅度小 + 还得人点确认 → 不再花十几秒过 LLM。
+            t["reviews"] = None
+            t["status"] = "awaiting_human"
+            _save(t)
+            return
         rev = await review_intent(intent)
         t["reviews"] = rev
         t["status"] = _verdict_status(rev["approved"], guard["ok"])
@@ -503,6 +601,7 @@ async def create_ticket(intent: Dict[str, Any], source: str = "manual") -> Dict[
         "id": uuid.uuid4().hex[:12], "created_at": _now(), "source": source,
         "status": "reviewing", "intent": intent, "reviews": None, "guardrail": None,
         "snapshot": None, "result": None, "decided_by": "", "error": "",
+        "fast_lane": None,
     }
     _save(t)
     asyncio.create_task(_process_ticket(t["id"]), name=f"lingxing-ticket-{t['id']}")
@@ -714,7 +813,21 @@ async def batch_tickets_action(action: str, ids: List[str], *,
 
 
 async def confirm_ticket(tid: str, decided_by: str = "human", dry_run: bool = False) -> Dict[str, Any]:
-    """Human-confirm + execute. Re-checks every gate at execution time."""
+    """确认并执行。执行前把每一道闸重新过一遍。
+
+    `decided_by` 不再只是一条审计字段，它现在**决定这次确认算不算数**：
+
+      · `human`  —— 永远允许（人点的）
+      · 其它（`agent` / 自动化）—— 只有「自主执行」档才允许
+
+    档位复用已有的两个设置，不新造概念（原来 `lingxing_operate_require_human`
+    只在状态接口里显示过，从没有任何地方执行它 —— 一个写着"需要人工确认"却不生效
+    的开关，比没有这个开关更危险）：
+
+      只读     lingxing_operate_enabled = false
+      逐项确认 enabled + require_human = true   （默认，真实账号该用这档）
+      自主执行 enabled + require_human = false  （测试账号 / 明确放开时）
+    """
     async with _op_lock:
         t = get_ticket(tid)
         if not t:
@@ -723,6 +836,10 @@ async def confirm_ticket(tid: str, decided_by: str = "human", dry_run: bool = Fa
             raise _gw.LingXingError(f"工单状态 {t['status']} 不可确认")
         if not _gw.is_operate_active():
             raise _gw.LingXingError("操作开关未开启（或已超时失效）")
+        if decided_by != "human" and bool(_hs.get("lingxing_operate_require_human", True)):
+            raise _gw.LingXingError(
+                "当前是「逐项确认」档：写操作必须由人确认。"
+                "要让 Agent 自主执行，请到「系统配置 → 领星」把执行档位切到「自主执行」。")
         # re-verify guardrails at execution time (defence in depth)
         guard = check_guardrails(t["intent"])
         if not guard["ok"]:

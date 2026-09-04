@@ -43,14 +43,6 @@ export type CursorPermissionsState = {
   skipPermissions: boolean;
 };
 
-export type CodeEditorSettingsState = {
-  theme: 'dark' | 'light';
-  wordWrap: boolean;
-  showMinimap: boolean;
-  lineNumbers: boolean;
-  fontSize: string;
-};
-
 export type SettingsStoragePayload = {
   claude: ClaudePermissionsState & { projectSortOrder: ProjectSortOrder; lastUpdated: string };
   cursor: CursorPermissionsState & { lastUpdated: string };

@@ -54,6 +54,8 @@ interface ChatComposerProps {
   handleGrantToolPermission: (suggestion: { entry: string; toolName: string }) => { success: boolean };
   claudeStatus: { text: string; tokens: number; can_interrupt: boolean } | null;
   isLoading: boolean;
+  /** 还没被这一轮读到的追加指令 —— 画在输入框上方，让人看得见自己那句话去哪了。 */
+  followUpQueue?: { id: string; text: string; state: 'sending' | 'injected' | 'queued' }[];
   onAbortSession: () => void;
   provider: Provider | string;
   permissionMode: PermissionMode | string;
@@ -109,6 +111,7 @@ export default function ChatComposer({
   handleGrantToolPermission,
   claudeStatus,
   isLoading,
+  followUpQueue = [],
   onAbortSession,
   provider,
   permissionMode,
@@ -244,6 +247,32 @@ export default function ChatComposer({
           frequentCommands={frequentCommands}
         />
 
+        {followUpQueue.length > 0 && (
+          /* 说出去的话去哪了必须看得见：已插进这一轮，还是排到下一轮。 */
+          <div className="mb-2 flex flex-wrap gap-1.5">
+            {followUpQueue.map((item) => (
+              <span
+                key={item.id}
+                title={item.text}
+                className={`inline-flex max-w-full items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs ${
+                  item.state === 'injected'
+                    ? 'border-primary/40 bg-primary/10 text-primary'
+                    : 'border-border/60 bg-muted/50 text-muted-foreground'
+                }`}
+              >
+                <span className={`h-1.5 w-1.5 flex-shrink-0 rounded-full ${
+                  item.state === 'injected' ? 'bg-primary' : 'bg-muted-foreground/60'
+                } ${item.state === 'sending' ? 'animate-pulse' : ''}`} />
+                <span className="flex-shrink-0">
+                  {item.state === 'injected' ? '已插入本轮'
+                    : item.state === 'queued' ? '本轮结束后发' : '正在送…'}
+                </span>
+                <span className="truncate">{item.text}</span>
+              </span>
+            ))}
+          </div>
+        )}
+
         <PromptInput
           onSubmit={onSubmit as (event: FormEvent<HTMLFormElement>) => void}
           status={isLoading ? 'streaming' : 'ready'}
@@ -325,11 +354,11 @@ export default function ChatComposer({
                 permissionMode === 'default'
                   ? 'border-border/60 bg-muted/50 text-muted-foreground hover:bg-muted'
                   : permissionMode === 'acceptEdits'
-                    ? 'border-green-300/60 bg-green-50 text-green-700 hover:bg-green-100 dark:border-green-600/40 dark:bg-green-900/15 dark:text-green-300 dark:hover:bg-green-900/25'
+                    ? 'border-green-300/60 bg-green-50 text-green-700 hover:bg-green-100 border-green-600/40 bg-green-900/15 text-green-300 hover:bg-green-900/25'
                     : permissionMode === 'auto'
-                      ? 'border-blue-300/60 bg-blue-50 text-blue-700 hover:bg-blue-100 dark:border-blue-600/40 dark:bg-blue-900/15 dark:text-blue-300 dark:hover:bg-blue-900/25'
+                      ? 'border-blue-300/60 bg-blue-50 text-blue-700 hover:bg-blue-100 border-blue-600/40 bg-blue-900/15 text-blue-300 hover:bg-blue-900/25'
                       : permissionMode === 'bypassPermissions'
-                        ? 'border-orange-300/60 bg-orange-50 text-orange-700 hover:bg-orange-100 dark:border-orange-600/40 dark:bg-orange-900/15 dark:text-orange-300 dark:hover:bg-orange-900/25'
+                        ? 'border-orange-300/60 bg-orange-50 text-orange-700 hover:bg-orange-100 border-orange-600/40 bg-orange-900/15 text-orange-300 hover:bg-orange-900/25'
                         : 'border-primary/20 bg-primary/5 text-primary hover:bg-primary/10'
               }`}
               title={t('input.clickToChangeMode')}
@@ -372,7 +401,7 @@ export default function ChatComposer({
               <MessageSquareIcon />
               {slashCommandsCount > 0 && (
                 <span
-                  className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-primary text-[10px] font-bold text-primary-foreground"
+                  className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-primary text-[length:var(--fs-10)] font-bold text-primary-foreground"
                 >
                   {slashCommandsCount}
                 </span>
@@ -399,8 +428,16 @@ export default function ChatComposer({
             >
               {sendByCtrlEnter ? t('input.hintText.ctrlEnter') : t('input.hintText.enter')}
             </div>
+            {/*
+              * **忙碌时它仍然是发送键**（追加给正在跑的这一轮），不是一个禁用的方块。
+              * 此前 status=streaming 让它画成方块、又被 disabled 掉 —— 看着像停止、
+              * 点了没反应，想补一句只能干等到收尾或者掐掉重说。停止另有其人：
+              * 上面那条状态栏里的 STOP（它是真停止，会中止轮次）。
+              */}
             <PromptInputSubmit
-              disabled={!input.trim() || isLoading}
+              status="ready"
+              disabled={!input.trim()}
+              title={isLoading ? '追加给正在跑的这一轮（Enter）' : undefined}
               className="h-10 w-10 sm:h-10 sm:w-10"
             />
           </div>

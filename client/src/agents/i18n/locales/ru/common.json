@@ -56,8 +56,6 @@
   "common": {
     "language": "Язык",
     "theme": "Тема",
-    "darkMode": "Темная тема",
-    "lightMode": "Светлая тема",
     "name": "Имя",
     "description": "Описание",
     "enabled": "Включено",

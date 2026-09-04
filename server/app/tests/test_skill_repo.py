@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -16,8 +17,8 @@ def sandbox_skills(tmp_path: Path, monkeypatch):
     studio = tmp_path / "skill-studio"
     skills.mkdir()
     studio.mkdir()
-    monkeypatch.setenv("IVYEA_OPS_SKILLS_ROOT", str(skills))
-    monkeypatch.setenv("IVYEA_OPS_STUDIO_ROOT", str(studio))
+    monkeypatch.setenv("AWENOPS_SKILLS_ROOT", str(skills))
+    monkeypatch.setenv("AWENOPS_STUDIO_ROOT", str(studio))
 
     # Reload modules so they pick up the new env.
     import importlib
@@ -82,6 +83,7 @@ def test_path_traversal_is_rejected(sandbox_skills):
     assert e.value.status_code == 400
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="creating symlinks on Windows requires elevated privileges")
 def test_symlink_escape_is_rejected(sandbox_skills, tmp_path):
     skills, sr = sandbox_skills
     skill_dir = _make_skill(skills, "dogfood")

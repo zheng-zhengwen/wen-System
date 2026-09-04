@@ -19,8 +19,8 @@ const FALLBACK_DEFAULT_MODEL: Record<LLMProvider, string> = {
   // (config.yaml primary) and self-heals once the catalog loads.
   hermes: 'default',
   agy: 'default',
-  // ivyea 的主脑在 CLI 内配置（ivyea /model），chat -p 无 -m 覆盖，只有 default。
-  ivyea: 'default',
+  // awen 的主脑在 CLI 内配置（awen /model），chat -p 无 -m 覆盖，只有 default。
+  awen: 'default',
 };
 
 const getPermissionModesForProvider = (provider: LLMProvider): PermissionMode[] => {
@@ -33,8 +33,8 @@ const getPermissionModesForProvider = (provider: LLMProvider): PermissionMode[] 
   if (provider === 'opencode' || provider === 'hermes' || provider === 'agy') {
     return ['default'];
   }
-  if (provider === 'ivyea') {
-    // default → --permission-mode policy（按 ~/.ivyea/policy.json 判定）；
+  if (provider === 'awen') {
+    // default → --permission-mode policy（按 ~/.awen/policy.json 判定）；
     // bypassPermissions → --approve-all（全放行）。
     return ['default', 'bypassPermissions'];
   }
@@ -65,13 +65,13 @@ type ChangeActiveModelApiResponse = {
   };
 };
 
-// A single-provider synthetic project (Ivyea Agent / Hermes 会话 / Antigravity):
+// A single-provider synthetic project (awen Agent / Hermes 会话 / Antigravity):
 // all its sessions belong to one non-claude provider and the claude `sessions`
 // bucket is empty. Regular code projects return null (don't force a provider).
 const deriveSyntheticProjectProvider = (project: Project | null): LLMProvider | null => {
   if (!project) return null;
   if ((project.sessions?.length ?? 0) > 0) return null;
-  if ((project.ivyeaSessions?.length ?? 0) > 0) return 'ivyea';
+  if ((project.awenSessions?.length ?? 0) > 0) return 'awen';
   if ((project.hermesSessions?.length ?? 0) > 0) return 'hermes';
   if ((project.agySessions?.length ?? 0) > 0) return 'agy';
   return null;
@@ -104,16 +104,16 @@ export function useChatProviderState({ selectedSession, selectedProject }: UseCh
   const [agyModel, setAgyModel] = useState<string>(() => {
     return localStorage.getItem('agy-model') || FALLBACK_DEFAULT_MODEL.agy;
   });
-  const [ivyeaModel, setIvyeaModel] = useState<string>(() => {
-    return localStorage.getItem('ivyea-model') || FALLBACK_DEFAULT_MODEL.ivyea;
+  const [awenModel, setawenModel] = useState<string>(() => {
+    return localStorage.getItem('awen-model') || FALLBACK_DEFAULT_MODEL.awen;
   });
 
   // Keep the reactive provider in sync with the opened session / project so the
   // composer placeholder + message avatar show the right agent immediately.
   // (Previously the ws handler only updated localStorage live → the correct
-  // agent/icon appeared only after a refresh re-read it; new ivyea sessions
+  // agent/icon appeared only after a refresh re-read it; new awen sessions
   // showed Claude until then.) A new session under a single-provider synthetic
-  // project (Ivyea Agent / Hermes) derives its provider from that project.
+  // project (awen Agent / Hermes) derives its provider from that project.
   useEffect(() => {
     const sessionProvider = (selectedSession?.__provider as LLMProvider | undefined) || undefined;
     const next = sessionProvider || deriveSyntheticProjectProvider(selectedProject);
@@ -171,9 +171,9 @@ export function useChatProviderState({ selectedSession, selectedProject }: UseCh
       return;
     }
 
-    if (targetProvider === 'ivyea') {
-      setIvyeaModel(model);
-      localStorage.setItem('ivyea-model', model);
+    if (targetProvider === 'awen') {
+      setawenModel(model);
+      localStorage.setItem('awen-model', model);
       return;
     }
 
@@ -182,7 +182,7 @@ export function useChatProviderState({ selectedSession, selectedProject }: UseCh
   }, []);
 
   const loadProviderModels = useCallback(async (options: { bypassCache?: boolean } = {}) => {
-    const providers: LLMProvider[] = ['claude', 'cursor', 'codex', 'gemini', 'opencode', 'hermes', 'agy', 'ivyea'];
+    const providers: LLMProvider[] = ['claude', 'cursor', 'codex', 'gemini', 'opencode', 'hermes', 'agy', 'awen'];
     const requestId = providerModelsRequestIdRef.current + 1;
     providerModelsRequestIdRef.current = requestId;
     const isHardRefresh = options.bypassCache === true;
@@ -352,17 +352,17 @@ export function useChatProviderState({ selectedSession, selectedProject }: UseCh
   }, [providerModelCatalog.agy, agyModel]);
 
   useEffect(() => {
-    const ivyea = providerModelCatalog.ivyea;
-    if (ivyea) {
-      const next = pickStoredOrCurrent('ivyea-model', ivyeaModel, ivyea);
-      if (next !== ivyeaModel) {
-        setIvyeaModel(next);
+    const awen = providerModelCatalog.awen;
+    if (awen) {
+      const next = pickStoredOrCurrent('awen-model', awenModel, awen);
+      if (next !== awenModel) {
+        setawenModel(next);
       }
-      if (localStorage.getItem('ivyea-model') !== next) {
-        localStorage.setItem('ivyea-model', next);
+      if (localStorage.getItem('awen-model') !== next) {
+        localStorage.setItem('awen-model', next);
       }
     }
-  }, [providerModelCatalog.ivyea, ivyeaModel]);
+  }, [providerModelCatalog.awen, awenModel]);
 
   useEffect(() => {
     if (!selectedSession?.id) {
@@ -484,8 +484,8 @@ export function useChatProviderState({ selectedSession, selectedProject }: UseCh
     setHermesModel,
     agyModel,
     setAgyModel,
-    ivyeaModel,
-    setIvyeaModel,
+    awenModel,
+    setawenModel,
     permissionMode,
     setPermissionMode,
     pendingPermissionRequests,

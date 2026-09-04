@@ -1,18 +1,33 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
+import { createPortal } from "react-dom";
+import { Link, useLocation } from "react-router-dom";
 import SheetSelect from "../../components/SheetSelect";
 import {
   getSettings, patchSettings, getHealth, changePassword,
   testSetting, autodetectSettings, selfCheckSettings, getAgentVersion,
-  startAgentUpgrade, getAgentUpgradeProgress,
+  startAgentUpgrade, getAgentUpgradeProgress, slotModelCatalog,
+  getFeishuStatus, feishuAction, getAmazonStatus, saveAmazonConfig, amazonAction,
   type HubSettings, type HealthResp, type TestResult, type SelfCheckResp,
+  type FeishuStatus, type FeishuPatrolJob,
+  type AmazonStatus, type AmazonMarketplace, type AmazonVerifyResp,
 } from "../../api/settings";
 import { installAgentStreamUrl } from "../../api/setup";
+import {
+  listMcpTokens, issueMcpToken, revokeMcpToken, getMcpClientConfig,
+  type McpToken, type IssuedToken,
+} from "../../api/mcp";
+import {
+  getNotifyConfig, testNotify, getBudget,
+  type NotifyConfig, type BudgetStatus,
+} from "../../api/notify";
 import { lockBodyScroll } from "../../lib/scrollLock";
 import {
   FONT_OPTIONS, ZOOM_OPTIONS, WEIGHT_OPTIONS,
   getFontId, getZoom, getWeight, applyFont, applyZoom, applyWeight,
 } from "../../lib/appearance";
+import { useAuth } from "../../App";
+import SubscriptionLogin from "../../components/settings/SubscriptionLogin";
+import { errText } from "../../lib/errText";
 
 type SaveStatus = "idle" | "saving" | "ok" | "error";
 
@@ -78,7 +93,7 @@ function TestButton({ settingKey, value, label = "测试" }: {
   const run = async () => {
     setBusy(true); setResult(null);
     try { setResult(await testSetting(settingKey, value)); }
-    catch (e: any) { setResult({ ok: false, detail: e?.response?.data?.detail || e?.message || "请求失败" }); }
+    catch (e: any) { setResult({ ok: false, detail: errText(e, "请求失败") }); }
     finally { setBusy(false); setTimeout(() => setResult(null), 12000); }
   };
   return (
@@ -111,7 +126,7 @@ function AutodetectPanel({ onApply }: {
       setSuggestions(r.suggestions);
       setSelected(new Set(Object.keys(r.suggestions)));
       setOpen(true);
-    } catch (e: any) { setErr(e?.response?.data?.detail || e?.message || "检测失败"); }
+    } catch (e: any) { setErr(errText(e, "检测失败")); }
     finally { setLoading(false); }
   };
 
@@ -210,6 +225,186 @@ function SecretInput({ value, onChange, placeholder }: { value: string; onChange
   );
 }
 
+// ── 模型名：从"背默写"变成"挑一个" ────────────────────────────────────────────
+//
+// 这四个槽位的模型名此前都是自由文本框：用户得自己记住
+// "Qwen/Qwen3-VL-30B-A3B-Instruct" 这种字符串，记错了还要等到真调用时才报错。
+// 现在按槽位去问那个端点支持哪些模型，挑一个就行。
+//
+// **手输必须留着**：中转商的 /models 会因为余额不足（实测 apimart 返回 402）、
+// 网络不通、或者压根没有这个接口而拉不到清单。那种时候下拉是空的，输入框是唯一出路。
+
+/** 视觉 / 生图模型的名字特征。用来把长清单收窄到"可能能用的那几个"。 */
+const MODEL_HINTS: Record<string, RegExp> = {
+  vision: /(vl|vision|visual|omni|gpt-4o|gpt-5|claude|gemini|glm-4v|qwen-vl|internvl|llava)/i,
+  image: /(image|img|flux|dall-?e|sd[-_.]?\d|stable-?diffusion|seedream|z-image|imagen|kolors|playground)/i,
+};
+
+function ModelNameInput({
+  slot, provider, baseUrl, apiKey, value, onChange, placeholder, hintKind, fallbackModels,
+}: {
+  /** 后端按它解析去问哪个端点：agent | assistant | vision | image。 */
+  slot: string;
+  provider: string; baseUrl: string; apiKey: string;
+  value: string; onChange: (v: string) => void;
+  placeholder?: string;
+  /** 给了就先按这类模型的名字特征过滤，可一键切回全部。 */
+  hintKind?: "vision" | "image";
+  /**
+   * 端点拉不到清单时的候选。生图这一档几乎必然走到这里 —— 实测 Apimart 的
+   * `/models` 在余额不足时返回 402，清单就是空的，而空下拉等于这个功能不存在。
+   * 只是**常见名字**，不保证对方平台支持，所以文案上要说清楚。
+   */
+  fallbackModels?: string[];
+}) {
+  const [open, setOpen] = useState(false);
+  const [models, setModels] = useState<string[] | null>(null);
+  const [source, setSource] = useState("");
+  const [err, setErr] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [onlyHinted, setOnlyHinted] = useState(!!hintKind);
+  const [popStyle, setPopStyle] = useState<CSSProperties>({});
+  const boxRef = useRef<HTMLDivElement>(null);
+  const popRef = useRef<HTMLDivElement>(null);
+
+  const load = useCallback(async (refresh: boolean) => {
+    setLoading(true); setErr("");
+    try {
+      const d = await slotModelCatalog({ slot, provider, base_url: baseUrl, api_key: apiKey, refresh });
+      setModels(d?.catalog?.models || []);
+      setSource(String(d?.catalog?.source || ""));
+      setErr(String(d?.catalog?.error || ""));
+    } catch (e: any) {
+      setModels([]);
+      setErr(errText(e, "取模型清单失败"));
+    } finally {
+      setLoading(false);
+    }
+  }, [slot, provider, baseUrl, apiKey]);
+
+  // 换了 provider / 地址 / 密钥，上一份清单就不作数了 —— 留着它会让人从 A 家的
+  // 清单里挑一个模型填进 B 家的槽位。
+  useEffect(() => { setModels(null); setOpen(false); }, [provider, baseUrl, apiKey]);
+
+  /*
+   * 清单 **portal 到 body**，而不是留在这张卡片里。
+   * 外层 `.hs-section` 是 `overflow:hidden`（它靠这个把圆角内的内容裁齐），
+   * 留在里面的绝对定位浮层会被整块切掉 —— 实测这里的清单被拦腰截断，只剩标题栏
+   * 和半行模型名，看着像"下拉坏了"。和 ContextMeter / SheetSelect 同一条路数：
+   * 量触发行的位置，用 fixed 摆上去，滚动和缩放时重量一次。
+   */
+  const place = useCallback(() => {
+    const el = boxRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    // 清单最高 = 列表 220 + 标题栏/边框余量。空间不够就翻到上面开 ——
+    // 这一项常常正好在卡片底部，永远朝下开等于永远只露出个头。
+    const maxH = 268;
+    const below = window.innerHeight - r.bottom - 12;
+    const above = r.top - 12;
+    const flipUp = below < Math.min(maxH, 160) && above > below;
+    const width = Math.round(r.width);
+    const left = Math.max(8, Math.min(Math.round(r.left), window.innerWidth - width - 8));
+    setPopStyle(flipUp
+      ? { position: "fixed", left, width, bottom: Math.round(window.innerHeight - r.top + 4),
+          maxHeight: Math.max(120, Math.round(above)) }
+      : { position: "fixed", left, width, top: Math.round(r.bottom + 4),
+          maxHeight: Math.max(120, Math.round(below)) });
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    place();
+    const onMove = () => place();
+    // capture=true：页面在 `.content` 里滚，滚动事件不冒泡到 window。
+    window.addEventListener("scroll", onMove, true);
+    window.addEventListener("resize", onMove);
+    return () => {
+      window.removeEventListener("scroll", onMove, true);
+      window.removeEventListener("resize", onMove);
+    };
+  }, [open, place, models, loading, err]);   // 清单到货后高度会变，重量一次
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Node;
+      // 浮层已经不在 boxRef 里了：少了 popRef 这一半，mousedown 会先把它收起来，
+      // 选项的 onClick 根本轮不到触发 —— 点了等于没点。
+      if (!boxRef.current?.contains(t) && !popRef.current?.contains(t)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  const toggle = () => {
+    const next = !open;
+    setOpen(next);
+    if (next && models === null && !loading) void load(false);
+  };
+
+  const usingFallback = !!(models && models.length === 0 && fallbackModels?.length);
+  const shown = (usingFallback ? fallbackModels! : (models || [])).filter((m) => {
+    if (!onlyHinted || !hintKind || usingFallback) return true;
+    return MODEL_HINTS[hintKind].test(m);
+  });
+
+  return (
+    <div className="hs-model-pick" ref={boxRef}>
+      <div className="hs-model-row">
+        <input className="hs-input" type="text" value={value} onChange={e => onChange(e.target.value)}
+          placeholder={placeholder} spellCheck={false} autoComplete="off" />
+        <button type="button" className="hs-model-btn" onClick={toggle}
+          title="列出这套账号支持的模型">{loading ? "…" : open ? "▴" : "▾"}</button>
+      </div>
+      {open && createPortal((
+        <div className="hs-model-dd" ref={popRef} style={popStyle}>
+          <div className="hs-model-dd-hd">
+            <span>
+              {loading ? "正在取清单…"
+                : usingFallback ? "常见模型名（没能问到这个平台）"
+                : source === "live" ? "实时清单"
+                : source === "cache" ? "缓存清单"
+                : models?.length ? "内置清单" : "没取到清单"}
+            </span>
+            <span className="hs-model-dd-acts">
+              {hintKind && !usingFallback && (
+                <button type="button" onClick={() => setOnlyHinted(v => !v)}>
+                  {onlyHinted ? "显示全部" : (hintKind === "vision" ? "只看视觉" : "只看生图")}
+                </button>
+              )}
+              <button type="button" onClick={() => void load(true)} disabled={loading}>刷新</button>
+            </span>
+          </div>
+          {err && (
+            <div className="hs-model-dd-err">
+              {err}<br />
+              {usingFallback
+                ? "下面是常见的模型名，不保证你这个平台支持；也可以直接把模型名填进上面的输入框。"
+                : "拉不到清单不影响使用：直接把模型名填进上面的输入框即可。"}
+            </div>
+          )}
+          {!loading && shown.length === 0 && !err && (
+            <div className="hs-model-dd-err">没有可选项{onlyHinted ? "（试试「显示全部」）" : ""}。</div>
+          )}
+          <div className="hs-model-dd-list">
+            {shown.map(m => (
+              <button key={m} type="button"
+                className={"hs-model-opt" + (m === value ? " active" : "")}
+                onClick={() => { onChange(m); setOpen(false); }}>{m}</button>
+            ))}
+          </div>
+        </div>
+      ), document.body)}
+    </div>
+  );
+}
+
 // ── LLM model block ───────────────────────────────────────────────────────────
 
 type ProviderDef = { id: string; label: string; defaultModel: string; envVar: string; hint?: string; examples?: string };
@@ -227,6 +422,11 @@ const PROVIDERS: ProviderDef[] = [
   { id: "siliconflow", label: "硅基流动",  defaultModel: "deepseek-ai/DeepSeek-V3.2",          envVar: "SILICONFLOW_API_KEY",         hint: "国内直连，有免费档，含 Qwen-VL 视觉", examples: "deepseek-ai/DeepSeek-V3.2 / Qwen/Qwen3-VL-30B-A3B-Instruct" },
   { id: "dashscope",  label: "阿里云百炼", defaultModel: "qwen-plus",                          envVar: "DASHSCOPE_API_KEY",           hint: "国内直连，qwen-vl 系列可做视觉" },
   { id: "zhipu",      label: "智谱",       defaultModel: "glm-4-plus",                         envVar: "ZHIPUAI_API_KEY",             hint: "GLM-4V-Flash 视觉免费" },
+  // GLM Coding Plan（订阅）单列两条：它的地址和普通 API **不是一个** ——
+  // 官方要求 coding 专用端点 /api/coding/paas/v4，填成通用端点不通，而报错完全
+  // 指不到"地址错了"上。把它做成可选项，用户就不必自己去翻文档拼地址。
+  { id: "zai-coding", label: "GLM Coding Plan · Z.AI", defaultModel: "glm-5.3",                envVar: "ZAI_API_KEY",                 hint: "订阅制套餐（海外站），走 coding 专用地址", examples: "glm-5.3 / glm-5.2 / glm-4.7" },
+  { id: "glm-coding", label: "GLM Coding Plan · 智谱", defaultModel: "glm-5.3",                envVar: "ZHIPUAI_API_KEY",             hint: "订阅制套餐（国内站），走 coding 专用地址", examples: "glm-5.3 / glm-5.2 / glm-4.7" },
   { id: "custom",     label: "自定义",     defaultModel: "",                                   envVar: "",                            hint: "OpenAI 兼容接口" },
 ];
 
@@ -264,7 +464,7 @@ function ProviderPicker({
           border: open ? "1px solid var(--acc)" : "1px solid var(--b)",
           background: "var(--bg2)",
           color: selected ? "var(--t)" : "var(--t3)",
-          fontSize: 12.5, fontFamily: "var(--font)", cursor: "pointer",
+          fontSize: "var(--fs-125)", fontFamily: "var(--font)", cursor: "pointer",
           outline: "none", transition: "border .12s",
         }}
       >
@@ -273,12 +473,12 @@ function ProviderPicker({
             {selected ? selected.label : "选择 Provider"}
           </span>
           {selected?.hint && (
-            <span style={{ color: "var(--t3)", fontSize: 11, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            <span style={{ color: "var(--t3)", fontSize: "var(--fs-11)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
               {selected.hint}
             </span>
           )}
         </span>
-        <span style={{ color: "var(--t3)", fontSize: 9, marginLeft: 8, flexShrink: 0 }}>▼</span>
+        <span style={{ color: "var(--t3)", fontSize: "var(--fs-9)", marginLeft: 8, flexShrink: 0 }}>▼</span>
       </button>
 
       {/* centered modal — overlay + dialog */}
@@ -306,8 +506,8 @@ function ProviderPicker({
               display: "flex", alignItems: "center", justifyContent: "space-between",
               padding: "14px 16px", borderBottom: "1px solid var(--b)",
             }}>
-              <span style={{ fontSize: 13, fontWeight: 600, color: "var(--t)" }}>选择模型 Provider</span>
-              <span onClick={() => setOpen(false)} style={{ cursor: "pointer", color: "var(--t3)", fontSize: 16, lineHeight: 1 }}>✕</span>
+              <span style={{ fontSize: "var(--fs-13)", fontWeight: 600, color: "var(--t)" }}>选择模型 Provider</span>
+              <span onClick={() => setOpen(false)} style={{ cursor: "pointer", color: "var(--t3)", fontSize: "var(--fs-16)", lineHeight: 1 }}>✕</span>
             </div>
             <div style={{ overflowY: "auto", WebkitOverflowScrolling: "touch", padding: 6 }}>
               {PROVIDERS.map(p => {
@@ -330,17 +530,17 @@ function ProviderPicker({
                         ? "color-mix(in srgb, var(--t) 7%, transparent)"
                         : "transparent",
                       color: isSel ? "var(--acc)" : "var(--t)",
-                      fontSize: 13, fontFamily: "var(--font)", cursor: "pointer",
+                      fontSize: "var(--fs-13)", fontFamily: "var(--font)", cursor: "pointer",
                       userSelect: "none", transition: "background .1s",
                     }}
                   >
                     <span style={{ flex: 1, fontWeight: isSel ? 500 : 400 }}>{p.label}</span>
                     {p.hint && (
-                      <span style={{ color: isSel ? "color-mix(in srgb, var(--acc) 70%, var(--t3))" : "var(--t3)", fontSize: 11 }}>
+                      <span style={{ color: isSel ? "color-mix(in srgb, var(--acc) 70%, var(--t3))" : "var(--t3)", fontSize: "var(--fs-11)" }}>
                         {p.hint}
                       </span>
                     )}
-                    <span style={{ width: 12, textAlign: "center", color: "var(--acc)", fontSize: 12, flexShrink: 0 }}>
+                    <span style={{ width: 12, textAlign: "center", color: "var(--acc)", fontSize: "var(--fs-12)", flexShrink: 0 }}>
                       {isSel ? "✓" : ""}
                     </span>
                   </div>
@@ -357,11 +557,17 @@ function ProviderPicker({
 function LLMModelBlock({
   title, hint,
   providerKey, modelKey, apiKeyKey, baseUrlKey,
+  slot, hintKind, inherit,
   vals, set,
 }: {
   title: string; hint?: string;
   providerKey: keyof HubSettings; modelKey: keyof HubSettings;
   apiKeyKey: keyof HubSettings; baseUrlKey: keyof HubSettings;
+  /** 给了就把模型名换成可选清单（后端按 slot 解析去问哪个端点）。 */
+  slot?: string;
+  hintKind?: "vision" | "image";
+  /** 「沿用某某账号」：一键把 provider + 地址 + 密钥抄过来，只剩挑一个模型。 */
+  inherit?: { label: string; title?: string; run: () => void }[];
   vals: HubSettings;
   set: <K extends keyof HubSettings>(k: K, v: HubSettings[K]) => void;
 }) {
@@ -373,10 +579,24 @@ function LLMModelBlock({
 
   return (
     <div>
-      <div style={{ fontSize: 11, color: "var(--t2)", fontWeight: 600, marginBottom: 10 }}>
+      <div style={{ fontSize: "var(--fs-11)", color: "var(--t2)", fontWeight: 600, marginBottom: 10 }}>
         {title}
-        {hint && <span style={{ fontWeight: 400, color: "var(--t3)", marginLeft: 8 }}>{hint}</span>}
+        {hint && <span className="hs-inline-hint" style={{ fontWeight: 400, color: "var(--t3)", marginLeft: 8 }}>{hint}</span>}
       </div>
+
+      {inherit && inherit.length > 0 && (
+        /*
+         * 每个槽位都要填 provider + 模型 + key + 地址四样，是"配置复杂"的大头。
+         * 大多数人其实就是想用和主脑同一套账号 —— 那就给一键抄过来。
+         */
+        <div className="hs-inherit">
+          <span>快速配置：</span>
+          {inherit.map(it => (
+            <button key={it.label} type="button" className="hs-inherit-btn"
+              title={it.title} onClick={it.run}>{it.label}</button>
+          ))}
+        </div>
+      )}
 
       <div className="hs-label" style={{ marginBottom: 6 }}>选择 Provider</div>
       <ProviderPicker
@@ -389,13 +609,27 @@ function LLMModelBlock({
       />
 
       {provider && (
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 10, alignItems: "end" }}>
+        /* 用 .hs-row2 而不是内联 grid：这一页别处的两列都靠它，而它带着
+           `@media(max-width:600px)` 收成单列的规则 —— 内联样式媒体查询管不着，
+           手机上就会挤成一个 70px 宽的模型名输入框。 */
+        <div className="hs-row2" style={{ marginTop: 10 }}>
           <Field label="模型名称" hint={info?.examples ? `可用：${info.examples}` : (info?.defaultModel ? `推荐：${info.defaultModel}` : undefined)}>
-            <TxtInput
-              value={model}
-              onChange={v => set(modelKey, v as HubSettings[typeof modelKey])}
-              placeholder={info?.defaultModel || "模型名称"}
-            />
+            {slot ? (
+              <ModelNameInput
+                slot={slot}
+                provider={provider} baseUrl={baseUrl} apiKey={apiKey}
+                value={model}
+                onChange={v => set(modelKey, v as HubSettings[typeof modelKey])}
+                placeholder={info?.defaultModel || "模型名称"}
+                hintKind={hintKind}
+              />
+            ) : (
+              <TxtInput
+                value={model}
+                onChange={v => set(modelKey, v as HubSettings[typeof modelKey])}
+                placeholder={info?.defaultModel || "模型名称"}
+              />
+            )}
           </Field>
           <Field label={info?.envVar || "API Key"}>
             <SecretInput
@@ -442,7 +676,7 @@ function HealthPanel() {
 
   useEffect(() => { check(); }, [check]);
 
-  type InstallableComponent = "ivyea-agent" | "legacy" | "hermes" | "gbrain" | "ollama" | "codex" | "claude" | "all";
+  type InstallableComponent = "awen-agent" | "legacy" | "hermes" | "codex" | "claude" | "all";
 
   const installComponent = useCallback((component: InstallableComponent) => {
     if (installing) return;
@@ -472,14 +706,12 @@ function HealthPanel() {
   }, [check, installing]);
 
   const rows: Array<{ label: string; key: keyof HealthResp | string; nested?: string; install?: InstallableComponent }> = [
-    { label: "IvyeaAgent · 内置服务",      key: "ivyea_agent", install: "ivyea-agent" },
+    { label: "awenAgent · 内置服务",      key: "awen_agent", install: "awen-agent" },
     { label: "AI · 文本链可用",           key: "ai_chain", nested: "text" },
     { label: "AI · 全局兜底大模型",       key: "ai_chain", nested: "global_fallback" },
     { label: "AI · 视觉识别",             key: "ai_chain", nested: "vision" },
     { label: "Apimart · 图片 / AI 服务", key: "apimart" },
     { label: "Sorftime · 市场数据",       key: "sorftime" },
-    { label: "兼容 · GBrain CLI",         key: "gbrain_bin", install: "gbrain" },
-    { label: "兼容 · Ollama Embedding",   key: "ollama", install: "ollama" },
     { label: "外部 Agent · Hermes",       key: "runners", nested: "hermes", install: "hermes" },
     { label: "外部 Agent · Codex",        key: "runners", nested: "codex", install: "codex" },
     { label: "外部 Agent · Claude",       key: "runners", nested: "claude", install: "claude" },
@@ -530,11 +762,22 @@ function HealthPanel() {
             <div key={row.label} className="hs-health-row">
               <Dot ok={item?.ok} loading={loading || (!health && !err)} />
               <span className="hs-health-label">{row.label}</span>
+              {/* 视觉是三档链，光一个绿点说不清"能到什么程度"。档位徽标让用户
+                  一眼看出自己在 T1/T2/T3，detail 里再讲这一档少了什么。 */}
+              {typeof item?.tier === "number" && item.tier > 0 && (
+                <span
+                  className="hs-tier-chip"
+                  data-tier={item.tier}
+                  title={item.tier_label || ""}
+                >
+                  T{item.tier}
+                </span>
+              )}
               <span className="hs-health-detail" title={full}>{shortDetail(full)}</span>
               {row.install && (
                 <button
                   className="hs-refresh-btn"
-                  style={{ padding: "2px 8px", fontSize: 10 }}
+                  style={{ padding: "2px 8px", fontSize: "var(--fs-10)" }}
                   disabled={!!installing}
                   // Always offer this, even when detected as installed: a broken /
                   // incompatible build (e.g. an old GBrain v0.35) reports "ok" yet
@@ -582,7 +825,7 @@ function ChangePassword() {
       setOld(""); setNext(""); setConfirm("");
       setTimeout(() => { setStatus("idle"); setMsg(""); }, 3000);
     } catch (e: any) {
-      setStatus("error"); setMsg(e?.response?.data?.detail || "修改失败");
+      setStatus("error"); setMsg(errText(e, "修改失败"));
       setTimeout(() => setStatus("idle"), 3000);
     }
   };
@@ -633,7 +876,7 @@ function AdvancedBlock({ children }: { children: React.ReactNode }) {
         <span style={{ display: "inline-block", transition: "transform .15s", transform: open ? "rotate(90deg)" : "none" }}>▶</span>
         <span className="hs-advanced-toggle-label">高级选项</span>
         <span className="hs-advanced-toggle-sub">
-          {open ? "点击收起" : "Token 监控 · Imgflow · 飞书通知 · CPU 告警 · 内嵌服务 · Kiro"}
+          {open ? "点击收起" : "Token 监控 · 内嵌服务 · Kiro · 资讯源"}
         </span>
       </button>
       {open && <div className="hs-advanced-body">{children}</div>}
@@ -649,15 +892,15 @@ function SelfCheckPanel() {
   const run = async () => {
     setBusy(true); setErr(""); setRes(null);
     try { setRes(await selfCheckSettings()); }
-    catch (e: any) { setErr(e?.response?.data?.detail || e?.message || "自检失败"); }
+    catch (e: any) { setErr(errText(e, "自检失败")); }
     finally { setBusy(false); }
   };
   return (
     <div className="card" style={{ padding: 14, marginBottom: 12 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
         <div>
-          <div style={{ fontSize: 13, fontWeight: 600, color: "var(--t)" }}>一键全部自检</div>
-          <div style={{ fontSize: 11, color: "var(--t3)", marginTop: 2 }}>
+          <div style={{ fontSize: "var(--fs-13)", fontWeight: 600, color: "var(--t)" }}>一键全部自检</div>
+          <div className="hs-inline-hint" style={{ fontSize: "var(--fs-11)", color: "var(--t3)", marginTop: 2 }}>
             对每个已配置项做一次真实在线测试，一眼看清"配了但用不了"的项。
           </div>
         </div>
@@ -668,12 +911,12 @@ function SelfCheckPanel() {
       {err && <div className="hs-test-result err" style={{ marginTop: 8 }}>✗ {err}</div>}
       {res && (
         <div style={{ marginTop: 10 }}>
-          <div style={{ fontSize: 11, color: "var(--t3)", marginBottom: 6 }}>
+          <div style={{ fontSize: "var(--fs-11)", color: "var(--t3)", marginBottom: 6 }}>
             通过 {res.ok} · 失败 {res.err} · 未配置 {res.skip} · 共 {res.total}
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
             {res.results.map((r) => (
-              <div key={r.key} style={{ display: "flex", alignItems: "baseline", gap: 8, fontSize: 11 }}>
+              <div key={r.key} style={{ display: "flex", alignItems: "baseline", gap: 8, fontSize: "var(--fs-11)" }}>
                 <span style={{ width: 14, color: r.status === "ok" ? "var(--ok,#16a34a)" : r.status === "err" ? "var(--err,#dc2626)" : "var(--t3)" }}>
                   {r.status === "ok" ? "✓" : r.status === "err" ? "✗" : "—"}
                 </span>
@@ -688,9 +931,9 @@ function SelfCheckPanel() {
   );
 }
 
-// ── IvyeaAgent version + 一键更新（后台任务 + 进度条，不再阻塞超时）──────────────
+// ── awenAgent version + 一键更新（后台任务 + 进度条，不再阻塞超时）──────────────
 const _PHASE_LABEL: Record<string, string> = {
-  preparing: "准备中…", downloading: "拉取最新 IvyeaAgent…（可能需要 1–2 分钟）",
+  preparing: "准备中…", downloading: "拉取最新 awenAgent…（可能需要 1–2 分钟）",
   restarting: "重启本机服务…", done: "完成", error: "失败",
 };
 
@@ -728,7 +971,7 @@ function AgentUpdateRow() {
           setVer(p.after || ver);
           if (p.ok) load();   // 刷新 最新版/有更新 徽标
           setMsg(p.ok
-            ? { ok: true, text: p.note ? p.note                               // frozen: 随 IvyeaOps 更新的说明
+            ? { ok: true, text: p.note ? p.note                               // frozen: 随 awenops 更新的说明
                 : (p.before === p.after ? `已是最新（${p.after || "未知"}）` : `已更新 ${p.before || "?"} → ${p.after || "?"}`) }
             : { ok: false, text: p.note || p.error || "更新失败" });
         }
@@ -737,40 +980,40 @@ function AgentUpdateRow() {
   };
 
   const run = async () => {
-    if (!confirm("将从 GitHub 拉取最新 IvyeaAgent 并重启本机服务（约 1–2 分钟），期间右下角 Agent 会短暂中断。继续？")) return;
+    if (!confirm("将从 GitHub 拉取最新 awenAgent 并重启本机服务（约 1–2 分钟），期间右下角 Agent 会短暂中断。继续？")) return;
     setBusy(true); setMsg(null); setPercent(0); setPhase("preparing");
     try {
       await startAgentUpgrade();
       poll();
     } catch (e: any) {
       setBusy(false);
-      setMsg({ ok: false, text: e?.response?.data?.detail || e?.message || "启动更新失败" });
+      setMsg({ ok: false, text: errText(e, "启动更新失败") });
     }
   };
 
   return (
     <div className="hs-agent-card">
       <div className="hs-agent-card-title">版本与更新
-        {hasUpd && <span style={{ marginLeft: 8, fontSize: 10, color: "#fff", background: "#dc2626", borderRadius: 8, padding: "1px 7px" }}>有新版</span>}
+        {hasUpd && <span style={{ marginLeft: 8, fontSize: "var(--fs-10)", color: "#fff", background: "#dc2626", borderRadius: 8, padding: "1px 7px" }}>有新版</span>}
       </div>
       <div className="hs-agent-card-desc">
-        当前 IvyeaAgent 版本 <b style={{ color: "var(--t)" }}>{ver || "未知/未运行"}</b>
+        当前 awenAgent 版本 <b style={{ color: "var(--t)" }}>{ver || "未知/未运行"}</b>
         {latest && <> · 最新 <b style={{ color: hasUpd ? "#dc2626" : "var(--t)" }}>{latest}</b></>}
         {!latestKnown
           ? "（暂时无法连 GitHub 检查最新版，可能网络问题，稍后再试）。"
           : hasUpd
             ? (frozen
-                ? "，有新版：内置 IvyeaAgent 随 IvyeaOps 一起更新——请用左下角「更新」升级 IvyeaOps 即可获得。"
+                ? "，有新版：内置 awenAgent 随 awenops 一起更新——请用左下角「更新」升级 awenops 即可获得。"
                 : "，点「检查并更新」升级。")
             : "（已是最新）。"}
-        {frozen && <>{" "}<span style={{ color: "var(--t3)" }}>（内置版本，随 IvyeaOps 更新）</span></>}
+        {frozen && <>{" "}<span style={{ color: "var(--t3)" }}>（内置版本，随 awenops 更新）</span></>}
       </div>
       {busy && (
         <div style={{ margin: "8px 0" }}>
           <div style={{ height: 6, borderRadius: 3, background: "var(--line,#e5e7eb)", overflow: "hidden" }}>
             <div style={{ height: "100%", width: `${Math.max(percent, 8)}%`, background: "var(--acc,#16a34a)", transition: "width .4s ease" }} />
           </div>
-          <div style={{ fontSize: 10, color: "var(--t3)", marginTop: 4 }}>{_PHASE_LABEL[phase] || "更新中…"}（{percent}%）</div>
+          <div style={{ fontSize: "var(--fs-10)", color: "var(--t3)", marginTop: 4 }}>{_PHASE_LABEL[phase] || "更新中…"}（{percent}%）</div>
         </div>
       )}
       <div className="hs-test-row" style={{ marginTop: 6 }}>
@@ -792,17 +1035,16 @@ const EMPTY: HubSettings = {
   assistant_provider: "", assistant_model: "", assistant_api_key: "", assistant_base_url: "",
   assistant_vision_model: "",
   vision_provider: "", vision_model: "", vision_api_key: "", vision_base_url: "",
-  ivyea_agent_url: "http://127.0.0.1:8765", ivyea_agent_token: "", ivyea_agent_auto_start: true,
-  ivyea_agent_provider: "", ivyea_agent_model: "", ivyea_agent_api_key: "", ivyea_agent_base_url: "",
+  awen_agent_url: "http://127.0.0.1:8765", awen_agent_token: "", awen_agent_auto_start: true,
+  awen_agent_provider: "", awen_agent_model: "", awen_agent_api_key: "", awen_agent_base_url: "",
   image_model: "", image_api_key: "", image_base_url: "",
-  gbrain_embed_provider: "", gbrain_embed_model: "", gbrain_embed_api_key: "",
   apimart_key: "", apimart_base: "https://api.apimart.ai/v1",
-  text_ai_providers: "ivyea-agent,assistant,deepseek,codex,claude",
+  text_ai_providers: "awen-agent,assistant,deepseek,codex,claude",
   vision_ai_providers: "openai,assistant", deepseek_api_key: "", news_feeds: "",
   sorftime_key: "", sif_key: "", sellersprite_key: "",
-  imgflow_url: "http://127.0.0.1:3001",
-  gbrain_bin: "", brain_root: "", openai_api_key: "",
+  brain_root: "", openai_api_key: "",
   alert_webhook: "", alert_app_id: "", alert_app_secret: "", alert_chat_id: "",
+  alert_feishu_domain: "feishu",
   alert_threshold: 80, alert_sustain: 5, alert_cooldown: 30,
   dashboard_url: "", terminal_url: "",
   hermes_bin: "", codex_bin: "", claude_bin: "", kiro_cli_bin: "",
@@ -810,18 +1052,989 @@ const EMPTY: HubSettings = {
   kiro_gateway_db: "", kiro_cli_db: "", kiro_cli_sessions_dir: "",
   claude_projects_dir: "", hermes_node_bin: "", bun_bin: "",
   autofix_enabled: false,
+  skill_market_enabled: false,
+  skill_market_url: "",
+  skill_market_pubkey: "",
+  skill_market_allow_class_b: false,
+  notify_webhook: "",
+  notify_events: "",
+  ai_budget_monthly_usd: 0,
 };
 
 // ── 外观 / 显示：字体族 + 全局字号（即时生效 + localStorage，无后端）───────────────
+/** 通知渠道与 AI 预算。管理员专属；非管理员拿到 403 就整块不渲染。 */
+/** 亚马逊官方 API（SP-API + Ads API）。
+ *
+ *  为什么在"这台机器没有卖家账号"的情况下也要有这一块：用这套系统的人有账号。
+ *  凭据能填、数据源能接、规则能吃到官方数据，不该等某台机器恰好有账号才开始做。
+ *
+ *  凭据只存 awenAgent 一侧（~/.awen/.env），ops 不留副本 —— 与飞书那组不同，
+ *  这里没有"agent 挂了也要能用"的场景，取数本来就是 agent 干的活。
+ */
+function AmazonSection() {
+  const [st, setSt] = useState<AmazonStatus | null>(null);
+  const [busy, setBusy] = useState("");
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [steps, setSteps] = useState<AmazonVerifyResp["steps"]>(undefined);
+  const [profiles, setProfiles] = useState<AmazonVerifyResp["profiles"]>(undefined);
+  const [cred, setCred] = useState({ client_id: "", client_secret: "", refresh_token: "" });
+  const [adsCred, setAdsCred] = useState({ ads_client_id: "", ads_client_secret: "", ads_refresh_token: "" });
+  const [sellerId, setSellerId] = useState("");
+  const [rows, setRows] = useState<AmazonMarketplace[]>([]);
+  const [adsOwnApp, setAdsOwnApp] = useState(false);
+
+  const reload = useCallback(async () => {
+    try {
+      const s = await getAmazonStatus();
+      setSt(s);
+      setRows(s.marketplaces || []);
+      setSellerId(s.seller_id || "");
+      setAdsOwnApp(!!s.ads_uses_own_app);
+    } catch (e: any) {
+      setSt({ ok: false, error: errText(e, "读取失败") });
+    }
+  }, []);
+  useEffect(() => { void reload(); }, [reload]);
+
+  const run = async (name: string, fn: () => Promise<void>) => {
+    setBusy(name); setMsg(null);
+    try { await fn(); } catch (e: any) { setMsg({ ok: false, text: errText(e, "操作失败") }); }
+    finally { setBusy(""); }
+  };
+  const flash = (ok: boolean, text: string) => {
+    setMsg({ ok, text });
+    if (ok) setTimeout(() => setMsg(null), 8000);
+  };
+
+  const save = () => run("save", async () => {
+    // 密钥留空 = 不改（agent 侧同样按"空 = 不动"处理）：
+    // 打开配置页什么都没干、保存一下就把凭据清空，是最不能容忍的一种"顺手"。
+    const body: Record<string, unknown> = {
+      ...Object.fromEntries(Object.entries(cred).filter(([, v]) => v)),
+      ...Object.fromEntries(Object.entries(adsCred).filter(([, v]) => v)),
+      seller_id: sellerId,
+      marketplaces: rows.filter((r) => r.marketplace_id),
+    };
+    const r = await saveAmazonConfig(body);
+    if (r.ok === false) { flash(false, r.error || "保存失败"); return; }
+    setCred({ client_id: "", client_secret: "", refresh_token: "" });
+    setAdsCred({ ads_client_id: "", ads_client_secret: "", ads_refresh_token: "" });
+    flash(true, "已保存（密钥已加密存入 awenAgent，输入框按惯例清空）");
+    await reload();
+  });
+
+  const verify = () => run("verify", async () => {
+    const r = await amazonAction("verify");
+    setSteps(r.steps || []);
+    flash(!!r.ok, r.ok ? "全部通过" : "有步骤没通过，看下面逐步结果");
+    await reload();
+  });
+
+  const loadProfiles = () => run("profiles", async () => {
+    const r = await amazonAction("profiles");
+    setProfiles(r.profiles || []);
+    if (!r.ok) flash(false, r.error || "取广告档案失败");
+  });
+
+  const setRow = (i: number, patch: Partial<AmazonMarketplace>) =>
+    setRows(rows.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
+  const addRow = () => setRows([...rows, { sid: "", marketplace_id: "", name: "", ads_profile_id: "" }]);
+  const dropRow = (i: number) => setRows(rows.filter((_, idx) => idx !== i));
+
+  const catalog = (st?.catalog || []).map((c) => ({
+    value: c.marketplace_id, label: `${c.country}（${c.region.toUpperCase()}）`,
+  }));
+
+  return (
+    <Section
+      title="亚马逊官方 API"
+      desc="SP-API（库存 / 订单 / 价格）+ Ads API（广告）。填完即用：巡检规则会自动改吃官方数据，官方优先、领星兜底。"
+      keys={[]} vals={{}} onSave={async () => { await save(); }}
+    >
+      <div className="hs-caps">
+        <div className={"hs-cap" + (st?.configured ? " hs-cap-ok" : "")}>
+          <Dot ok={!!st?.configured} /><span>SP-API 凭据</span>
+        </div>
+        <div className={"hs-cap" + (st?.ads_configured ? " hs-cap-ok" : "")}>
+          <Dot ok={!!st?.ads_configured} /><span>广告 API 凭据</span>
+        </div>
+        <div className={"hs-cap" + ((st?.marketplace_count || 0) > 0 ? " hs-cap-ok" : "")}>
+          <Dot ok={(st?.marketplace_count || 0) > 0} />
+          <span>站点 {st?.marketplace_count || 0} 个</span>
+          {(st?.with_ads_profile || 0) > 0 && <em>{st?.with_ads_profile} 个带广告档案</em>}
+        </div>
+        {st?.region && <div className="hs-cap"><span>区域 {st.region.toUpperCase()}</span></div>}
+      </div>
+      {st && st.ok === false && (
+        <div className="hs-hint" style={{ color: "var(--red)" }}>
+          {st.error}{st.hint ? ` —— ${st.hint}` : ""}
+        </div>
+      )}
+
+      <div className="hs-field-group-title">LWA 凭据（开发者中心 → 应用与授权）</div>
+      <div className="hs-hint">
+        三样都来自你自己的 SP-API 应用：<code>client_id</code>、<code>client_secret</code> 在应用详情里，
+        <code>refresh_token</code> 是卖家授权回调后拿到的那串。
+        <b>需要先有亚马逊开发者账号并通过 SP-API 应用审批</b>（周期可能数周，越早申请越好）。
+        保存后密钥不回显 —— 留空表示不改。
+      </div>
+      <div className="hs-row3">
+        <Field label={<><Tag kind="req">必填</Tag>Client ID</>} hint={st?.configured ? "已配置，留空不改" : "未配置"}>
+          <TxtInput value={cred.client_id} onChange={(v) => setCred({ ...cred, client_id: v })}
+            placeholder="amzn1.application-oa2-client..." />
+        </Field>
+        <Field label={<><Tag kind="req">必填</Tag>Client Secret</>} hint={st?.configured ? "已配置，留空不改" : "未配置"}>
+          <SecretInput value={cred.client_secret} onChange={(v) => setCred({ ...cred, client_secret: v })}
+            placeholder={st?.configured ? "••••••••（已保存）" : "amzn1.oa2-cs..."} />
+        </Field>
+        <Field label={<><Tag kind="req">必填</Tag>Refresh Token</>} hint={st?.configured ? "已配置，留空不改" : "未配置"}>
+          <SecretInput value={cred.refresh_token} onChange={(v) => setCred({ ...cred, refresh_token: v })}
+            placeholder={st?.configured ? "••••••••（已保存）" : "Atzr|..."} />
+        </Field>
+      </div>
+      <Field label={<><Tag kind="opt">可选</Tag>Seller ID</>} hint="卖家编号（Merchant Token）。判断 Buy Box 归属时要用它认出「自己」。">
+        <TxtInput value={sellerId} onChange={setSellerId} placeholder="A23SU2M9XL8R0O" />
+      </Field>
+
+      <label className="hs-toggle-line">
+        <input type="checkbox" checked={adsOwnApp} onChange={(e) => setAdsOwnApp(e.target.checked)} />
+        <span>广告 API 用另一套应用</span>
+      </label>
+      <div className="hs-hint">
+        不勾就与上面共用 —— 大多数卖家两边是同一个应用，强迫把同一串东西填两遍只会填错一遍。
+        广告 API 通常<b>单独审批</b>，没批下来也不影响库存那部分先跑起来。
+      </div>
+      {adsOwnApp && (
+        <div className="hs-row3">
+          <Field label="广告 Client ID">
+            <TxtInput value={adsCred.ads_client_id} onChange={(v) => setAdsCred({ ...adsCred, ads_client_id: v })} placeholder="amzn1.application-oa2-client..." />
+          </Field>
+          <Field label="广告 Client Secret">
+            <SecretInput value={adsCred.ads_client_secret} onChange={(v) => setAdsCred({ ...adsCred, ads_client_secret: v })} placeholder="留空不改" />
+          </Field>
+          <Field label="广告 Refresh Token">
+            <SecretInput value={adsCred.ads_refresh_token} onChange={(v) => setAdsCred({ ...adsCred, ads_refresh_token: v })} placeholder="留空不改" />
+          </Field>
+        </div>
+      )}
+
+      <div className="hs-field-group-title">站点</div>
+      <div className="hs-hint">
+        一行一个站点。<b>SID 是与领星共用的连接键</b>：两边都用的话，同一个站点填同一个 SID，
+        规则拿到的就是同一家店（官方优先、领星兜底）；只用亚马逊就随便给个稳定值。
+        区域按站点自动推，不用自己选。
+      </div>
+      {rows.map((r, i) => (
+        <div key={i} className="hs-mkt-row">
+          <TxtInput value={r.sid} onChange={(v) => setRow(i, { sid: v })} placeholder="SID" />
+          <SheetSelect value={r.marketplace_id} onChange={(v) => setRow(i, { marketplace_id: v })}
+            options={catalog} placeholder="选站点" />
+          <TxtInput value={r.name} onChange={(v) => setRow(i, { name: v })} placeholder="显示名（如 欧洲-UK）" />
+          <TxtInput value={r.ads_profile_id} onChange={(v) => setRow(i, { ads_profile_id: v })}
+            placeholder="广告档案 ID（可选）" />
+          <button className="hs-test-btn" type="button" onClick={() => dropRow(i)}>删除</button>
+        </div>
+      ))}
+      <div className="hs-test-row" style={{ gap: 8 }}>
+        <button className="hs-test-btn" type="button" onClick={addRow}>+ 加一个站点</button>
+        <button className="hs-test-btn" type="button" onClick={loadProfiles} disabled={!!busy}>
+          {busy === "profiles" ? "查询中…" : "列出广告档案"}
+        </button>
+        <button className="hs-test-btn" type="button" onClick={save} disabled={!!busy}>
+          {busy === "save" ? "保存中…" : "保存凭据与站点"}
+        </button>
+        <button className="hs-test-btn" type="button" onClick={verify} disabled={!!busy}>
+          {busy === "verify" ? "自检中…" : "自检（真打一次接口）"}
+        </button>
+        {msg && <span className={"hs-test-result " + (msg.ok ? "ok" : "err")}>
+          {msg.ok ? "✓" : "✗"} {msg.text}</span>}
+      </div>
+
+      {profiles && (
+        <div className="hs-pick">
+          {profiles.length === 0 && <span className="hs-hint">没有广告档案。多半是这套凭据还没开广告权限。</span>}
+          {profiles.map((p) => (
+            <div key={p.profile_id} className="hs-pick-item">
+              {p.country} · {p.name || p.type}<em>profileId {p.profile_id}</em>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {steps && steps.length > 0 && (
+        <div className="hs-steps">
+          {steps.map((s) => (
+            <div key={s.step} className={"hs-step" + (s.ok ? " hs-step-done" : "")}>
+              <span className="hs-step-no">{s.ok ? "✓" : "✗"}</span>
+              <div className="hs-step-body">
+                <div className="hs-step-title">{s.step}</div>
+                <div className="hs-step-detail">{s.detail}{s.hint ? ` —— ${s.hint}` : ""}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </Section>
+  );
+}
+
+/** 飞书 / Lark —— 一处配置，四条链路。
+ *
+ *  以前这里叫「飞书通知」，实际只喂 CPU 告警一条链路；店铺巡检卡片、审批按钮、
+ *  飞书对话那三条各自读 awenAgent 和 relay 的配置文件，界面上完全看不见。
+ *  结果是同一个飞书应用要在三个地方各填一遍，任何一处漏填的表现都是
+ *  「保存成功，但就是收不到消息」——没有任何报错。
+ *
+ *  现在凭据只填一次：存进 hub settings（服务器告警那条链路自己用，agent 挂了
+ *  它照样报警），保存时后端顺手下推给 awenAgent（巡检 / 审批 / 对话共用）。
+ *  白名单和巡检任务只存 agent 一份，这里直接读写，不在 ops 侧留副本。
+ */
+/** 这一档用分钟还是小时做单位：按默认值定，不随当前值变。 */
+function unitOf(defaultMinutes: number): number {
+  return defaultMinutes >= 120 ? 60 : 1;
+}
+
+/** 间隔的人话。60→「每小时」、720→「每 12 小时」、10080→「每周」。 */
+function fmtEvery(minutes: number): string {
+  if (minutes % 43200 === 0) return minutes === 43200 ? "每月" : `每 ${minutes / 43200} 个月`;
+  if (minutes % 10080 === 0) return minutes === 10080 ? "每周" : `每 ${minutes / 10080} 周`;
+  if (minutes % 1440 === 0) return minutes === 1440 ? "每天" : `每 ${minutes / 1440} 天`;
+  if (minutes % 60 === 0) return minutes === 60 ? "每小时" : `每 ${minutes / 60} 小时`;
+  return `每 ${minutes} 分钟`;
+}
+
+function FeishuSection({ vals, set, save }: {
+  vals: Partial<HubSettings>;
+  set: <K extends keyof HubSettings>(k: K, v: HubSettings[K]) => void;
+  save: (keys: (keyof HubSettings)[], vals: Partial<HubSettings>) => Promise<void>;
+}) {
+  const [st, setSt] = useState<FeishuStatus | null>(null);
+  const [busy, setBusy] = useState("");
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [chats, setChats] = useState<{ chat_id: string; name: string }[] | null>(null);
+  const [members, setMembers] = useState<{ open_id: string; name: string }[] | null>(null);
+  const [senders, setSenders] = useState<string[]>([]);
+  // 档位不再写死三个：agent 的 patrol.defaults 给出有哪些档、默认多久一次、
+  // 以及每一档在管什么。前端再写一份默认值的话，实际生效的永远是小的那个。
+  const [patrol, setPatrol] = useState<{
+    tiers: Record<string, { enabled: boolean; minutes: number }>;
+    scope: string; sids: string;
+  }>({ tiers: {}, scope: "all", sids: "" });
+
+  const reload = useCallback(async (probe = false) => {
+    try {
+      const s = await getFeishuStatus(probe);
+      setSt(s);
+      setSenders(s.gates?.allowed_senders || []);
+      const jobs = s.patrol?.jobs || [];
+      const defaults = s.patrol?.defaults || {};
+      const tiers: Record<string, { enabled: boolean; minutes: number }> = {};
+      let any: FeishuPatrolJob | undefined;
+      for (const [key, def] of Object.entries(defaults)) {
+        const job = jobs.find((j) => j.task === def.task);
+        if (job) any = any || job;
+        tiers[key] = {
+          enabled: !!job?.enabled,
+          minutes: Math.round(job?.every_minutes || def.every_minutes),
+        };
+      }
+      setPatrol({
+        tiers,
+        scope: any?.scope === "all" ? "all" : (any ? "sids" : "all"),
+        // 旧的单店任务用的是 sid 单数，界面统一按列表展示
+        sids: (any?.scope === "all" ? [] : [...(any?.sids || []), any?.sid || ""])
+          .filter(Boolean).join(","),
+      });
+    } catch (e: any) {
+      setSt({ ok: false, error: errText(e, "读取失败") });
+    }
+  }, []);
+  useEffect(() => { void reload(); }, [reload]);
+
+  const run = async (name: string, fn: () => Promise<void>) => {
+    setBusy(name); setMsg(null);
+    try { await fn(); } catch (e: any) { setMsg({ ok: false, text: errText(e, "操作失败") }); }
+    finally { setBusy(""); }
+  };
+
+  const flash = (ok: boolean, text: string) => {
+    setMsg({ ok, text });
+    if (ok) setTimeout(() => setMsg(null), 8000);
+  };
+
+  const doChats = () => run("chats", async () => {
+    const r = await feishuAction({ action: "chats" });
+    setChats(r.chats || []);
+    if (!r.ok) flash(false, r.error || "列群失败");
+    else if (r.note) flash(true, r.note);
+  });
+
+  const doMembers = () => run("members", async () => {
+    const r = await feishuAction({ action: "members", chat_id: vals.alert_chat_id || "" });
+    setMembers(r.members || []);
+    if (!r.ok) flash(false, r.error || "列成员失败（多半是缺 im:chat:readonly 权限）");
+  });
+
+  const doWhitelist = () => run("whitelist", async () => {
+    const r = await feishuAction({ action: "whitelist", allowed_senders: senders });
+    flash(!!r.ok, r.ok ? `审批白名单已更新：${senders.length} 人` : (r.error || "保存失败"));
+    await reload();
+  });
+
+  const doPatrol = () => run("patrol", async () => {
+    const sids = patrol.sids.split(/[,\s]+/).filter(Boolean);
+    const tiers: Record<string, unknown> = {};
+    for (const [key, t] of Object.entries(patrol.tiers)) {
+      tiers[key] = { enabled: t.enabled, every_minutes: t.minutes };
+    }
+    const r = await feishuAction({
+      action: "patrol",
+      scope: patrol.scope, sids,
+      channel: "feishu_app",
+      ...tiers,
+    });
+    if (!r.ok) { flash(false, r.error || "巡检设置失败"); return; }
+    const replaced = (r.replaced || []).length
+      ? `；已收编旧任务 ${(r.replaced || []).join("、")}` : "";
+    flash(true, ((r.created || []).length
+      ? `已启用 ${(r.created || []).length} 条巡检任务` : "已关闭全部巡检任务") + replaced);
+    await reload();
+  });
+
+  // 网页用户没有终端。"请自行 pip install / 写 systemd 单元"对他等于
+  // "这个功能你用不了" —— 所以装接收端、装触发器都得能从界面点。
+  const doInstall = (what: "install_relay" | "install_timer") => run(what, async () => {
+    const r = await feishuAction({ action: what });
+    const label = what === "install_relay" ? "飞书接收端" : "巡检触发器";
+    flash(!!r.ok, r.ok ? `${label}已安装并启动`
+      : (r.hint || r.error || `${label}安装未完成`));
+    await reload();
+  });
+
+  const doTest = () => run("test", async () => {
+    // 先把输入框里的凭据存下来再测：不然改完直接点测试，测的还是旧凭据，
+    // 结果对不上会让人以为是飞书坏了。
+    await save(["alert_app_id", "alert_app_secret", "alert_chat_id",
+      "alert_feishu_domain", "alert_webhook"], vals);
+    const r = await feishuAction({ action: "test", chat_id: vals.alert_chat_id || "" });
+    flash(!!r.ok, r.ok ? "已发出，去飞书里看看收到没有" : (r.error || "发送失败"));
+    await reload();
+  });
+
+  const toggleSender = (id: string) =>
+    setSenders((cur) => cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]);
+
+  const CH_LABEL: [string, string][] = [
+    ["text_alert", "文本告警"], ["cards", "交互卡片"],
+    ["approval", "点按钮改领星"], ["chat", "在飞书里对话"],
+    ["patrol_push", "店铺巡检推送"],
+  ];
+
+  return (
+    <Section
+      title="飞书 / Lark"
+      desc="一处配置，四件事共用：服务器告警 · 店铺巡检卡片 · 点按钮直接改领星 · 在飞书里和 AI 对话。"
+      keys={["alert_webhook", "alert_app_id", "alert_app_secret", "alert_chat_id",
+        "alert_feishu_domain", "alert_threshold", "alert_sustain", "alert_cooldown"]}
+      vals={vals} onSave={save}
+    >
+      {/* 向导：每一步的 ✓ 都由真实状态决定，不由「点过下一步」决定 */}
+      {st?.steps && (
+        <div className="hs-steps">
+          {st.steps.map((s, i) => (
+            <div key={s.key} className={"hs-step" + (s.done ? " hs-step-done" : "")}>
+              <span className="hs-step-no">{s.done ? "✓" : i + 1}</span>
+              <div className="hs-step-body">
+                <div className="hs-step-title">{s.title}</div>
+                <div className="hs-step-detail">{s.detail || s.hint}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      {st && st.ok === false && (
+        <div className="hs-hint" style={{ color: "var(--red)" }}>
+          {st.error}{st.hint ? ` —— ${st.hint}` : ""}
+        </div>
+      )}
+
+      {st?.relay && st.relay.running === false && st.relay.can_install && (
+        <div className="hs-callout">
+          <div>
+            <b>卡片按钮现在点了没反应</b> —— 接收端没装。
+            <span className="hs-hint">
+              {st.relay.sdk === false ? "点一下会先装飞书 SDK（约 42MB），再写服务并启动。"
+                : "点一下写服务并启动。"}
+            </span>
+          </div>
+          <button className="hs-test-btn" type="button" disabled={!!busy}
+            onClick={() => doInstall("install_relay")}>
+            {busy === "install_relay" ? "安装中…" : "一键安装接收端"}
+          </button>
+        </div>
+      )}
+
+      {/* 能力矩阵：webhook 能发文本但永远点不了按钮，这条差别必须写明 */}
+      {st?.channels && (
+        <div className="hs-caps">
+          {CH_LABEL.map(([k, label]) => {
+            const c = st.channels?.[k];
+            if (!c) return null;
+            return (
+              <div key={k} className={"hs-cap" + (c.ready ? " hs-cap-ok" : "")}
+                title={c.blockers.join("；") || c.note}>
+                <Dot ok={c.ready} />
+                <span>{label}</span>
+                {!c.ready && <em>{c.blockers[0]}</em>}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <div className="hs-field-group-title">应用凭据（发卡片、收按钮、对话都靠它）</div>
+      {/* 两处各存一份是有意的（看门狗不能依赖 agent），但"agent 那边配了、这边空着"
+          必须说出来 —— 否则用户看着满屏 ✓，却收不到任何 CPU 告警，且毫无线索。 */}
+      {st?.app?.configured && !vals.alert_app_id && (
+        <div className="hs-hint" style={{ color: "var(--red)" }}>
+          awenAgent 侧已有凭据 <code>{st.app.app_id_masked}</code>，但这里是空的。
+          巡检卡片和审批照常工作，<b>服务器 CPU 告警发不出去</b> —— 它是独立进程跑的看门狗，
+          只读这一份（agent 挂了它还要能报警）。把同一个应用填进来即可。
+          <button className="hs-test-btn" type="button" style={{ marginLeft: 8 }}
+            onClick={() => set("alert_app_id", st.app?.app_id || "")}>
+            带入 App ID
+          </button>
+        </div>
+      )}
+      <div className="hs-row3">
+        <Field label={<><Tag kind="req">必填</Tag>App ID</>} hint="cli_ 开头">
+          <TxtInput value={vals.alert_app_id || ""} onChange={(v) => set("alert_app_id", v)} placeholder="cli_xxx" />
+        </Field>
+        <Field label={<><Tag kind="req">必填</Tag>App Secret</>} hint="换应用后旧 token 会自动作废">
+          <SecretInput value={vals.alert_app_secret || ""} onChange={(v) => set("alert_app_secret", v)} placeholder="App Secret" />
+        </Field>
+        <Field label="域名" hint="国内飞书 / 国际 Lark">
+          <SheetSelect value={vals.alert_feishu_domain || "feishu"}
+            onChange={(v) => set("alert_feishu_domain", v)}
+            options={[{ value: "feishu", label: "飞书 open.feishu.cn" },
+            { value: "lark", label: "Lark open.larksuite.com" }]} />
+        </Field>
+      </div>
+      <div className="hs-hint">
+        飞书开放平台 → 创建企业自建应用 → 「凭证与基础信息」拿这两个值。权限至少要
+        <code>im:message</code>、<code>im:message:send_as_bot</code>、<code>im:chat:readonly</code>，
+        <b>改完权限记得发布版本</b>，否则调用会一直报 99991672。
+      </div>
+
+      <div className="hs-field-group-title">接收会话</div>
+      <Field label="Chat ID" hint={<>
+        把机器人拉进群后，群设置里能看到会话 ID（<code>oc_</code> 开头）。
+        下面的「列出机器人所在的群」<b>列不出来是正常的</b> —— 飞书只列应用可管理的群，
+        直接粘 ID 一样能用。
+      </>}>
+        <div className="hs-test-row" style={{ gap: 8 }}>
+          <TxtInput value={vals.alert_chat_id || ""} onChange={(v) => set("alert_chat_id", v)} placeholder="oc_..." />
+          <button className="hs-test-btn" type="button" onClick={doChats} disabled={!!busy}>
+            {busy === "chats" ? "查询中…" : "列出机器人所在的群"}
+          </button>
+        </div>
+        {chats && chats.length > 0 && (
+          <div className="hs-pick">
+            {chats.map((c) => (
+              <button key={c.chat_id} type="button" className="hs-pick-item"
+                onClick={() => set("alert_chat_id", c.chat_id)}>
+                {c.name || "(未命名群)"}<em>{c.chat_id}</em>
+              </button>
+            ))}
+          </div>
+        )}
+      </Field>
+
+      <div className="hs-field-group-title">谁能点审批按钮</div>
+      <Field label="审批白名单" hint={<>
+        卡片上的「批准执行」会<b>真的去改领星</b>。<b>留空不是所有人都能点，是所有人都不能点</b> ——
+        改钱的权限不设默认放行。这一项存在 awenAgent 侧，保存后 relay 立即生效，不用重启。
+      </>}>
+        <div className="hs-test-row" style={{ gap: 8 }}>
+          <button className="hs-test-btn" type="button" onClick={doMembers}
+            disabled={!!busy || !vals.alert_chat_id}>
+            {busy === "members" ? "查询中…" : "从群里选人"}
+          </button>
+          <button className="hs-test-btn" type="button" onClick={doWhitelist} disabled={!!busy}>
+            {busy === "whitelist" ? "保存中…" : `保存白名单（${senders.length} 人）`}
+          </button>
+        </div>
+        {members && (
+          <div className="hs-pick">
+            {members.length === 0 && <span className="hs-hint">没列到成员，多半是缺 im:chat:readonly 权限。</span>}
+            {members.map((m) => (
+              <label key={m.open_id} className="hs-toggle-line" style={{ marginRight: 12 }}>
+                <input type="checkbox" checked={senders.includes(m.open_id)}
+                  onChange={() => toggleSender(m.open_id)} />
+                <span>{m.name || m.open_id}</span>
+              </label>
+            ))}
+          </div>
+        )}
+        {senders.length > 0 && (
+          <div className="hs-hint">当前放行：{senders.map((s) => s.slice(0, 12) + "…").join("、")}</div>
+        )}
+      </Field>
+
+      <div className="hs-field-group-title">店铺巡检推送</div>
+      <Field label="定时巡检" hint={<>
+        库存断货、活动被暂停、预算被外部改动、ACOS 超标… 异常推成卡片发到上面那个群。
+        {st?.patrol?.timer?.running === false && <b style={{ color: "var(--red)" }}>
+          {" "}触发器没启用，任务注册了也不会跑。</b>}
+      </>}>
+        {st?.patrol?.timer?.running === false && st.patrol.timer.can_install && (
+          <div className="hs-callout">
+            <div>
+              <b>下面这些开关现在不会生效</b> —— 触发器没启用。
+              <span className="hs-hint">点一下装上，每 5 分钟唤醒一次问「谁到点了」。</span>
+            </div>
+            <button className="hs-test-btn" type="button" disabled={!!busy}
+              onClick={() => doInstall("install_timer")}>
+              {busy === "install_timer" ? "安装中…" : "一键启用触发器"}
+            </button>
+          </div>
+        )}
+        <div className="hs-tiers">
+          {Object.entries(st?.patrol?.defaults || {}).map(([key, def]) => {
+            const tier = patrol.tiers[key] || { enabled: false, minutes: def.every_minutes };
+            const setTier = (patch: Partial<typeof tier>) => setPatrol({
+              ...patrol, tiers: { ...patrol.tiers, [key]: { ...tier, ...patch } },
+            });
+            return (
+              <div key={key} className={"hs-tier" + (tier.enabled ? " hs-tier-on" : "")}>
+                <label className="hs-toggle-line">
+                  <input type="checkbox" checked={tier.enabled}
+                    onChange={(e) => setTier({ enabled: e.target.checked })} />
+                  <span>{def.label}</span>
+                </label>
+                <div className="hs-tier-desc">{def.desc}</div>
+                <div className="hs-tier-every">
+                  {/* 分钟级的两档才给输入框改；日报/周报/月报的周期改起来没意义，
+                      写成文字反而一眼看清各档节奏差多少。
+                      单位按**这一档的默认值**定死，不看当前值 —— 看当前值的话，
+                      把 12 小时改成 1 小时的瞬间输入框会跳成「60 分钟」。 */}
+                  {def.every_minutes < 1440 ? (
+                    <NumInput value={Math.round(tier.minutes / unitOf(def.every_minutes))}
+                      onChange={(v) => setTier({ minutes: v * unitOf(def.every_minutes) })}
+                      min={1} max={999}
+                      unit={unitOf(def.every_minutes) === 60 ? "小时一次" : "分钟一次"} />
+                  ) : (
+                    <span className="hs-hint">{fmtEvery(tier.minutes)}一次</span>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", marginTop: 6 }}>
+          <SheetSelect value={patrol.scope} onChange={(v) => setPatrol({ ...patrol, scope: v })}
+            options={[{ value: "all", label: "全部店铺" }, { value: "sids", label: "指定店铺" }]} />
+          {patrol.scope === "sids" && (
+            <TxtInput value={patrol.sids} onChange={(v) => setPatrol({ ...patrol, sids: v })}
+              placeholder="店铺 SID，逗号分隔，如 1863,1872" />
+          )}
+          <button className="hs-test-btn" type="button" onClick={doPatrol} disabled={!!busy}>
+            {busy === "patrol" ? "应用中…" : "应用巡检设置"}
+          </button>
+        </div>
+      </Field>
+
+      <div className="hs-field-group-title">兜底与自检</div>
+      <Field label={<><Tag kind="opt">可选</Tag>群机器人 Webhook</>} hint={<>
+        应用发不出去时的兜底通道（纯文本）。<b>它没有回调，永远点不了按钮</b> ——
+        只配它的话，卡片和审批都不会有。群机器人要设关键词 “awenops” 或 “CPU”。
+      </>}>
+        <SecretInput value={vals.alert_webhook || ""} onChange={(v) => set("alert_webhook", v)}
+          placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..." />
+        <TestButton settingKey="alert_webhook" value={vals.alert_webhook} label="发测试消息" />
+      </Field>
+      <div className="hs-test-row" style={{ gap: 8 }}>
+        <button className="hs-test-btn" type="button" onClick={doTest} disabled={!!busy}>
+          {busy === "test" ? "发送中…" : "保存并发一张测试卡片"}
+        </button>
+        <button className="hs-test-btn" type="button" onClick={() => run("probe", () => reload(true))}
+          disabled={!!busy}>
+          {busy === "probe" ? "检测中…" : "重新检测"}
+        </button>
+        {msg && (
+          <span className={"hs-test-result " + (msg.ok ? "ok" : "err")}>
+            {msg.ok ? "✓" : "✗"} {msg.text}
+          </span>
+        )}
+      </div>
+
+      <div className="hs-field-group-title">服务器 CPU 告警阈值</div>
+      <div className="hs-hint">
+        这三项只管本机 CPU 看门狗（<code>scripts/cpu_alert.py</code>，独立进程跑）。
+        它<b>不经过 awenAgent</b> —— agent 挂了、8765 不通了，它还得能把消息发出来。
+      </div>
+      <div className="hs-row3">
+        <Field label="触发阈值">
+          <NumInput value={vals.alert_threshold ?? 80} onChange={(v) => set("alert_threshold", v)} min={10} max={9999} unit="%" />
+        </Field>
+        <Field label="持续时长">
+          <NumInput value={vals.alert_sustain ?? 5} onChange={(v) => set("alert_sustain", v)} min={1} max={60} unit="分钟" />
+        </Field>
+        <Field label="冷却时间">
+          <NumInput value={vals.alert_cooldown ?? 30} onChange={(v) => set("alert_cooldown", v)} min={1} max={1440} unit="分钟" />
+        </Field>
+      </div>
+    </Section>
+  );
+}
+
+function NotifySection({
+  vals, set, save,
+}: {
+  vals: Partial<HubSettings>;
+  set: <K extends keyof HubSettings>(k: K, v: HubSettings[K]) => void;
+  save: (keys: (keyof HubSettings)[], vals: Partial<HubSettings>) => Promise<void>;
+}) {
+  const [cfg, setCfg] = useState<NotifyConfig | null>(null);
+  const [budget, setBudget] = useState<BudgetStatus | null>(null);
+  const [denied, setDenied] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [result, setResult] = useState<{ ok: boolean; detail: string } | null>(null);
+
+  const reload = useCallback(async () => {
+    try {
+      const [c, b] = await Promise.all([getNotifyConfig(), getBudget()]);
+      setCfg(c);
+      setBudget(b);
+    } catch {
+      setDenied(true);
+    }
+  }, []);
+  useEffect(() => { void reload(); }, [reload]);
+
+  if (denied) return null;
+
+  const picked: string[] = (() => {
+    const raw = (vals.notify_events || "").trim();
+    if (!raw) return cfg?.enabled_events || [];
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed.map(String) : [];
+    } catch { return []; }
+  })();
+
+  const toggle = (key: string) => {
+    const next = picked.includes(key) ? picked.filter((k) => k !== key) : [...picked, key];
+    set("notify_events", JSON.stringify(next));
+  };
+
+  const runTest = async () => {
+    setTesting(true);
+    setResult(null);
+    try {
+      // 先把地址存下来再测 —— 否则用户改了输入框直接点测试，测的还是旧地址，
+      // 结果对不上会让人以为是通知功能坏了。
+      await save(["notify_webhook"], vals);
+      setResult(await testNotify());
+      await reload();
+    } catch {
+      setResult({ ok: false, detail: "保存或发送失败" });
+    } finally { setTesting(false); }
+  };
+
+  const CHANNEL_LABEL: Record<string, string> = {
+    feishu: "飞书", dingtalk: "钉钉", wecom: "企业微信",
+    slack: "Slack", generic: "自定义接收端",
+  };
+
+  return (
+    <Section
+      title="通知与 AI 预算"
+      desc="机器在那头跑，人在别处。任务挂了、这个月花超了，直接推到你手机上。"
+      keys={["notify_webhook", "notify_events", "ai_budget_monthly_usd"]}
+      vals={vals} onSave={save}
+    >
+      <Field
+        label="通知地址（Webhook）"
+        hint={<>
+          支持飞书、钉钉、企业微信、Slack 和自建接收端 —— <b>粘进来就行，是哪一家我们自己认</b>。
+          {cfg?.webhook_set && cfg.channel && <>当前识别为「{CHANNEL_LABEL[cfg.channel] || cfg.channel}」。</>}
+          {" "}报文里只有事件类型、任务名和时间，<b>不含任何店铺数据或密钥</b>。
+        </>}
+      >
+        <div className="hs-test-row" style={{ gap: 8 }}>
+          <TxtInput value={vals.notify_webhook || ""} onChange={(v) => set("notify_webhook", v)}
+            placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/…" />
+          <button className="hs-test-btn" onClick={runTest} disabled={testing || !vals.notify_webhook}>
+            {testing ? "发送中…" : "发条测试消息"}
+          </button>
+        </div>
+        {result && (
+          <div className="ms" style={{ marginTop: 6, color: result.ok ? "var(--acc)" : "var(--red)" }}>
+            {result.ok ? "✓ " : "× "}{result.detail}
+          </div>
+        )}
+      </Field>
+
+      {cfg && (
+        <Field label="发哪些事" hint="默认只发需要你动手的三类。每跑完一个任务都响一次的机器人，三天就会被静音。">
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
+            {Object.entries(cfg.events).map(([key, label]) => (
+              <label key={key} className="hs-toggle-line" style={{ margin: 0 }}>
+                <input type="checkbox" checked={picked.includes(key)} onChange={() => toggle(key)} />
+                <span>{label}</span>
+              </label>
+            ))}
+          </div>
+        </Field>
+      )}
+
+      <Field
+        label="每月 AI 预算（美元）"
+        hint={<>
+          填 0 表示不设预算。超了会推一条通知，<b>每月只提醒一次</b>，
+          且<b>不会掐掉正在跑的任务</b> —— 这是按公开价目表对 token 的本地估算，不是账单，
+          拿估算值去停用户的活儿，错一次就是事故。
+        </>}
+      >
+        <TxtInput value={String(vals.ai_budget_monthly_usd ?? 0)}
+          onChange={(v) => set("ai_budget_monthly_usd", Number(v) || 0)} placeholder="0" />
+        {budget?.enabled && (
+          <div className="ms" style={{ marginTop: 6 }}>
+            {budget.month} 已用 <b>${budget.spend_usd.toFixed(2)}</b> / ${budget.limit_usd.toFixed(2)}
+            （{Math.round(budget.ratio * 100)}%）
+            {budget.exceeded && <span style={{ color: "var(--red)" }}> · 已超</span>}
+          </div>
+        )}
+      </Field>
+    </Section>
+  );
+}
+
+/** 对外 MCP：把这台机器的亚马逊能力开放给 Claude Desktop / Cursor 等客户端。
+ *
+ *  管理员专属。非管理员拿到 403，这一整块就不渲染 —— 与其给他一个点了报错的
+ *  面板，不如干脆不出现。 */
+function McpSection() {
+  const [tokens, setTokens] = useState<McpToken[] | null>(null);
+  const [denied, setDenied] = useState(false);
+  const [endpoint, setEndpoint] = useState("");
+  const [name, setName] = useState("");
+  const [allowWrite, setAllowWrite] = useState(false);
+  const [ttl, setTtl] = useState(0);
+  const [fresh, setFresh] = useState<IssuedToken | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState("");
+
+  const reload = useCallback(async () => {
+    try {
+      const [list, cfg] = await Promise.all([listMcpTokens(), getMcpClientConfig()]);
+      setTokens(list.tokens);
+      setEndpoint(cfg.endpoint);
+    } catch {
+      setDenied(true);
+    }
+  }, []);
+  useEffect(() => { void reload(); }, [reload]);
+
+  if (denied) return null;
+
+  const issue = async () => {
+    setBusy(true);
+    try {
+      setFresh(await issueMcpToken(name || "未命名", allowWrite ? ["read", "write"] : ["read"], ttl));
+      setName("");
+      await reload();
+    } finally { setBusy(false); }
+  };
+
+  const revoke = async (t: McpToken) => {
+    if (!window.confirm(`撤销「${t.name}」？用它连着的客户端会立刻断开，且无法恢复。`)) return;
+    await revokeMcpToken(t.id);
+    if (fresh?.id === t.id) setFresh(null);
+    await reload();
+  };
+
+  const snippet = JSON.stringify({
+    mcpServers: {
+      "awenops": {
+        type: "http",
+        url: endpoint || "http://<你的 awenops 地址>/api/mcp",
+        headers: { Authorization: `Bearer ${fresh?.token || "<粘贴你的令牌>"}` },
+      },
+    },
+  }, null, 2);
+
+  const copy = async (text: string, what: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(what);
+      setTimeout(() => setCopied(""), 2000);
+    } catch { /* 剪贴板在非 HTTPS 下不可用，用户可以手动选中复制 */ }
+  };
+
+  const when = (ts: number | null) =>
+    ts ? new Date(ts * 1000).toLocaleString("zh-CN", { hour12: false }) : "—";
+
+  return (
+    <div className="hs-section">
+      <div className="hs-section-hd">
+        <div>
+          <div className="hs-section-title">对外 MCP（让别的 AI 用上你的数据）</div>
+          <div className="hs-section-desc">
+            生成一个令牌，Claude Desktop、Cursor 或任何支持 MCP 的客户端就能调用这台机器上的广告结论、
+            知识库和关键词调研。<b>令牌指向的是你自己的服务器</b> —— 数据不经过我们，也不经过任何第三方云。
+          </div>
+        </div>
+      </div>
+      <div className="hs-fields">
+        <div className="hs-agent-card hs-agent-card-wide">
+          <div className="hs-agent-card-title">新建令牌</div>
+          <div className="hs-agent-card-desc">
+            明文<b>只显示这一次</b>，关掉就再也拿不到（服务端只存哈希）。丢了就撤销重发。
+          </div>
+          <div className="hs-test-row" style={{ marginTop: 8, gap: 8, flexWrap: "wrap" }}>
+            <TxtInput value={name} onChange={setName} placeholder="用途备注，如「我的 MacBook 上的 Claude」" />
+            <SheetSelect className="hs-input" value={String(ttl)} onChange={(v) => setTtl(Number(v))}
+              title="有效期" options={[
+                { value: "0", label: "永久有效" },
+                { value: "30", label: "30 天后过期" },
+                { value: "90", label: "90 天后过期" },
+                { value: "365", label: "一年后过期" },
+              ]} />
+            <button className="hs-save-btn" onClick={issue} disabled={busy}>
+              {busy ? "生成中…" : "生成令牌"}
+            </button>
+          </div>
+          <label className="hs-toggle-line">
+            <input type="checkbox" checked={allowWrite} onChange={(e) => setAllowWrite(e.target.checked)} />
+            <span>
+              允许写操作（改广告投放）——
+              <b>默认不给</b>。做分析的令牌不该顺带具备改你真实投放的能力。
+            </span>
+          </label>
+          {fresh && (
+            <div className="hs-agent-card" style={{ marginTop: 10, borderColor: "var(--acc)" }}>
+              <div className="hs-agent-card-title">令牌已生成 —— 现在复制，之后看不到了</div>
+              <code style={{ display: "block", wordBreak: "break-all", padding: "8px 0" }}>{fresh.token}</code>
+              <button className="hs-test-btn" onClick={() => copy(fresh.token, "token")}>
+                {copied === "token" ? "✓ 已复制" : "复制令牌"}
+              </button>
+            </div>
+          )}
+        </div>
+
+        <div className="hs-agent-card hs-agent-card-wide">
+          <div className="hs-agent-card-title">客户端配置</div>
+          <div className="hs-agent-card-desc">
+            粘进 Claude Desktop 的 <code>claude_desktop_config.json</code> 或 Cursor 的 <code>mcp.json</code>，重启客户端即可。
+            对方机器要能访问到这个地址；<b>暴露到公网时务必套 HTTPS</b> —— 令牌是明文放在请求头里的。
+          </div>
+          <pre style={{ overflowX: "auto", fontSize: "var(--fs-12)", margin: "8px 0" }}>{snippet}</pre>
+          <button className="hs-test-btn" onClick={() => copy(snippet, "cfg")}>
+            {copied === "cfg" ? "✓ 已复制" : "复制配置"}
+          </button>
+        </div>
+
+        <div className="hs-agent-card hs-agent-card-wide">
+          <div className="hs-agent-card-title">已发出的令牌</div>
+          {tokens === null ? (
+            <div className="hs-agent-card-desc">加载中…</div>
+          ) : tokens.length === 0 ? (
+            <div className="hs-agent-card-desc">还没有发过令牌。</div>
+          ) : (
+            <table className="hs-table" style={{ width: "100%", fontSize: "var(--fs-13)" }}>
+              <thead>
+                <tr>
+                  <th style={{ textAlign: "left" }}>备注</th>
+                  <th style={{ textAlign: "left" }}>权限</th>
+                  <th style={{ textAlign: "left" }}>最后使用</th>
+                  <th style={{ textAlign: "left" }}>过期</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {tokens.map((t) => (
+                  <tr key={t.id} style={t.revoked ? { opacity: 0.45 } : undefined}>
+                    <td>{t.name}</td>
+                    <td>{t.scopes.includes("write") ? "读 + 写" : "只读"}</td>
+                    {/* 显示最后使用时间，用户才判断得出哪个令牌早就该撤销了 */}
+                    <td>{t.revoked ? "已撤销" : when(t.last_used_at)}</td>
+                    <td>{t.expires_at ? when(t.expires_at) : "永久"}</td>
+                    <td>
+                      {!t.revoked && (
+                        <button className="hs-test-btn" onClick={() => revoke(t)}>撤销</button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AppearanceSection() {
+  // 用 router 的 hash 而不是 window.location.hash + hashchange：应用内 navigate 走的是
+  // history.pushState，**pushState 不派发 hashchange**，只听那个事件在站内点根本不响。
+  const { hash } = useLocation();
   const [fontId, setFontId] = useState(getFontId());
   const [zoom, setZoom] = useState(getZoom());
   const [weight, setWeight] = useState(getWeight());
+
+  // 账户菜单里的「字体与字号」深链到这里（/hub-settings#appearance）。
+  //
+  // 这里踩过两次，两次的表现都是"点了没反应，停在设置首页"：
+  //
+  // 1. **滚一次是不够的。** 这一页的内容是异步来的（设置值、健康检查、MCP 列表…），
+  //    挂载那一帧页面还很短，滚过去之后上面的内容陆续到达、把目标一路往下推，
+  //    最终停在的位置和目标毫无关系。所以要**滚到位置稳定为止**。
+  // 2. **已经在这一页时不会重新挂载。** 用户在设置页里点账户菜单的「字体与字号」，
+  //    路由只是加了个 hash，组件不重挂，useEffect 不再跑 —— 所以依赖里要有 hash。
+  //    **别用 window 的 hashchange**：应用内 navigate 走 pushState，不派发那个事件。
+  useEffect(() => {
+    let raf = 0;
+    let timer = 0;
+    const scrollToSelf = () => {
+      window.clearTimeout(timer);
+      cancelAnimationFrame(raf);
+      let lastTop = Number.NaN;
+      let stableFor = 0;
+      const deadline = Date.now() + 3000;   // 兜底：再长也不能一直滚下去
+      const step = () => {
+        const el = document.getElementById("appearance");
+        if (!el) return;
+        const top = el.getBoundingClientRect().top;
+        el.scrollIntoView({ block: "start", behavior: "smooth" });
+        // 连续两次量到的位置一致（±2px）才算稳了 —— 说明上面的内容不再增高。
+        stableFor = Math.abs(top - lastTop) < 2 ? stableFor + 1 : 0;
+        lastTop = top;
+        if (stableFor >= 2 || Date.now() > deadline) {
+          el.classList.add("hs-section-hit");         // 到了要能看出来
+          window.setTimeout(() => el.classList.remove("hs-section-hit"), 1600);
+          return;
+        }
+        timer = window.setTimeout(() => { raf = requestAnimationFrame(step); }, 160);
+      };
+      raf = requestAnimationFrame(step);
+    };
+
+    if (hash === "#appearance") scrollToSelf();
+    return () => {
+      window.clearTimeout(timer);
+      cancelAnimationFrame(raf);
+    };
+    // hash 进依赖：从别的页面跳进来、以及已经在这一页时再点一次，都要滚。
+  }, [hash]);
+
   const onFont = (id: string) => { setFontId(id); applyFont(id); };
   const onZoom = (v: number) => { setZoom(v); applyZoom(v); };
   const onWeight = (v: number) => { setWeight(v); applyWeight(v); };
   return (
-    <div className="hs-section">
+    <div className="hs-section" id="appearance">
       <div className="hs-section-hd">
         <div>
           <div className="hs-section-title">外观 / 显示</div>
@@ -835,7 +2048,9 @@ function AppearanceSection() {
           <div className="hs-agent-card">
             <div className="hs-agent-card-title">字体</div>
             <div className="hs-agent-card-desc">
-              默认「跟随主题」。觉得字太细/不清晰，换「系统默认 · 清晰」或「微软雅黑」通常最舒服。
+              默认「跟随主题」。想更好看就选「Inter + 系统中文 · 推荐」——
+              数字和英文换成 Inter，汉字仍用系统里最好的那支（苹方 / 雅黑），只多下 48KB。
+              想让每台机器长得一模一样，选「思源黑体 · 内置字库」（自带字库，首次约 2MB）。
             </div>
             <div style={{ marginTop: 8 }}>
               <SheetSelect className="hs-input" value={fontId} onChange={onFont} title="选择字体"
@@ -877,8 +2092,8 @@ function AppearanceSection() {
 
           <div className="hs-agent-card" style={{ gridColumn: "1 / -1" }}>
             <div className="hs-agent-card-title">预览</div>
-            <div style={{ marginTop: 6, fontSize: 14, lineHeight: 1.8, color: "var(--t)" }}>
-              IvyeaOps 广告优化 · Listing 诊断 · 知识库检索 — The quick brown fox 0123456789
+            <div style={{ marginTop: 6, fontSize: "var(--fs-14)", lineHeight: 1.8, color: "var(--t)" }}>
+              awenops 广告优化 · Listing 诊断 · 知识库检索 — The quick brown fox 0123456789
             </div>
           </div>
         </div>
@@ -887,7 +2102,42 @@ function AppearanceSection() {
   );
 }
 
-export default function HubSettings() {
+/**
+ * @param focusSection 深链要落到的分区 id（对话框传进来）。**它可能被折叠在
+ *   「系统状态与更多设置」里** —— 那种情况下必须先把折叠块展开，否则目标元素
+ *   根本不在 DOM 里，滚动无从谈起。
+ *
+ *   这正是「字体与字号」点了没反应的真正原因：不是滚错了位置，是外观区压根
+ *   还没渲染出来，看起来就像"跳到了系统设置主页面"。
+ */
+const COLLAPSED_SECTIONS = new Set(["appearance"]);
+
+/** 说明文字的显隐开关。
+ *
+ *  **默认必须是"显示"。** 这些说明装的不是废话，是操作指引 ——「登录 sorftime.com
+ *  → 账户设置 → API」「留空 = 不带 Token」「保存后自动注册为 MCP 数据源」。默认藏
+ *  起来，第一次配置的人打开就是一排空输入框，不知道 key 从哪儿来。所以只记住
+ *  "用户主动关过"这件事：嫌烦的人点一次永久清爽，新用户第一次进来照样有指引。 */
+const HS_HELP_KEY = "awenops.hs.help";
+
+function useHelpVisible(): [boolean, (v: boolean) => void] {
+  const [on, setOn] = useState<boolean>(() => {
+    try { return localStorage.getItem(HS_HELP_KEY) !== "off"; } catch { return true; }
+  });
+  const set = (v: boolean) => {
+    setOn(v);
+    try { localStorage.setItem(HS_HELP_KEY, v ? "on" : "off"); } catch { /* 隐私模式下存不了，不影响本次会话 */ }
+  };
+  return [on, set];
+}
+
+export default function HubSettings({ focusSection = "" }: { focusSection?: string } = {}) {
+  const [helpOn, setHelpOn] = useHelpVisible();
+  // 订阅登录那一段只给管理员看：凭据存在本机、由 agent 全局共用，
+  // 谁登录全站就烧谁的额度。后端那几个端点也是 require_admin，这里只是别把
+  // 一个按下去必然 403 的按钮摆在普通用户面前。
+  const { role } = useAuth();
+  const isAdmin = role === "admin";
   const [vals, setVals] = useState<HubSettings>(EMPTY);
   const [loading, setLoading] = useState(true);
   const [loadErr, setLoadErr] = useState("");
@@ -895,7 +2145,7 @@ export default function HubSettings() {
   useEffect(() => {
     getSettings()
       .then(r => { setVals({ ...EMPTY, ...r.settings }); setLoading(false); })
-      .catch(e => { setLoadErr(String(e?.response?.data?.detail || e?.message || "加载失败")); setLoading(false); });
+      .catch(e => { setLoadErr(String(errText(e, "加载失败"))); setLoading(false); });
   }, []);
 
   const set = useCallback(<K extends keyof HubSettings>(k: K, v: HubSettings[K]) => {
@@ -919,7 +2169,9 @@ export default function HubSettings() {
   }, []);
 
   const [compatPathsOpen, setCompatPathsOpen] = useState(false);
-  const [sysOpen, setSysOpen] = useState(false);
+  // 深链指向折叠块里的分区时，直接以展开态渲染 —— 让用户自己再点一次"更多设置"
+  // 才看得到目标，等于这个深链没做。
+  const [sysOpen, setSysOpen] = useState(() => COLLAPSED_SECTIONS.has(focusSection));
 
   if (loading) return (
     <div aria-busy="true" aria-live="polite" style={{ display: "grid", gap: 12, maxWidth: 720 }}>
@@ -934,38 +2186,46 @@ export default function HubSettings() {
   if (loadErr) return <div className="hs-error">加载失败：{loadErr}</div>;
 
   return (
-    <div className="hs-page">
+    <div className={"hs-page" + (helpOn ? "" : " hs-quiet")}>
 
       {/* ── Header ── */}
       <div className="hs-header">
         <span className="hs-header-icon">⊙</span>
-        <div>
+        <div className="hs-header-main">
           <div className="hs-header-title">系统配置</div>
-          <div className="hs-header-sub">优先配置 IvyeaAgent、数据源和全局兜底大模型；低频项已放到页面下方。</div>
+          <div className="hs-header-sub">优先配置 awenAgent、数据源和全局兜底大模型；低频项已放到页面下方。</div>
         </div>
+        <button
+          type="button"
+          className={"hs-help-toggle" + (helpOn ? " on" : "")}
+          onClick={() => setHelpOn(!helpOn)}
+          title={helpOn ? "隐藏每一项的说明文字，只留标签和输入框" : "显示每一项的说明文字（含取 key 的步骤）"}
+        >
+          {helpOn ? "◉ 说明已显示" : "○ 说明已隐藏"}
+        </button>
       </div>
 
       <AutodetectPanel onApply={applySuggestions} />
 
       <SelfCheckPanel />
 
-      {/* -- 核心 1: IvyeaAgent -- */}
+      {/* -- 核心 1: awenAgent -- */}
       <Section
-        title="IvyeaAgent"
-        desc={<>系统主智能体。右下角 Agent 对话、知识库推理，以及通过对话操作 IvyeaOps 各板块，都优先走这里。</>}
+        title="awenAgent"
+        desc={<>系统主智能体。右下角 Agent 对话、知识库推理，以及通过对话操作 awenops 各板块，都优先走这里。</>}
         keys={[
-          "ivyea_agent_url", "ivyea_agent_token", "ivyea_agent_auto_start",
-          "ivyea_agent_provider", "ivyea_agent_model", "ivyea_agent_api_key", "ivyea_agent_base_url",
+          "awen_agent_url", "awen_agent_token", "awen_agent_auto_start",
+          "awen_agent_provider", "awen_agent_model", "awen_agent_api_key", "awen_agent_base_url",
         ]}
         vals={vals} onSave={save}
       >
         <div className="hs-agent-grid">
           <div className="hs-agent-card hs-agent-card-main">
-            <div className="hs-agent-card-title"><Tag kind="rec">推荐</Tag>内置 IvyeaAgent</div>
+            <div className="hs-agent-card-title"><Tag kind="rec">推荐</Tag>内置 awenAgent</div>
             <div className="hs-agent-card-desc">本机服务默认地址即可；远程部署时再修改。</div>
             <Field label="服务地址">
-              <TxtInput value={vals.ivyea_agent_url} onChange={v => set("ivyea_agent_url", v)} placeholder="http://127.0.0.1:8765" />
-              <TestButton settingKey="ivyea_agent_url" value={vals.ivyea_agent_url} label="测试 IvyeaAgent" />
+              <TxtInput value={vals.awen_agent_url} onChange={v => set("awen_agent_url", v)} placeholder="http://127.0.0.1:8765" />
+              <TestButton settingKey="awen_agent_url" value={vals.awen_agent_url} label="测试 awenAgent" />
             </Field>
           </div>
 
@@ -973,37 +2233,57 @@ export default function HubSettings() {
 
           <div className="hs-agent-card">
             <div className="hs-agent-card-title"><Tag kind="rec">推荐</Tag>运行方式</div>
-            <div className="hs-agent-card-desc">服务未启动时，IvyeaOps 自动拉起本机 IvyeaAgent。</div>
+            <div className="hs-agent-card-desc">服务未启动时，awenops 自动拉起本机 awenAgent。</div>
             <label className="hs-toggle-line">
-              <input type="checkbox" checked={!!vals.ivyea_agent_auto_start}
-                onChange={e => set("ivyea_agent_auto_start", e.target.checked)} />
-              <span>{vals.ivyea_agent_auto_start ? "自动启动已开启" : "自动启动已关闭"}</span>
+              <input type="checkbox" checked={!!vals.awen_agent_auto_start}
+                onChange={e => set("awen_agent_auto_start", e.target.checked)} />
+              <span>{vals.awen_agent_auto_start ? "自动启动已开启" : "自动启动已关闭"}</span>
             </label>
           </div>
 
           <div className="hs-agent-card">
             <div className="hs-agent-card-title"><Tag kind="opt">可选</Tag>访问认证</div>
             <div className="hs-agent-card-desc">本机 127.0.0.1 默认不需要；远程部署或开启认证时填写。</div>
-            <Field label="IvyeaAgent Token">
-              <SecretInput value={vals.ivyea_agent_token} onChange={v => set("ivyea_agent_token", v)} placeholder="留空 = 不带 Token" />
+            <Field label="awenAgent Token">
+              <SecretInput value={vals.awen_agent_token} onChange={v => set("awen_agent_token", v)} placeholder="留空 = 不带 Token" />
             </Field>
           </div>
         </div>
 
         <div className="hs-agent-tools">
           <div className="hs-agent-tools-hd">
-            <span>IvyeaAgent 主脑大模型</span>
-            <em>保存后同步到本机 IvyeaAgent；留空则使用 Agent 自身默认配置。</em>
+            <span>awenAgent 主脑大模型</span>
+            <em>保存后同步到本机 awenAgent；留空则使用 Agent 自身默认配置。</em>
           </div>
           <LLMModelBlock
             title="Agent 模型"
             hint="可与全局兜底大模型不同。"
-            providerKey="ivyea_agent_provider" modelKey="ivyea_agent_model"
-            apiKeyKey="ivyea_agent_api_key" baseUrlKey="ivyea_agent_base_url"
+            providerKey="awen_agent_provider" modelKey="awen_agent_model"
+            apiKeyKey="awen_agent_api_key" baseUrlKey="awen_agent_base_url"
+            slot="agent"
             vals={vals} set={set}
           />
         </div>
       </Section>
+
+      {/* -- 核心 1.5: 订阅制模型登录（仅管理员）-- */}
+      {isAdmin && (
+        <div className="hs-section">
+          <div className="hs-section-hd">
+            <div>
+              <div className="hs-section-title">订阅登录</div>
+              <div className="hs-section-desc">
+                Claude 订阅、OpenAI Codex、Gemini Code Assist、Qwen、GitHub Copilot 这几家不是填 API Key，
+                而是要走一次授权登录。以前只能去 awenAgent 的命令行做，现在在这里点几下就行。
+                登录完成后，它们会出现在任务台模型选择器的「已配置」分组里。
+              </div>
+            </div>
+          </div>
+          <div className="hs-fields">
+            <SubscriptionLogin />
+          </div>
+        </div>
+      )}
 
       {/* -- 核心 2: 数据源 -- */}
       <Section
@@ -1030,7 +2310,7 @@ export default function HubSettings() {
 
         <Field
           label={<><Tag kind="opt">可选</Tag>卖家精灵 Secret Key</>}
-          hint={<>竞品关键词分析。保存后自动注册为 MCP 数据源，IvyeaAgent 对话中即可调用。登录 sellersprite.com → 账户 → API Key。</>}
+          hint={<>竞品关键词分析。保存后自动注册为 MCP 数据源，awenAgent 对话中即可调用。登录 sellersprite.com → 账户 → API Key。</>}
         >
           <SecretInput value={vals.sellersprite_key} onChange={v => set("sellersprite_key", v)} placeholder="你的卖家精灵 Secret Key" />
           <TestButton settingKey="sellersprite_key" value={vals.sellersprite_key} label="测试" />
@@ -1042,15 +2322,25 @@ export default function HubSettings() {
       <Section
         title="全局兜底大模型"
         dataTour="settings-fallback"
-        desc={<>所有板块的统一文本出口，也是 AI 问答的默认模型。建议配置一个稳定的文本大模型；IvyeaAgent 主脑模型可在最上方单独指定。</>}
+        desc={<>所有板块的统一文本出口，也是 awenAgent 掉线时任务台纯聊的兜底模型。建议配置一个稳定的文本大模型；awenAgent 主脑模型可在最上方单独指定。</>}
         keys={["assistant_provider", "assistant_model", "assistant_api_key", "assistant_base_url"]}
         vals={vals} onSave={save}
       >
         <LLMModelBlock
           title="文本大模型"
-          hint="市场调研、打法推荐、广告分析、AI 问答等文本任务会使用它。"
+          hint="市场调研、打法推荐、广告分析，以及 awenAgent 不可用时的任务台对话会使用它。"
           providerKey="assistant_provider" modelKey="assistant_model"
           apiKeyKey="assistant_api_key" baseUrlKey="assistant_base_url"
+          slot="assistant"
+          inherit={[{
+            label: "沿用主脑账号",
+            title: "把 awenAgent 主脑那套 Provider / 密钥 / 地址抄过来，只需再挑一个模型",
+            run: () => {
+              set("assistant_provider", vals.awen_agent_provider);
+              set("assistant_api_key", vals.awen_agent_api_key);
+              set("assistant_base_url", vals.awen_agent_base_url);
+            },
+          }]}
           vals={vals} set={set}
         />
       </Section>
@@ -1070,6 +2360,27 @@ export default function HubSettings() {
           hint="模型必须支持图片输入（多模态）。"
           providerKey="vision_provider" modelKey="vision_model"
           apiKeyKey="vision_api_key" baseUrlKey="vision_base_url"
+          slot="vision" hintKind="vision"
+          inherit={[
+            {
+              label: "沿用主脑账号",
+              title: "抄 awenAgent 主脑那套账号。注意仍要挑一个**支持图片输入**的模型",
+              run: () => {
+                set("vision_provider", vals.awen_agent_provider);
+                set("vision_api_key", vals.awen_agent_api_key);
+                set("vision_base_url", vals.awen_agent_base_url);
+              },
+            },
+            {
+              label: "沿用兜底账号",
+              title: "抄上面「全局兜底大模型」那套账号",
+              run: () => {
+                set("vision_provider", vals.assistant_provider);
+                set("vision_api_key", vals.assistant_api_key);
+                set("vision_base_url", vals.assistant_base_url);
+              },
+            },
+          ]}
           vals={vals} set={set}
         />
       </Section>
@@ -1077,13 +2388,13 @@ export default function HubSettings() {
       {/* -- 核心 4: 图片生成服务 -- */}
       <Section
         title="图片生成服务"
-        desc={<>默认走 Apimart。Apimart 不稳定/用不了时，在下方「自定义生图接口」填任意兼容 OpenAI <code>/images/generations</code> 的平台（地址 + Key + 模型名）即可切换——Listing 图片、图片翻译、AI 生图都会改用它。</>}
+        desc={<>默认走 Apimart。Apimart 不稳定/用不了时，在下方「自定义生图接口」填任意兼容 OpenAI <code>/images/generations</code> 的平台（地址 + Key + 模型名）即可切换——Listing 图片、图片翻译、任务台作图都会改用它。</>}
         keys={["apimart_key", "apimart_base", "image_model", "image_api_key", "image_base_url"]}
         vals={vals} onSave={save}
       >
         <Field
           label={<><Tag kind="rec">默认</Tag>Apimart API Key</>}
-          hint={<>不接自定义平台时用它；Listing 图片生成、图片翻译和 AI 生图共用。</>}
+          hint={<>不接自定义平台时用它；Listing 图片生成、图片翻译和任务台作图共用。</>}
         >
           <div className="hs-key-inline">
             <SecretInput value={vals.apimart_key} onChange={v => set("apimart_key", v)} placeholder="sk-..." />
@@ -1093,7 +2404,17 @@ export default function HubSettings() {
 
         <div className="hs-row2">
           <Field label="模型名称" hint="Apimart 用 gpt-image-2；自定义平台填它的模型名（如 dall-e-3）。">
-            <TxtInput value={vals.image_model} onChange={v => set("image_model", v)} placeholder="gpt-image-2" />
+            {/* 清单按**生效的那套账号**取：填了自定义地址就问自定义那家，没填就问
+                Apimart —— 和真生成时走的端点完全同一套优先级（见后端 _SLOT_KEYS）。
+                取不到（Apimart 余额不足时会返回 402）就还是手输，不挡人。 */}
+            <ModelNameInput
+              slot="image"
+              provider="" baseUrl={vals.image_base_url} apiKey={vals.image_api_key}
+              value={vals.image_model} onChange={v => set("image_model", v)}
+              placeholder="gpt-image-2" hintKind="image"
+              fallbackModels={["gpt-image-2", "gpt-image-1", "dall-e-3", "flux-1.1-pro",
+                               "flux-kontext-pro", "seedream-4.0", "Tongyi-MAI/Z-Image-Turbo"]}
+            />
           </Field>
           <Field label="Apimart 地址" hint="非官方网关才需改，否则保持默认。">
             <TxtInput value={vals.apimart_base} onChange={v => set("apimart_base", v)} placeholder="https://api.apimart.ai/v1" />
@@ -1101,10 +2422,10 @@ export default function HubSettings() {
         </div>
 
         <div style={{ borderTop: "1px solid var(--b)", margin: "6px 0 2px", paddingTop: 10 }}>
-          <div style={{ fontSize: 11, color: "var(--t2)", fontWeight: 600, marginBottom: 2 }}>
+          <div style={{ fontSize: "var(--fs-11)", color: "var(--t2)", fontWeight: 600, marginBottom: 2 }}>
             自定义生图接口（填了就用它，不再走 Apimart）
           </div>
-          <div style={{ fontSize: 10, color: "var(--t3)", marginBottom: 8 }}>
+          <div className="hs-inline-hint" style={{ fontSize: "var(--fs-10)", color: "var(--t3)", marginBottom: 8 }}>
             任意兼容 OpenAI <code>/images/generations</code> 的平台均可：同步返回（b64/url）或 Apimart 式异步任务都支持。换平台时记得把上面的「模型名称」也改成该平台的模型名。
           </div>
         </div>
@@ -1120,6 +2441,15 @@ export default function HubSettings() {
         </div>
         <TestButton settingKey="image_base_url" value={vals.image_base_url} label="测试自定义生图接口" />
       </Section>
+
+      {/* 飞书放在折叠线**之上**：它现在同时管服务器告警、店铺巡检卡片、审批按钮
+          和飞书对话四条链路，是第一次部署就要配的东西。塞进「系统状态与更多设置」
+          里等于没有——没人会为了找配置去点开一个叫「系统状态」的折叠块。 */}
+      <FeishuSection vals={vals} set={set} save={save} />
+
+      {/* 亚马逊官方 API 紧跟数据源：它和领星是同一类东西（数据从哪来），
+          只是一个是第一手、一个是转手。 */}
+      <AmazonSection />
 
       {/* ── 系统状态及以下：默认折叠，点开查看 ── */}
       <div className="hs-advanced">
@@ -1138,15 +2468,15 @@ export default function HubSettings() {
       {/* -- 可选能力：AI 降级、视觉、Embedding -- */}
       <Section
         title="可选 AI 能力"
-        desc="低频或增强项：AI 降级链、图片分析、知识库语义检索和自动修复。默认值已可覆盖大多数场景。"
+        desc="低频或增强项：AI 降级链、图片分析和自动修复。默认值已可覆盖大多数场景。"
         keys={["text_ai_providers", "autofix_enabled",
-          "vision_ai_providers", "openai_api_key", "deepseek_api_key",
-          "gbrain_embed_provider", "gbrain_embed_model", "gbrain_embed_api_key"]}
+          "skill_market_enabled", "skill_market_url", "skill_market_pubkey",
+          "vision_ai_providers", "openai_api_key", "deepseek_api_key"]}
         vals={vals} onSave={save}
       >
         <Field label={<><Tag kind="opt">可选</Tag>AI 提供商顺序（全局降级链）</>}
-          hint={<>逗号分隔，按顺序尝试：<code>ivyea-agent</code> <code>deepseek</code> <code>assistant</code>（全局兜底大模型）<code>codex</code> <code>claude</code>。<code>hermes</code> 已从降级链移除，填了也会被忽略。</>}>
-          <TxtInput value={vals.text_ai_providers} onChange={v => set("text_ai_providers", v)} placeholder="ivyea-agent,deepseek,assistant,codex,claude" />
+          hint={<>逗号分隔，按顺序尝试：<code>awen-agent</code> <code>deepseek</code> <code>assistant</code>（全局兜底大模型）<code>codex</code> <code>claude</code>。<code>hermes</code> 已从降级链移除，填了也会被忽略。</>}>
+          <TxtInput value={vals.text_ai_providers} onChange={v => set("text_ai_providers", v)} placeholder="awen-agent,deepseek,assistant,codex,claude" />
         </Field>
         <Field label={<><Tag kind="opt">可选</Tag>视觉识别顺序（图片分析）</>}
           hint={<>Listing「AI 图片分析」走这条链。Apimart 只生图、无视觉，不在此列。</>}>
@@ -1161,50 +2491,47 @@ export default function HubSettings() {
           <SecretInput value={vals.deepseek_api_key} onChange={v => set("deepseek_api_key", v)} placeholder="sk-..." />
         </Field>
 
-        <div style={{ borderTop: "1px solid var(--b)", margin: "4px 0 2px", paddingTop: 10 }}>
-          <div style={{ fontSize: 11, color: "var(--t2)", fontWeight: 600, marginBottom: 2 }}>
-            知识库语义检索（Embedding）
+
+        <div className="hs-agent-card hs-agent-card-wide">
+          <div className="hs-agent-card-title"><Tag kind="opt">功能</Tag>能力市场（门道社区）</div>
+          <div className="hs-agent-card-desc">
+            从门道社区浏览并安装 Skill。<b>默认关闭</b>：它会向社区发起请求，而 awenops 的默认立场是数据不出你的机器。
+            开启后也只在你主动浏览或安装时联网 —— 请求匿名、不带机器标识、不回传任何使用统计；装过的 Skill 落在本地，断网照常用。
+            安装前会先给你看这个 Skill 的能力清单，确认后才落盘。
           </div>
-          <div style={{ fontSize: 10, color: "var(--t3)", marginBottom: 8 }}>
-            配置后知识库支持语义检索；留空则仅关键词检索。
-          </div>
+          <label className="hs-toggle-line">
+            <input type="checkbox" checked={vals.skill_market_enabled}
+              onChange={e => set("skill_market_enabled", e.target.checked)} />
+            <span>{vals.skill_market_enabled ? "能力市场已开启（Skill 中心 → 社区市场）" : "能力市场已关闭"}</span>
+          </label>
+          {vals.skill_market_enabled && (
+            <>
+              <Field label="市场地址" hint={<>留空用默认的门道社区。可换成自建镜像 —— 换源之后仍会校验安装包的校验和与签名。</>}>
+                <TxtInput value={vals.skill_market_url} onChange={v => set("skill_market_url", v)}
+                  placeholder="https://mendao.awen.com/api/market" />
+              </Field>
+              <label className="hs-toggle-line">
+                <input type="checkbox" checked={!!vals.skill_market_allow_class_b}
+                  onChange={e => set("skill_market_allow_class_b", e.target.checked)} />
+                <span>
+                  允许一键安装<b>含可执行脚本</b>的技能（B 类）——
+                  {vals.skill_market_allow_class_b ? "已开启" : "默认关闭"}
+                </span>
+              </label>
+              <div className="hs-hint" style={{ marginTop: -4, marginBottom: 10 }}>
+                关着的时候<b>不是不能用</b>：安装包随时可以下载下来自己审、自己放进技能库。
+                打开只是省掉手动那步 —— 每次安装仍会把脚本清单逐条列出来让你确认。
+                这类技能里的代码会在 Agent 用到它时在你机器上运行，
+                而社区内容<b>未经官方审计</b>。
+              </div>
+              <Field label={<><Tag kind="opt">可选</Tag>市场公钥</>}
+                hint={<>用于校验安装包签名。留空则只校验 sha256（能证明"没传坏"，但证明不了"是那边发布的那份"）。</>}>
+                <TxtInput value={vals.skill_market_pubkey} onChange={v => set("skill_market_pubkey", v)}
+                  placeholder="base64 编码的 Ed25519 公钥" />
+              </Field>
+            </>
+          )}
         </div>
-        <Field label={<><Tag kind="opt">可选</Tag>Embedding 服务商</>}
-          hint={<>支持 embedding 的服务商。<code>ollama</code> 本地免费，其余需对应 API Key。</>}>
-          <SheetSelect className="hs-input" value={vals.gbrain_embed_provider} title="Embedding 服务商"
-            onChange={p => {
-              set("gbrain_embed_provider", p);
-              if (p && !vals.gbrain_embed_model) {
-                const dm: Record<string, string> = {
-                  openai: "text-embedding-3-large", zhipu: "embedding-3",
-                  dashscope: "text-embedding-v3", minimax: "embo-01",
-                  voyage: "voyage-3", google: "text-embedding-004",
-                  ollama: "nomic-embed-text",
-                };
-                if (dm[p]) set("gbrain_embed_model", dm[p]);
-              }
-            }}
-            options={[
-              { value: "", label: "未配置（关键词检索）" },
-              { value: "ollama", label: "Ollama（本地免费）" },
-              { value: "zhipu", label: "智谱 Zhipu" },
-              { value: "dashscope", label: "阿里 DashScope" },
-              { value: "minimax", label: "MiniMax" },
-              { value: "openai", label: "OpenAI" },
-              { value: "voyage", label: "Voyage" },
-              { value: "google", label: "Google" },
-            ]} />
-        </Field>
-        {vals.gbrain_embed_provider && (
-          <Field label="Embedding 模型" hint="已按服务商预填默认值，可改">
-            <TxtInput value={vals.gbrain_embed_model} onChange={v => set("gbrain_embed_model", v)} placeholder="模型名" />
-          </Field>
-        )}
-        {vals.gbrain_embed_provider && vals.gbrain_embed_provider !== "ollama" && (
-          <Field label="Embedding API Key">
-            <SecretInput value={vals.gbrain_embed_api_key} onChange={v => set("gbrain_embed_api_key", v)} placeholder="对应服务商的 API Key" />
-          </Field>
-        )}
 
         <div className="hs-agent-card hs-agent-card-wide">
           <div className="hs-agent-card-title"><Tag kind="opt">功能</Tag>自动修复 Bug</div>
@@ -1220,12 +2547,12 @@ export default function HubSettings() {
       {/* -- 低优先级：兼容与旧链路 -- */}
       <Section
         title="兼容与旧链路"
-        desc="Hermes/Codex/Claude/GBrain 仅作为兼容或增强链路。新部署通常不需要配置。"
+        desc="Hermes/Codex/Claude 仅作为兼容或增强链路。新部署通常不需要配置。"
         keys={[
           "hermes_provider", "hermes_model", "hermes_api_key", "hermes_base_url",
           "hermes_fallback_provider", "hermes_fallback_model",
           "hermes_fallback_api_key", "hermes_fallback_base_url",
-          "hermes_bin", "codex_bin", "claude_bin", "gbrain_bin", "brain_root",
+          "hermes_bin", "codex_bin", "claude_bin", "brain_root",
         ]}
         vals={vals} onSave={save}
       >
@@ -1267,7 +2594,7 @@ export default function HubSettings() {
           style={{
             display: "flex", alignItems: "center", gap: 6, marginBottom: 4,
             background: "transparent", border: "1px solid var(--b)", borderRadius: 4,
-            padding: "5px 12px", color: "var(--t3)", fontSize: 11,
+            padding: "5px 12px", color: "var(--t3)", fontSize: "var(--fs-11)",
             cursor: "pointer", fontFamily: "var(--font)",
           }}
         >
@@ -1286,10 +2613,7 @@ export default function HubSettings() {
             <Field label={<><Tag kind="opt">可选</Tag>Claude 路径</>} hint={<>留空 = PATH 自动发现。<code>npm i -g @anthropic-ai/claude-code</code></>}>
               <TxtInput value={vals.claude_bin} onChange={v => set("claude_bin", v)} placeholder="留空 = PATH 自动发现" />
             </Field>
-            <Field label={<><Tag kind="opt">可选</Tag>GBrain 路径</>} hint={<>留空 = PATH 自动发现（通常 <code>~/.bun/bin/gbrain</code>）。</>}>
-              <TxtInput value={vals.gbrain_bin} onChange={v => set("gbrain_bin", v)} placeholder="留空 = PATH 自动发现" />
-            </Field>
-            <Field label={<><Tag kind="opt">可选 · 旧兼容</Tag>知识库根目录</>} hint={<>GBrain 笔记目录，留空 = <code>~/brain</code>。新知识库文件由 IvyeaAgent 保存在 <code>~/.ivyea/knowledge</code>。</>}>
+            <Field label={<><Tag kind="opt">可选 · 旧兼容</Tag>知识库根目录</>} hint={<>旧笔记目录，留空 = <code>~/brain</code>。新知识库文件由 awenAgent 保存在 <code>~/.awen/knowledge</code>。</>}>
               <TxtInput value={vals.brain_root} onChange={v => set("brain_root", v)} placeholder="~/brain" />
             </Field>
           </div>
@@ -1299,47 +2623,11 @@ export default function HubSettings() {
       {/* -- 区块 3 & 4: 通知 + 高级（折叠） -- */}
       <AdvancedBlock>
 
-        {/* 飞书通知 */}
-        <Section
-          title="飞书 / Lark 通知"
-          desc="CPU 告警推送到飞书群。Webhook（渠道 A）和自建应用（渠道 B）任选其一。"
-          keys={["alert_webhook", "alert_app_id", "alert_app_secret", "alert_chat_id", "alert_threshold", "alert_sustain", "alert_cooldown"]}
-          vals={vals} onSave={save}
-        >
-          <Field label="Webhook 地址" hint={<>群机器人 → 添加自定义机器人，复制 URL。设关键词 "IvyeaOps" 或 "CPU"。</>}>
-            <SecretInput value={vals.alert_webhook} onChange={v => set("alert_webhook", v)}
-              placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..." />
-            <TestButton settingKey="alert_webhook" value={vals.alert_webhook} label="发测试消息" />
-          </Field>
-          <div className="hs-row3">
-            <Field label="App ID" hint="cli_ 开头">
-              <TxtInput value={vals.alert_app_id} onChange={v => set("alert_app_id", v)} placeholder="cli_xxx" />
-            </Field>
-            <Field label="App Secret">
-              <SecretInput value={vals.alert_app_secret} onChange={v => set("alert_app_secret", v)} placeholder="App Secret" />
-            </Field>
-            <Field label="Chat ID" hint="oc_ 开头">
-              <TxtInput value={vals.alert_chat_id} onChange={v => set("alert_chat_id", v)} placeholder="oc_..." />
-            </Field>
-          </div>
-          <div className="hs-row3" style={{ marginTop: 8 }}>
-            <Field label="触发阈值">
-              <NumInput value={vals.alert_threshold} onChange={v => set("alert_threshold", v)} min={10} max={9999} unit="%" />
-            </Field>
-            <Field label="持续时长">
-              <NumInput value={vals.alert_sustain} onChange={v => set("alert_sustain", v)} min={1} max={60} unit="分钟" />
-            </Field>
-            <Field label="冷却时间">
-              <NumInput value={vals.alert_cooldown} onChange={v => set("alert_cooldown", v)} min={1} max={1440} unit="分钟" />
-            </Field>
-          </div>
-        </Section>
-
         {/* 高级 / 运维 */}
         <Section
           title="高级 / 运维"
-          desc="Listing 图片后端、嵌入服务 URL、Token 监控 DB 路径、Kiro 集成等。通常无需改动。"
-          keys={["imgflow_url", "dashboard_url", "terminal_url", "hermes_db", "codex_db", "claude_projects_dir",
+          desc="嵌入服务 URL、Token 监控 DB 路径、Kiro 集成等。通常无需改动。"
+          keys={["dashboard_url", "terminal_url", "hermes_db", "codex_db", "claude_projects_dir",
             "kiro_cli_bin", "kiro_gateway_db", "kiro_cli_db", "kiro_cli_sessions_dir",
             "feishu_codex_db", "hermes_node_bin", "bun_bin", "news_feeds"]}
           vals={vals} onSave={save}
@@ -1349,11 +2637,6 @@ export default function HubSettings() {
             hint={<>「资讯」板块的抓取源，每行一条 <code>url | 来源名 | 分类</code>（分类 = <code>ai_industry</code> 或 <code>amazon_seller</code>）。留空 = 用内置默认源。</>}>
             <AreaInput value={vals.news_feeds} onChange={v => set("news_feeds", v)} rows={4}
               placeholder={"https://example.com/feed.xml | 来源名 | ai_industry\nhttps://.../rss | 卖家资讯 | amazon_seller"} />
-          </Field>
-          <div className="hs-field-group-title">图片处理后端</div>
-          <Field label={<><Tag kind="opt">可选</Tag>Imgflow 地址</>} hint={<>Listing 图片处理后端，默认 <code>http://127.0.0.1:3001</code>。</>}>
-            <TxtInput value={vals.imgflow_url} onChange={v => set("imgflow_url", v)} placeholder="http://127.0.0.1:3001" />
-            <TestButton settingKey="imgflow_url" value={vals.imgflow_url} label="测试" />
           </Field>
           <div className="hs-row3">
             <Field label="仪表盘地址">
@@ -1403,6 +2686,12 @@ export default function HubSettings() {
         </Section>
 
       </AdvancedBlock>
+
+      {/* ── 通知与预算（管理员专属）── */}
+      <NotifySection vals={vals} set={set} save={save} />
+
+      {/* ── 对外 MCP（管理员专属，非管理员自动不渲染）── */}
+      <McpSection />
 
       {/* ── 外观 / 显示（低频显示项，放页面下方）── */}
       <AppearanceSection />

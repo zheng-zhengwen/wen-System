@@ -1,4 +1,4 @@
-"""ivyea-agent stream-json runner 升级：argv 探测门控 + NDJSON 解析。"""
+"""awen-agent stream-json runner 升级：argv 探测门控 + NDJSON 解析。"""
 from __future__ import annotations
 
 import json
@@ -25,7 +25,7 @@ _RESULT = {"type": "result", "subtype": "success", "is_error": False, "result": 
 
 def test_extract_stream_json_output():
     raw = _ndjson(_INIT, _TOOL, _TOOL_RES, _FINAL, _RESULT)
-    out = runners.extract_runner_output("ivyea-agent", raw)
+    out = runners.extract_runner_output("awen-agent", raw)
     assert out["structured"] is True
     assert out["text"] == "# 报告\n结论"
     assert out["cost_cny"] == 0.0149
@@ -36,31 +36,31 @@ def test_extract_stream_json_output():
 
 
 def test_extract_plain_text_passthrough():
-    """旧版 ivyea / 其它 runner 的纯文本输出原样透传。"""
+    """旧版 awen / 其它 runner 的纯文本输出原样透传。"""
     raw = "# 报告\n这是纯文本输出"
-    out = runners.extract_runner_output("ivyea-agent", raw)
+    out = runners.extract_runner_output("awen-agent", raw)
     assert out["structured"] is False and out["text"] == raw
     out2 = runners.extract_runner_output("hermes", _ndjson(_INIT, _RESULT))
-    assert out2["structured"] is False              # 非 ivyea runner 不解析
+    assert out2["structured"] is False              # 非 awen runner 不解析
 
 
 def test_extract_tolerates_noise_lines():
     """stderr 混入的非 JSON 行（告警/traceback）不影响解析。"""
     raw = "WARNING: something\n" + _ndjson(_INIT) + "垃圾行\n" + _ndjson(_FINAL, _RESULT)
-    out = runners.extract_runner_output("ivyea-agent", raw)
+    out = runners.extract_runner_output("awen-agent", raw)
     assert out["structured"] is True and out["text"] == "# 报告\n结论"
 
 
 def test_extract_no_result_event_falls_back():
     """有 init 但进程中途死掉没 result → 原文透传（调用方按原逻辑处理）。"""
     raw = _ndjson(_INIT, _TOOL)
-    out = runners.extract_runner_output("ivyea-agent", raw)
+    out = runners.extract_runner_output("awen-agent", raw)
     assert out["structured"] is False and out["text"] == raw
 
 
 def test_parser_incremental_progress():
     """增量喂 chunk：tool_use 事件实时更新 progress（供 job.progress 展示）。"""
-    p = runners.IvyeaStreamJsonParser()
+    p = runners.awenStreamJsonParser()
     raw = _ndjson(_INIT, _TOOL, _TOOL_RES, _RESULT)
     mid = len(raw) // 2
     p.feed(raw[:mid])
@@ -73,19 +73,19 @@ def test_parser_incremental_progress():
 
 def test_build_runner_cmd_stream_json_gated_on_help(monkeypatch):
     """新版 CLI（help 有 --output-format）加 stream-json；旧版回退纯文本。"""
-    monkeypatch.setattr(runners, "_ivyea_chat_help",
+    monkeypatch.setattr(runners, "_awen_chat_help",
                         lambda b: "--output-format {text,stream-json} --permission-mode")
-    argv = runners._build_runner_cmd("ivyea-agent", "/usr/bin/ivyea", "查广告")
+    argv = runners._build_runner_cmd("awen-agent", "/usr/bin/awen", "查广告")
     assert "--output-format" in argv and "stream-json" in argv
     assert "--approve-all" in argv                  # 默认档保持历史行为
-    monkeypatch.setattr(runners, "_ivyea_chat_help", lambda b: "old help without new flags")
-    argv_old = runners._build_runner_cmd("ivyea-agent", "/usr/bin/ivyea", "查广告")
+    monkeypatch.setattr(runners, "_awen_chat_help", lambda b: "old help without new flags")
+    argv_old = runners._build_runner_cmd("awen-agent", "/usr/bin/awen", "查广告")
     assert "--output-format" not in argv_old and "--approve-all" in argv_old
 
 
 def test_build_runner_cmd_policy_mode_env(monkeypatch):
-    monkeypatch.setattr(runners, "_ivyea_chat_help",
+    monkeypatch.setattr(runners, "_awen_chat_help",
                         lambda b: "--output-format --permission-mode {default,policy,approve-all}")
-    monkeypatch.setenv("IVYEA_OPS_IVYEA_PERMISSION_MODE", "policy")
-    argv = runners._build_runner_cmd("ivyea-agent", "/usr/bin/ivyea", "查广告")
+    monkeypatch.setenv("AWENOPS_AWEN_PERMISSION_MODE", "policy")
+    argv = runners._build_runner_cmd("awen-agent", "/usr/bin/awen", "查广告")
     assert "--permission-mode" in argv and "policy" in argv and "--approve-all" not in argv

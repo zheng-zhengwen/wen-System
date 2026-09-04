@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import logging
 import subprocess
 import sys
 import time
@@ -137,7 +138,7 @@ def _disk(mount: str | None = None) -> DiskInfo:
                                 total_hw = sectors * 512
                     break
     except OSError:
-        pass
+        logger.debug("line.split 失败（旁路，已忽略）", exc_info=True)
     pct_hw = 100.0 * d.used / total_hw if total_hw else d.percent
     return DiskInfo(
         total=d.total,
@@ -197,7 +198,7 @@ def snapshot(_user: str = Depends(require_user)) -> Snapshot:
 # Which systemd services to monitor. Tweak to taste.
 _WATCHED_SERVICES = [
     "nginx",
-    "IvyeaOps",
+    "awenops",
     "xray",
     "hysteria-server",
     "feishu-codex-relay",
@@ -210,8 +211,8 @@ _WATCHED_SERVICES = [
 
 _SERVICE_CATALOG: dict[str, tuple[str, str, str]] = {
     "nginx": ("公网入口与 HTTPS 反向代理，承载 ops/term/cli 等域名转发", "critical", "停止后所有 Web 页面、API 与终端入口不可访问"),
-    "IvyeaOps": ("当前运维控制台后端与静态页面服务", "critical", "停止后本控制台不可用"),
-    "xray": ("Xray 代理服务，提供一组备用代理链路", "optional", "对应代理不可用，不影响 IvyeaOps 本身"),
+    "awenops": ("当前运维控制台后端与静态页面服务", "critical", "停止后本控制台不可用"),
+    "xray": ("Xray 代理服务，提供一组备用代理链路", "optional", "对应代理不可用，不影响 awenops 本身"),
     "hysteria-server": ("Hysteria 代理服务，高速 UDP 代理入口", "optional", "对应代理不可用，不影响 Web 控制台"),
     "feishu-codex-relay": ("飞书消息与 Codex/AI 会话中继服务", "on-demand", "飞书侧 AI 对话和转发停止"),
     "warp-svc": ("Cloudflare WARP 客户端，用于出站网络代理/绕路", "optional", "WARP 出站链路不可用，通常不影响核心服务"),
@@ -232,8 +233,9 @@ def services(_user: str = Depends(require_user)) -> List[ServiceStatus]:
         return out
     for name in _WATCHED_SERVICES:
         try:
-            r = subprocess.run(
-                ["systemctl", "is-active", f"{name}.service"],
+            from app.core import proc as _proc
+            r = _proc.run(   # audit=False：面板每次刷新都会跑，记了只会淹掉真正的操作
+                ["systemctl", "is-active", f"{name}.service"], audit=False,
                 capture_output=True,
                 text=True,
                 timeout=2,
@@ -265,8 +267,9 @@ def logs(_user: str = Depends(require_user), n: int = 20) -> dict:
     if _WINDOWS:
         return {"lines": [], "note": "nginx 访问日志为 Linux 部署专用，Windows 不适用。"}
     try:
-        r = subprocess.run(
-            ["tail", "-n", str(n), "/var/log/nginx/access.log"],
+        from app.core import proc as _proc
+        r = _proc.run(   # audit=False：同上，只读且高频
+            ["tail", "-n", str(n), "/var/log/nginx/access.log"], audit=False,
             capture_output=True,
             text=True,
             timeout=2,
@@ -295,11 +298,11 @@ _PROC_CATALOG: dict[str, tuple[str, str, str]] = {
     "agetty": ("终端登录管理", "critical", "控制台无法登录"),
     "chronyd": ("NTP时间同步", "critical", "系统时间不准确"),
     "iscsid": ("iSCSI存储服务", "critical", "云盘可能断开"),
-    "IvyeaOps": ("运维控制台后端", "critical", "当前管理面板不可用"),
+    "awenops": ("运维控制台后端", "critical", "当前管理面板不可用"),
     # ── 按需运行 ──
     "hermes": ("Hermes AI助手主进程", "on-demand", "AI对话/飞书机器人停止，不影响网站"),
     "agy": ("Antigravity AI终端", "on-demand", "Antigravity CLI 操作停止"),
-    "python": ("Hermes/IvyeaOps Python进程", "on-demand", "对应服务停止"),
+    "python": ("Hermes/awenops Python进程", "on-demand", "对应服务停止"),
     "tsserver": ("TypeScript语言服务器", "on-demand", "代码补全/检查停止，省~150MB/个"),
     "pyright": ("Python语言服务器", "on-demand", "Python代码检查停止，省~60MB"),
     "lark-cli": ("飞书CLI(消息转发)", "on-demand", "飞书消息转发停止"),
@@ -307,9 +310,7 @@ _PROC_CATALOG: dict[str, tuple[str, str, str]] = {
     "kiro-gateway": ("Kiro Gateway API代理", "on-demand", "本地AI API代理不可用"),
     "feishu-codex-relay": ("飞书Codex中继", "on-demand", "飞书AI对话停止"),
     "agents-ui": ("Claude Code UI", "on-demand", "Web版Claude Code不可用"),
-    "postgresql": ("PostgreSQL数据库", "on-demand", "gbrain知识库不可用"),
-    "imgflow": ("图片工作流(PM2)", "on-demand", "Amazon图片处理不可用"),
-    "next-server": ("imgflow前端(Next.js)", "on-demand", "图片工作流前端不可用"),
+    "postgresql": ("PostgreSQL数据库", "on-demand", "依赖它的应用不可用"),
     "pm2": ("PM2进程管理器", "on-demand", "PM2管理的应用全部停止"),
     # ── 可关闭(省内存) ──
     "warp-svc": ("Cloudflare WARP VPN", "optional", "WARP代理不可用，其他代理不受影响。省~199MB"),
@@ -365,14 +366,10 @@ _CMDLINE_IDENTIFY: list[tuple[str, str, str, str, str]] = [
     ("/bin/agy", "Antigravity", "Antigravity AI助手", "on-demand", "Antigravity功能停止"),
     ("feishu-codex-relay/relay.js", "飞书中继(node)", "飞书消息转发服务", "on-demand", "飞书AI对话停止"),
     ("dist-server/server/index.js", "Claude Code UI", "Web版Claude Code界面", "on-demand", "Web AI界面不可用"),
-    ("amazon-image-workflow/backend", "imgflow后端", "Amazon图片工作流API", "on-demand", "图片处理不可用"),
     ("lark-cli", "飞书CLI", "飞书命令行工具", "on-demand", "飞书消息转发停止"),
     ("web-terminal/server.cjs", "Web终端插件", "Claude Code UI终端", "on-demand", "Web终端不可用"),
     ("main.py --port", "Kiro Gateway", "本地AI API代理", "on-demand", "AI API代理不可用"),
-    ("uvicorn", "IvyeaOps后端", "运维面板API服务", "critical", "当前管理面板不可用"),
-    ("next-server", "imgflow前端", "图片工作流Next.js前端", "on-demand", "图片工作流前端不可用"),
-    ("gbrain serve", "GBrain MCP", "GBrain 知识库 MCP 服务", "on-demand", "Hermes 无法调用知识库"),
-    ("gbrain", "GBrain", "GBrain 知识库进程", "on-demand", "知识库功能不可用"),
+    ("uvicorn", "awenops后端", "运维面板API服务", "critical", "当前管理面板不可用"),
     ("kiro-cli-chat acp", "Kiro(AI引擎)", "Kiro CLI AI推理进程", "optional", "当前AI会话结束"),
     ("kiro-cli-chat chat", "Kiro(会话)", "Kiro CLI 会话管理", "optional", "当前AI会话结束"),
     ("kiro-cli/bun", "Kiro(TUI)", "Kiro CLI 终端界面", "optional", "Kiro界面关闭"),
@@ -507,9 +504,11 @@ def stop_process(body: ProcessAction, _user: str = Depends(require_user)) -> dic
     """Stop a process by PID or a systemd service by name."""
     if body.service:
         try:
-            r = subprocess.run(
+            from app.core import proc as _proc
+            r = _proc.run(
                 ["systemctl", "stop", f"{body.service}.service"],
                 capture_output=True, text=True, timeout=10,
+                audit_module="server", audit_action="service.stop",
             )
             if r.returncode != 0:
                 return {"ok": False, "error": r.stderr.strip() or "stop failed"}
@@ -556,6 +555,8 @@ import sqlite3 as _sqlite3
 from pathlib import Path as _Path
 from datetime import datetime as _datetime, timedelta as _timedelta, timezone as _timezone
 
+logger = logging.getLogger("awen.routers.monitor")
+
 # Token-usage DB / session paths are read from hub_settings (External
 # Integrations). Each helper returns a Path that *might* exist; callers
 # guard with .exists(). Wrapped in functions so a hub_settings change
@@ -587,23 +588,41 @@ def _kiro_cli_sessions() -> _Path | None:
 def _claude_projects() -> _Path | None:
     from app.core import integrations
     return integrations.claude_projects_dir()
+
+def _awen_sessions_dir() -> _Path | None:
+    from app.core import integrations
+    return integrations.awen_sessions_dir()
+
+def _dsh_sessions_dir() -> _Path | None:
+    from app.core import integrations
+    return integrations.dsh_sessions_dir()
 _LOCAL_TZ = _timezone(_timedelta(hours=8))
 _KIRO_DEFAULT_CONTEXT_TOKENS = 200_000
 
 # Pricing per 1M tokens (input, output) in USD. Keys are lowercase.
+# Anthropic 一档按官方价目表（2026-06 口径）：Fable 5 是 10/50，Opus 家族 5/25，
+# Sonnet 3/15，Haiku 1/5。**别照搬旧记忆里的 15/75** —— 那是早已作废的 Opus 3 价，
+# 会把 opus 成本整体高估 3 倍。
 _PRICING = {
     # Anthropic Claude
-    "claude-opus-4-8": (15, 75), "claude-opus-4-7": (15, 75), "claude-opus-4-6": (15, 75),
-    "claude-opus-4.5": (15, 75), "claude-opus-4": (15, 75),
+    "claude-fable-5": (10, 50), "claude-mythos-5": (10, 50),
+    "claude-opus-5": (5, 25),
+    "claude-opus-4-8": (5, 25), "claude-opus-4-7": (5, 25), "claude-opus-4-6": (5, 25),
+    "claude-opus-4.5": (5, 25), "claude-opus-4": (5, 25),
+    "claude-sonnet-5": (3, 15),
     "claude-sonnet-4-6": (3, 15), "claude-sonnet-4-5": (3, 15), "claude-sonnet-4": (3, 15),
     "claude-sonnet-4.5": (3, 15), "claude-3.7-sonnet": (3, 15), "claude-3-5-sonnet": (3, 15),
-    "claude-haiku-4-5": (0.8, 4), "claude-haiku-4.5": (0.8, 4), "claude-3-5-haiku": (0.8, 4),
+    "claude-haiku-4-5": (1, 5), "claude-haiku-4.5": (1, 5), "claude-3-5-haiku": (1, 5),
     # OpenAI
     "gpt-5.5": (2, 10), "gpt-5.4": (2, 10), "gpt-5": (2, 10),
+    "gpt-5-codex": (2, 10), "gpt-5.3-codex": (2, 10),
     "gpt-4o": (2.5, 10), "gpt-4o-mini": (0.15, 0.6), "o3": (2, 8), "o4-mini": (1.1, 4.4),
     "gpt-image-2": (0, 0),  # per-image pricing, not token-based
     # DeepSeek
     "deepseek-chat": (0.27, 1.1), "deepseek-reasoner": (0.55, 2.19), "deepseek-3.2": (0.27, 1.1),
+    "deepseek-v4-pro": (0.55, 2.19), "deepseek-v4-flash": (0.27, 1.1),
+    # xAI
+    "grok-4.5": (3, 15), "grok-4": (3, 15),
     # MiniMax
     "minimax-m2.7": (0.5, 2), "minimax/minimax-m2.7": (0.5, 2), "minimax-m2": (0.5, 2),
     # Kimi / Moonshot
@@ -657,7 +676,11 @@ def _scan_claude_sessions(since: float) -> list:
         if jsonl.stat().st_mtime < since:
             continue
         session_input = session_output = session_cache_read = session_cache_write = 0
-        model = None
+        # 按"哪个模型烧掉的 token 最多"定这个会话的归属，而不是取文件里第一个 model。
+        # 取第一个会踩到 `<synthetic>` —— Claude Code 把配额提示/报错这类本地构造的
+        # 消息也写成 message.model，它排在真实回合前面，于是整个会话被记到一个不存在
+        # 的"模型"名下（改之前有 55 亿 token 挂在 `<synthetic>` 上）。
+        model_tokens: dict = {}
         ts = jsonl.stat().st_mtime
         with open(jsonl, encoding="utf-8") as fh:
             for line in fh:
@@ -667,14 +690,20 @@ def _scan_claude_sessions(since: float) -> list:
                     if isinstance(msg, dict):
                         usage = msg.get("usage", {})
                         if usage:
-                            session_input += usage.get("input_tokens", 0)
-                            session_cache_read += usage.get("cache_read_input_tokens", 0)
-                            session_cache_write += usage.get("cache_creation_input_tokens", 0)
-                            session_output += usage.get("output_tokens", 0)
-                        if not model and msg.get("model"):
-                            model = msg["model"]
+                            inp = usage.get("input_tokens", 0)
+                            c_read = usage.get("cache_read_input_tokens", 0)
+                            c_write = usage.get("cache_creation_input_tokens", 0)
+                            out = usage.get("output_tokens", 0)
+                            session_input += inp
+                            session_cache_read += c_read
+                            session_cache_write += c_write
+                            session_output += out
+                            m = msg.get("model")
+                            if m and not str(m).startswith("<"):
+                                model_tokens[m] = model_tokens.get(m, 0) + inp + out + c_read + c_write
                 except Exception:
-                    pass
+                    logger.debug("_json.loads 失败（旁路，已忽略）", exc_info=True)
+        model = max(model_tokens, key=model_tokens.get) if model_tokens else None
         if session_input > 0 or session_output > 0 or session_cache_read > 0 or session_cache_write > 0:
             results.append({
                 "ts": ts,
@@ -853,7 +882,7 @@ def _scan_hermes(since: float):
             out = (row[3] or 0) + (row[6] or 0)
             recs.append(_rec(row[0], row[1] or "hermes", inp, out, "Hermes",
                              f"Hermes/{row[7] or 'hermes'}", cache_read=row[4] or 0, cache_write=row[5] or 0))
-            total += inp + out
+            total += inp + out + (row[4] or 0) + (row[5] or 0)
         conn.close()
         return recs, {"source": "Hermes", "path": p, "status": "included", "sessions": len(recs), "total": total}
     except Exception as e:
@@ -931,10 +960,142 @@ def _scan_claude(since: float):
         for s in _scan_claude_sessions(since):
             recs.append(_rec(s["ts"], s["model"], s["input"], s["output"], "Claude Code", "Claude Code",
                              cache_read=s.get("cache_read", 0), cache_write=s.get("cache_write", 0)))
-            total += s["input"] + s["output"]
+            total += s["input"] + s["output"] + s.get("cache_read", 0) + s.get("cache_write", 0)
         return recs, {"source": "Claude Code", "path": p, "status": "included", "sessions": len(recs), "total": total}
     except Exception:
         return recs, {"source": "Claude Code", "path": p, "status": "error"}
+
+
+def _scan_awen_agent(since: float):
+    """Scan awen-agent 的会话账本 ~/.awen/sessions/<id>.json。
+
+    **两套账，都要读**：
+      · 顶层 ``usage`` = {prompt, completion, cost, turns}，只有 CLI 那条路
+        （awen chat 的 meter）会写；
+      · ``stats.usage`` = {prompt_tokens, completion_tokens, prompt_cache_hit_tokens}，
+        由 awen_agent.sessions._merge_stats 逐轮累加，**serve/HTTP 那条路（工作台、
+        /agents、ops 的自动链路）只写这一份，顶层 usage 恒为 {}**。
+
+    只认顶层 usage 的话，如今绝大多数会话都会被当成"没有用量"整个跳过 —— 实测
+    212 份会话里 16 份、共 3540 万 token 就是这么丢的。所以顶层为空时回落到
+    stats.usage。
+
+    ``prompt_tokens`` 走 OpenAI 兼容语义，**已经含缓存命中那部分**，所以拆成
+    input = prompt - cache_hit、cache_read = cache_hit：总量不变，缓存列才有内容。
+
+    这个目录里还混着 MCP 的结果转储（{doc,data} 那种），靠"两套账都没有数"筛掉。
+    """
+    import json as _json
+    p = _awen_sessions_dir()
+    if not (p and p.exists()):
+        return [], {"source": "awen Agent", "path": p, "status": "missing"}
+    recs, total = [], 0
+    try:
+        for f in p.glob("*.json"):
+            try:
+                if f.stat().st_mtime < since:
+                    continue
+                d = _json.loads(f.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if not isinstance(d, dict):
+                continue
+            usage = d.get("usage")
+            inp = out = cache_read = 0
+            if isinstance(usage, dict) and usage:
+                inp = int(usage.get("prompt") or usage.get("prompt_tokens") or 0)
+                out = int(usage.get("completion") or usage.get("completion_tokens") or 0)
+            if inp <= 0 and out <= 0:
+                stats = d.get("stats")
+                su = stats.get("usage") if isinstance(stats, dict) else None
+                if isinstance(su, dict) and su:
+                    prompt = int(su.get("prompt_tokens") or 0)
+                    # 缓存命中是 prompt 的子集；min() 兜住 provider 报反的情况，
+                    # 免得 input 变成负数把总量算小。
+                    cache_read = max(0, min(prompt, int(su.get("prompt_cache_hit_tokens") or 0)))
+                    inp = prompt - cache_read
+                    out = int(su.get("completion_tokens") or 0)
+            if inp <= 0 and out <= 0 and cache_read <= 0:
+                continue
+            ts = d.get("updated") or d.get("created") or f.stat().st_mtime
+            try:
+                ts = float(ts)
+            except Exception:
+                ts = f.stat().st_mtime
+            recs.append(_rec(ts, d.get("model") or "awen-agent", inp, out,
+                             "awen Agent", "awen Agent", cache_read=cache_read))
+            total += inp + out + cache_read
+        return recs, {"source": "awen Agent", "path": p, "status": "included",
+                      "sessions": len(recs), "total": total}
+    except Exception as e:
+        return recs, {"source": "awen Agent", "path": p, "status": f"error: {e}"}
+
+
+def _scan_dsh(since: float):
+    """Scan DeepSeek Harness 会话 ~/.dsh/sessions/<proj>/<session>/session.jsonl.zstd。
+
+    每个 ``assistant/message`` 事件带
+    ``usage: {inputTokens, outputTokens, reasoningTokens, cacheReadTokens}``。
+    reasoning 归到 output（和 Hermes 一样：思考 token 是按输出价计的）。
+
+    这些文件是 zstd 压的，而 awenops 跑在系统 python 上、没有 zstandard 包 ——
+    所以走 `zstd -dc` 子进程。没这个二进制就整源跳过并在覆盖表里说明，绝不静默归零。
+    事件自带毫秒时间戳，按事件时间分桶，比按文件 mtime 准。
+    """
+    import json as _json
+    import shutil as _shutil
+    import subprocess as _subprocess
+    p = _dsh_sessions_dir()
+    if not (p and p.exists()):
+        return [], {"source": "DeepSeek Harness", "path": p, "status": "missing"}
+    zstd = _shutil.which("zstd")
+    if not zstd:
+        return [], {"source": "DeepSeek Harness", "path": p, "status": "error: 缺少 zstd 命令，无法解压会话"}
+    recs, total = [], 0
+    try:
+        for f in p.rglob("session.jsonl.zstd"):
+            if f.stat().st_mtime < since:
+                continue
+            try:
+                raw = _subprocess.run([zstd, "-dc", str(f)], capture_output=True,
+                                      timeout=60).stdout.decode("utf-8", "ignore")
+            except Exception:
+                continue
+            # 一个会话可能横跨多天，按天聚合而不是整包记在最后一次修改时间上。
+            per_day: dict = {}
+            model = None
+            for line in raw.splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    d = _json.loads(line)
+                except Exception:
+                    continue
+                data = d.get("data") or {}
+                if not model and isinstance(data, dict) and data.get("model"):
+                    model = data["model"]
+                if d.get("type") != "assistant/message":
+                    continue
+                u = (data or {}).get("usage") or {}
+                if not u:
+                    continue
+                ms = d.get("time")
+                ts = (ms / 1000.0) if isinstance(ms, (int, float)) and ms > 1e11 else f.stat().st_mtime
+                day = _datetime.fromtimestamp(ts, tz=_LOCAL_TZ).strftime("%Y-%m-%d")
+                b = per_day.setdefault(day, {"ts": ts, "input": 0, "output": 0, "cache_read": 0})
+                b["input"] += int(u.get("inputTokens") or 0)
+                b["output"] += int(u.get("outputTokens") or 0) + int(u.get("reasoningTokens") or 0)
+                b["cache_read"] += int(u.get("cacheReadTokens") or 0)
+            for b in per_day.values():
+                if b["input"] <= 0 and b["output"] <= 0 and b["cache_read"] <= 0:
+                    continue
+                recs.append(_rec(b["ts"], model or "deepseek-harness", b["input"], b["output"],
+                                 "DeepSeek Harness", "DeepSeek Harness", cache_read=b["cache_read"]))
+                total += b["input"] + b["output"] + b["cache_read"]
+        return recs, {"source": "DeepSeek Harness", "path": p, "status": "included",
+                      "sessions": len(recs), "total": total}
+    except Exception as e:
+        return recs, {"source": "DeepSeek Harness", "path": p, "status": f"error: {e}"}
 
 
 # Registry of all token sources. Append a (name, scanner) here to add a tool.
@@ -945,6 +1106,8 @@ _TOKEN_SOURCES = [
     ("Codex", lambda since: _scan_codex_source(since, _codex_db, "Codex", "Codex")),
     ("Feishu Codex", lambda since: _scan_codex_source(since, _feishu_codex_db, "Hermes", "Hermes/Feishu Codex Relay")),
     ("Claude Code", _scan_claude),
+    ("awen Agent", _scan_awen_agent),
+    ("DeepSeek Harness", _scan_dsh),
 ]
 
 
@@ -984,12 +1147,15 @@ def token_usage(_user: str = Depends(require_user)) -> dict:
               "cache_read_tokens": 0, "cache_write_tokens": 0,
               "total_tokens": 0, "cost_usd": 0.0}
 
-    def _bump(m: dict, key: str, inp: int, out: int, cost: float, source: str | None = None, credits: float = 0.0):
+    def _bump(m: dict, key: str, inp: int, out: int, cost: float, source: str | None = None,
+              credits: float = 0.0, cache_read: int = 0, cache_write: int = 0):
         if key not in m:
             m[key] = {
                 "sessions": 0,
                 "input_tokens": 0,
                 "output_tokens": 0,
+                "cache_read_tokens": 0,
+                "cache_write_tokens": 0,
                 "total_tokens": 0,
                 "cost_usd": 0.0,
                 "credits": 0.0,
@@ -998,7 +1164,9 @@ def token_usage(_user: str = Depends(require_user)) -> dict:
         m[key]["sessions"] += 1
         m[key]["input_tokens"] += inp
         m[key]["output_tokens"] += out
-        m[key]["total_tokens"] += inp + out
+        m[key]["cache_read_tokens"] += cache_read
+        m[key]["cache_write_tokens"] += cache_write
+        m[key]["total_tokens"] += inp + out + cache_read + cache_write
         m[key]["cost_usd"] = round(m[key]["cost_usd"] + cost, 4)
         m[key]["credits"] = round(m[key]["credits"] + credits, 6)
         if source:
@@ -1009,19 +1177,27 @@ def token_usage(_user: str = Depends(require_user)) -> dict:
         day = dt.strftime("%Y-%m-%d")
         week = dt.strftime("%Y-W%W")
         month = dt.strftime("%Y-%m")
-        total = inp + out
+        # **缓存也是 token。** 少算它就没法跨工具比：Claude Code 每次请求的裸
+        # input_tokens 只有几个 token，整段上下文都记在 cache_read 里；而 Codex 上报的
+        # input_tokens 本身就含 cached_input_tokens（实测 96.5% 是缓存）。只算 in+out
+        # 等于把 Claude 的量抹成 0、把 Codex 的照单全收 —— 排行榜会整个反过来。
+        total = inp + out + cache_read + cache_write
         cost = _estimate_cost(model, inp, out, cache_read, cache_write)
         for key, m in [(day, daily_map), (week, weekly_map), (month, monthly_map)]:
             if key not in m:
-                m[key] = {"sessions": 0, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "cost_usd": 0.0}
+                m[key] = {"sessions": 0, "input_tokens": 0, "output_tokens": 0,
+                          "cache_read_tokens": 0, "cache_write_tokens": 0,
+                          "total_tokens": 0, "cost_usd": 0.0}
             m[key]["sessions"] += 1
             m[key]["input_tokens"] += inp
             m[key]["output_tokens"] += out
+            m[key]["cache_read_tokens"] += cache_read
+            m[key]["cache_write_tokens"] += cache_write
             m[key]["total_tokens"] += total
             m[key]["cost_usd"] = round(m[key]["cost_usd"] + cost, 4)
-        _bump(agent_map, agent, inp, out, cost, source, credits)
+        _bump(agent_map, agent, inp, out, cost, source, credits, cache_read, cache_write)
         if day == today_key:
-            _bump(today_agent_map, agent, inp, out, cost, source, credits)
+            _bump(today_agent_map, agent, inp, out, cost, source, credits, cache_read, cache_write)
         # Model breakdown — same full window as agents (口径统一).
         if model:
             if model not in model_map:
@@ -1061,13 +1237,14 @@ def token_usage(_user: str = Depends(require_user)) -> dict:
             _add(ar["ts"], ar["model"], ar["input"], ar["output"], ar["agent"],
                  ar["source"], ar.get("credits", 0.0), ar.get("cache_read", 0), ar.get("cache_write", 0))
             agg = backfill_sources.setdefault(ar["source"], 0)
-            backfill_sources[ar["source"]] = agg + ar["input"] + ar["output"]
+            backfill_sources[ar["source"]] = (agg + ar["input"] + ar["output"]
+                                              + ar.get("cache_read", 0) + ar.get("cache_write", 0))
         for src, tok in sorted(backfill_sources.items()):
             coverage.append({"source": f"{src} (归档)", "path": "token_archive.sqlite3",
                              "status": "from-archive", "sessions": 0,
                              "total_tokens": tok, "credits": 0})
     except Exception:
-        pass
+        logger.debug("backfill_sources: dict = {} 失败（旁路，已忽略）", exc_info=True)
 
     # Format output
     def _to_list(m, key_name):
@@ -1082,7 +1259,8 @@ def token_usage(_user: str = Depends(require_user)) -> dict:
             rows.append(row)
         return sorted(rows, key=lambda x: x["total_tokens"], reverse=True)
 
-    daily = _to_list(daily_map, "day")[:90]
+    # 前端日历热力图要画满 26 周（182 天），截到 90 条就有一半格子是空的。
+    daily = _to_list(daily_map, "day")[:400]
     weekly = _to_list(weekly_map, "week")[:26]
     monthly = _to_list(monthly_map, "month")[:12]
     models = sorted(

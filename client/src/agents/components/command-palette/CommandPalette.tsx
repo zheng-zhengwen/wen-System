@@ -11,7 +11,6 @@ import {
   MessageSquarePlus,
   RefreshCw,
   Settings,
-  SunMoon,
   X,
 } from 'lucide-react';
 
@@ -26,7 +25,6 @@ import {
   DialogContent,
   DialogTitle,
 } from '../../shared/view/ui';
-import { useTheme } from '../../contexts/ThemeContext';
 import { usePaletteOps } from '../../contexts/PaletteOpsContext';
 import { SETTINGS_MAIN_TABS } from '../settings/constants/constants';
 import type { AppTab, Project } from '../../types/app';
@@ -48,11 +46,13 @@ const PAGE_LABELS: Record<Page, string> = {
   branches: 'Branches',
 };
 
-type CommandPaletteProps = {
+export type CommandPaletteProps = {
   selectedProject: Project | null;
   onStartNewChat: (project: Project) => void;
   onOpenSettings: (tab?: string) => void;
   onShowTab?: (tab: AppTab) => void;
+  /** 由 CommandPaletteHost 传入：本体是被 Cmd+K 拉起来的，挂上就该是打开状态。 */
+  defaultOpen?: boolean;
 };
 
 const NAV_TABS: Array<{ id: AppTab; label: string; keywords: string }> = [
@@ -68,11 +68,11 @@ export default function CommandPalette({
   onStartNewChat,
   onOpenSettings,
   onShowTab,
+  defaultOpen = false,
 }: CommandPaletteProps) {
-  const [open, setOpen] = React.useState(false);
+  const [open, setOpen] = React.useState(defaultOpen);
   const [search, setSearch] = React.useState('');
   const [pages, setPages] = React.useState<Page[]>([]);
-  const { toggleDarkMode } = useTheme();
   const navigate = useNavigate();
   const ops = usePaletteOps();
 
@@ -211,10 +211,6 @@ export default function CommandPalette({
                 <CommandItem value="Open settings" onSelect={() => run(() => onOpenSettings())}>
                   <Settings className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
                   <span className="flex-1">Open settings</span>
-                </CommandItem>
-                <CommandItem value="Toggle theme dark light mode" onSelect={() => run(toggleDarkMode)}>
-                  <SunMoon className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
-                  <span className="flex-1">Toggle theme</span>
                 </CommandItem>
               </CommandGroup>
             )}

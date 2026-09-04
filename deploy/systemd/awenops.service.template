@@ -1,0 +1,16 @@
+[Unit]
+Description=awenops (Amazon operations hub)
+After=network.target
+
+[Service]
+Type=simple
+User=${AWENOPS_USER}
+WorkingDirectory=${INSTALL_DIR}/server
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=${INSTALL_DIR}/server
+ExecStart=${PYTHON_BIN} -m uvicorn app.main:app --host 127.0.0.1 --port ${AWENOPS_PORT} --log-level info
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

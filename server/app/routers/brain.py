@@ -1,7 +1,8 @@
-"""GBrain web API for the IvyeaOps knowledge base UI."""
+"""GBrain web API for the awenops knowledge base UI."""
 from __future__ import annotations
 
 import asyncio
+import logging
 import codecs
 import json
 import time
@@ -12,23 +13,26 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.core.proc import no_window_kwargs
-from app.core.security import require_user
+from app.core.security import require_user, require_user_info
 from app.services import brain_chat_service as bc
-from app.services import gbrain_service as gb
-from app.services import ivyea_agent_service as ia
+from app.services import brain_files as bf
+from app.services import console_sessions
+from app.services import awen_agent_service as ia
+
+logger = logging.getLogger("awen.routers.brain")
 
 
 router = APIRouter(dependencies=[Depends(require_user)])
 
 
 class SearchBody(BaseModel):
-    query: str = Field(..., min_length=1, max_length=gb.MAX_QUERY_CHARS)
+    query: str = Field(..., min_length=1, max_length=bf.MAX_QUERY_CHARS)
     mode: str = Field("search", pattern="^(search|query)$")
 
 
 class FileWriteBody(BaseModel):
     path: str = Field(..., min_length=1, max_length=240)
-    content: str = Field(..., max_length=gb.MAX_WRITE_BYTES)
+    content: str = Field(..., max_length=bf.MAX_WRITE_BYTES)
 
 
 class PageBody(BaseModel):
@@ -68,30 +72,95 @@ class IngestUrlBody(BaseModel):
 def _handle(fn, *args, **kwargs):
     try:
         return fn(*args, **kwargs)
-    except (gb.GBrainError, bc.BrainChatError) as e:
+    except (bf.BrainFilesError, bc.BrainChatError) as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
 
-def _ivyea_front_door() -> bool:
-    """The governed IvyeaAgent knowledge base is the front door for search and
+def _awen_front_door() -> bool:
+    """The governed awenAgent knowledge base is the front door for search and
     pages; the legacy GBrain markdown store is only a fallback when the local
-    IvyeaAgent service is down."""
-    return bc.ivyea_chat_available()
+    awenAgent service is down."""
+    return bc.awen_chat_available()
 
 
 def _ia_search(query: str, mode: str) -> dict[str, Any]:
-    res = ia.knowledge_search(query, limit=12)
-    items: list[dict[str, Any]] = []
-    for r in (res.get("results") or []):
-        items.append({
-            "slug": r.get("id"),
-            "score": r.get("score", 0),
-            "snippet": r.get("snippet") or "",
-            "title": r.get("title") or "",
-            "source_url": r.get("source_url") or "",
-            "marketplaces": r.get("marketplaces") or [],
-        })
-    return {"mode": mode, "query": query, "raw": "", "items": items, "source": "ivyea-agent"}
+    # 适配器下沉到 brain_chat_service：搜索端点和对话引用检索必须用**同一个**，
+    # 否则又会出现"搜索走 agent、引用走 GBrain"这种一半迁完的状态。
+    return bc.ia_search(query, mode)
+
+
+def _ia_stats() -> dict[str, Any]:
+    """知识库统计，取自 awenAgent 的 /health（卡片数）+ retrieval 状态。
+
+    字段名沿用 GBrain 那套（前端已经在读），值换成 agent 的真实数字。
+    """
+    health = (ia.availability().get("health") or {})
+    know = health.get("knowledge") or {}
+    retr = health.get("retrieval") or {}
+    return {
+        "documents": int(know.get("cards") or 0),
+        "user_documents": int(know.get("user_cards") or 0),
+        "chunks": int(retr.get("knowledge_cards") or know.get("cards") or 0),
+        "sources": retr.get("sources") or [],
+        "mode": retr.get("mode") or "",
+    }
+
+
+def _ia_doctor() -> dict[str, Any]:
+    """把 agent 的检索/嵌入就绪状态整理成体检报告。
+
+    GBrain 的 `doctor` 检的是它自己那套（pglite 库、embedding provider、
+    git 仓状态）。摘除之后这里改检真正在用的东西：agent 是否在线、语义检索
+    后端是否就绪、知识库有没有内容。
+    """
+    checks: list[dict[str, Any]] = []
+    avail = ia.availability()
+    online = bool(avail.get("available"))
+    checks.append({"name": "awenAgent 服务", "status": "ok" if online else "fail",
+                   "detail": avail.get("base_url") or "",
+                   "fix": "" if online else "启动本地 awenAgent 服务（systemctl start awen-agent）"})
+    emb: dict[str, Any] = {}
+    if online:
+        try:
+            emb = (ia.retrieval_embeddings().get("embeddings") or {})
+        except Exception:  # noqa: BLE001
+            emb = {}
+    semantic = bool(emb.get("semantic_enabled"))
+    checks.append({"name": "语义检索", "status": "ok" if semantic else "warn",
+                   "detail": f"backend={emb.get('active_backend') or '-'}",
+                   "fix": "" if semantic else "检查 awenAgent 的 retrieval embeddings 配置"})
+    cards = int(((avail.get("health") or {}).get("knowledge") or {}).get("cards") or 0)
+    checks.append({"name": "知识卡片", "status": "ok" if cards else "warn",
+                   "detail": f"{cards} 张", "fix": "" if cards else "上传文档或同步知识库"})
+    bad = [c for c in checks if c["status"] == "fail"]
+    return {"status": "fail" if bad else "ok", "checks": checks, "source": "awen-agent"}
+
+
+def _ia_overview() -> dict[str, Any]:
+    emb: dict[str, Any] = {}
+    try:
+        emb = (ia.retrieval_embeddings().get("embeddings") or {})
+    except Exception:  # noqa: BLE001
+        emb = {}
+    doctor_status = "unknown"
+    try:
+        doctor_status = str(_ia_doctor().get("status") or "unknown")
+    except Exception:  # noqa: BLE001 — 体检失败不该拖垮整个概览
+        logger.debug("_ia_doctor 失败（旁路，已忽略）", exc_info=True)
+    return {
+        "brain_root": str(bf.BRAIN_ROOT),
+        "gbrain_bin": "",                     # 已摘除：知识库不再依赖外部二进制
+        "openai_configured": bool(emb.get("semantic_enabled")),   # 兼容旧键
+        "embed_configured": bool(emb.get("semantic_enabled")),
+        "embed_provider": str(emb.get("active_backend") or ""),
+        "embed_model": str(emb.get("api_model") or "内置 bge-small-zh (ONNX int8)"),
+        "search_mode": "local_hybrid_lexical_vector",
+        "doctor_status": doctor_status,
+        "git_dirty": False,
+        "git_status": "",
+        "stats": _ia_stats(),
+        "source": "awen-agent",
+    }
 
 
 def _ia_page(slug: str) -> dict[str, Any]:
@@ -101,7 +170,7 @@ def _ia_page(slug: str) -> dict[str, Any]:
     src = card.get("source_url") or ""
     header = f"> 来源：{src}\n\n" if src else ""
     return {"slug": slug, "content": (header + body) if body else body,
-            "title": card.get("title") or "", "source_url": src, "source": "ivyea-agent"}
+            "title": card.get("title") or "", "source_url": src, "source": "awen-agent"}
 
 
 def _ia_list_files() -> dict[str, Any]:
@@ -119,7 +188,7 @@ def _ia_list_files() -> dict[str, Any]:
             "marketplaces": c.get("marketplaces") or [],
         })
     files.sort(key=lambda f: (str(f.get("category")), str(f.get("name"))))
-    return {"files": files, "source": "ivyea-agent"}
+    return {"files": files, "source": "awen-agent"}
 
 
 def _ia_read_file(path: str) -> dict[str, Any]:
@@ -128,7 +197,7 @@ def _ia_read_file(path: str) -> dict[str, Any]:
     res = ia.knowledge_card(path)
     card = res.get("card") or {}
     return {"path": path, "content": str(card.get("body") or ""),
-            "title": card.get("title") or "", "source_url": card.get("source_url") or "", "source": "ivyea-agent"}
+            "title": card.get("title") or "", "source_url": card.get("source_url") or "", "source": "awen-agent"}
 
 
 def _strip_source_header(text: str) -> str:
@@ -153,7 +222,7 @@ def _ia_upload_result(resp: dict[str, Any], preview: str = "") -> dict[str, Any]
     card = apply.get("card") or resp.get("card") or {}
     up = resp.get("upload") or {}
     card_id = card.get("id") or ""
-    saved = card.get("path") or card_id or up.get("extracted_path") or "已保存到 IvyeaAgent 知识库"
+    saved = card.get("path") or card_id or up.get("extracted_path") or "已保存到 awenAgent 知识库"
     # The applied card only carries a body_hash, not the body, so fall back to the
     # source text the caller ingested for the preview/summary.
     body = str(card.get("body") or preview or "")
@@ -172,9 +241,9 @@ def _ia_upload_result(resp: dict[str, Any], preview: str = "") -> dict[str, Any]
             "summary": (card.get("snippet") or body[:200]),
             "content_type": card.get("content_type") or "note",
             "confidence": 1.0,
-            "source": "ivyea-agent",
+            "source": "awen-agent",
         },
-        "source": "ivyea-agent",
+        "source": "awen-agent",
     }
 
 
@@ -235,13 +304,13 @@ def _analysis_from_obj(obj: dict[str, Any], content: str) -> dict[str, Any]:
         "summary": (str(obj.get("summary") or "").strip()[:500] or fb["summary"]),
         "content_type": (str(obj.get("content_type") or "").strip() or fb["content_type"]),
         "confidence": max(0.0, min(1.0, confidence)),
-        "source": "ivyea-agent" if obj else "rules_fallback",
+        "source": "awen-agent" if obj else "rules_fallback",
     }
 
 
 async def _ia_ingest_analysis(text: str) -> dict[str, Any]:
     """Auto-analyze pasted/cleaned text into a title/tags/summary via the unified
-    text chain (IvyeaAgent → global fallback → …), with a rules-based fallback so
+    text chain (awenAgent → global fallback → …), with a rules-based fallback so
     ingest never depends on the model being reachable."""
     from app.services import ai_synthesis_service
 
@@ -280,137 +349,162 @@ async def _ia_ingest_analyzed(text: str, analysis: dict[str, Any] | None = None)
 
 @router.get("/overview")
 def overview() -> dict[str, Any]:
-    # Self-heal first: auto-init the DB + auto-wire Ollama embedding so the board
-    # works without manual setup. If the DB still can't come up (e.g. incompatible
-    # gbrain version), return the readiness info — with an actionable hint — instead
-    # of letting gb.overview() raise the raw "No database URL" error.
-    try:
-        ready = gb.ensure_ready()
-    except Exception as e:  # noqa: BLE001 — never let self-heal break the board
-        ready = {"db_ready": False, "version_compatible": True, "actions": [], "hint": str(e)}
-    if not ready.get("db_ready"):
-        return {"ready": ready, "embed_configured": False, "stats": {},
-                "brain_root": "", "gbrain_bin": "", "doctor_status": "not_ready",
-                "search_mode": "unknown", "git_dirty": False, "git_status": ""}
-    ov = _handle(gb.overview)
-    ov["ready"] = ready
-    return ov
+    # `ready` 是给前端留的兼容字段（Brain.tsx 会读 ready.hint / db_ready）。
+    # 知识库已经全在 awenAgent 里，没有需要自愈的本地库了，所以这里只如实报告
+    # agent 在不在线，不再做任何初始化动作。
+    online = _awen_front_door()
+    ready = {"db_ready": online, "embed_ready": online, "version_compatible": True,
+             "actions": [], "hint": "" if online else "awenAgent 未连接，知识库暂不可用。"}
+    if online:
+        ov = _ia_overview()
+        ov["ready"] = ready
+        return ov
+    return {"ready": ready, "embed_configured": False, "stats": {},
+            "brain_root": str(bf.BRAIN_ROOT), "gbrain_bin": "", "doctor_status": "not_ready",
+            "search_mode": "unknown", "git_dirty": False, "git_status": ""}
 
 
 @router.get("/stats")
 def stats() -> dict[str, Any]:
-    return _handle(gb.stats)
+    if _awen_front_door():
+        return _ia_stats()
+    return {"documents": 0, "chunks": 0, "source": "unavailable"}
 
 
 @router.get("/doctor")
 def doctor() -> dict[str, Any]:
-    return _handle(gb.doctor)
+    if _awen_front_door():
+        return _ia_doctor()
+    return {"status": "unavailable", "checks": [],
+            "hint": "awenAgent 未连接，知识库暂不可用。"}
 
 
 @router.post("/search")
 def search(body: SearchBody) -> dict[str, Any]:
-    if _ivyea_front_door():
-        try:
-            return _ia_search(body.query, body.mode)
-        except Exception:  # noqa: BLE001 — degrade to legacy GBrain search
-            pass
-    return _handle(gb.search, body.query, body.mode)
+    if not _awen_front_door():
+        raise HTTPException(status_code=503, detail="awenAgent 未连接，知识库检索暂不可用。")
+    try:
+        return _ia_search(body.query, body.mode)
+    except Exception as e:  # noqa: BLE001
+        # 已经没有第二个后端了。此前这里"降级到 GBrain"，现在如实报错 ——
+        # 悄悄返回空结果会让用户以为知识库里没有这些内容。
+        logger.warning("知识库检索失败：%s", e)
+        raise HTTPException(status_code=502, detail=f"知识库检索失败：{e}") from e
 
 
 @router.get("/page/{slug:path}")
 def get_page(slug: str) -> dict[str, Any]:
-    if _ivyea_front_door():
-        try:
-            return _ia_page(slug)
-        except Exception:  # noqa: BLE001 — degrade to legacy GBrain page
-            pass
-    return _handle(gb.get_page, slug)
+    if not _awen_front_door():
+        raise HTTPException(status_code=503, detail="awenAgent 未连接，知识库暂不可用。")
+    try:
+        return _ia_page(slug)
+    except ia.awenAgentNotFound as e:
+        # "这张卡不存在"是 agent 的**正常答复**，不是故障。agent 的原始报错里
+        # slug 是 URL 编码的，直接透出来用户读不懂。
+        raise HTTPException(status_code=404, detail="页面不存在。") from e
+    except Exception as e:  # noqa: BLE001
+        logger.warning("读取知识卡失败：%s", e)
+        raise HTTPException(status_code=502, detail=f"读取失败：{e}") from e
 
 
 @router.post("/page")
 def get_page_post(body: PageBody) -> dict[str, Any]:
-    if _ivyea_front_door():
-        try:
-            return _ia_page(body.slug)
-        except Exception:  # noqa: BLE001 — degrade to legacy GBrain page
-            pass
-    return _handle(gb.get_page, body.slug)
+    if not _awen_front_door():
+        raise HTTPException(status_code=503, detail="awenAgent 未连接，知识库暂不可用。")
+    try:
+        return _ia_page(body.slug)
+    except ia.awenAgentNotFound as e:
+        # "这张卡不存在"是 agent 的**正常答复**，不是故障。agent 的原始报错里
+        # slug 是 URL 编码的，直接透出来用户读不懂。
+        raise HTTPException(status_code=404, detail="页面不存在。") from e
+    except Exception as e:  # noqa: BLE001
+        logger.warning("读取知识卡失败：%s", e)
+        raise HTTPException(status_code=502, detail=f"读取失败：{e}") from e
 
 
 @router.get("/files")
 def list_files() -> dict[str, Any]:
-    if _ivyea_front_door():
+    if _awen_front_door():
         try:
             return _ia_list_files()
         except Exception:  # noqa: BLE001 — degrade to legacy GBrain file list
-            pass
-    return _handle(gb.list_files)
+            logger.debug("_ia_list_files 失败（旁路，已忽略）", exc_info=True)
+    return _handle(bf.list_files)
 
 
 @router.get("/file")
 def read_file(path: str = Query(..., min_length=1, max_length=240)) -> dict[str, Any]:
     # A card id (e.g. "policies.account_health_ca") has no path separator; a
     # legacy GBrain file always does. Route card ids to the governed KB.
-    if _ivyea_front_door() and "/" not in path:
+    if _awen_front_door() and "/" not in path:
         try:
             return _ia_read_file(path)
         except Exception:  # noqa: BLE001 — degrade to legacy GBrain read
-            pass
-    return _handle(gb.read_file, path)
+            logger.debug("_ia_read_file 失败（旁路，已忽略）", exc_info=True)
+    return _handle(bf.read_file, path)
 
 
 @router.put("/file")
 def write_file(body: FileWriteBody, user: str = Depends(require_user)) -> dict[str, Any]:
     _ = user
-    # IvyeaAgent front door: card ids have no path separator. Route user-card
+    # awenAgent front door: card ids have no path separator. Route user-card
     # edits through the governed update/apply flow; official (builtin) cards are
     # not editable here — they go through the governance review/publish flow.
-    if _ivyea_front_door() and "/" not in body.path:
+    if _awen_front_door() and "/" not in body.path:
         cid = body.path
         if not cid.startswith("user."):
-            raise HTTPException(status_code=400, detail="这是 IvyeaAgent 官方治理知识卡，请在「治理中心」走审核发布流程编辑，不能直接改写。")
+            raise HTTPException(status_code=400, detail="这是 awenAgent 官方治理知识卡，请在「治理中心」走审核发布流程编辑，不能直接改写。")
         try:
             title = (ia.knowledge_card(cid).get("card") or {}).get("title") or cid
         except Exception:  # noqa: BLE001
             title = cid
         try:
             resp = ia.knowledge_card_update(cid, title, _strip_source_header(body.content))
-        except ia.IvyeaAgentError as e:
-            raise HTTPException(status_code=400, detail=f"保存到 IvyeaAgent 失败：{e}") from e
+        except ia.awenAgentError as e:
+            raise HTTPException(status_code=400, detail=f"保存到 awenAgent 失败：{e}") from e
         if not resp.get("ok"):
             raise HTTPException(status_code=400, detail=f"保存失败：{resp.get('result') or resp}")
-        return {"ok": True, "path": cid, "saved_path": cid, "source": "ivyea-agent"}
-    return _handle(gb.write_file, body.path, body.content)
+        return {"ok": True, "path": cid, "saved_path": cid, "source": "awen-agent"}
+    return _handle(bf.write_file, body.path, body.content)
 
 
 @router.delete("/file")
 def delete_file(path: str = Query(..., min_length=1, max_length=240), user: str = Depends(require_user)) -> dict[str, Any]:
     _ = user
-    if _ivyea_front_door() and "/" not in path:
+    if _awen_front_door() and "/" not in path:
         cid = path
         if not cid.startswith("user."):
-            raise HTTPException(status_code=400, detail="IvyeaAgent 官方治理知识卡不能在此删除，请到「治理中心」处理。")
+            raise HTTPException(status_code=400, detail="awenAgent 官方治理知识卡不能在此删除，请到「治理中心」处理。")
         try:
             real = ia.knowledge_user_card_path(cid)
             if not real:
                 raise HTTPException(status_code=404, detail="未找到该用户知识卡对应的文件，无法删除。")
             resp = ia.knowledge_delete_file(real)
-        except ia.IvyeaAgentError as e:
-            raise HTTPException(status_code=400, detail=f"从 IvyeaAgent 删除失败：{e}") from e
+        except ia.awenAgentError as e:
+            raise HTTPException(status_code=400, detail=f"从 awenAgent 删除失败：{e}") from e
         if not resp.get("ok"):
             raise HTTPException(status_code=400, detail="删除失败。")
-        return {"ok": True, "removed": [cid], "removed_card_ids": resp.get("removed_card_ids") or [cid], "source": "ivyea-agent"}
-    return _handle(gb.delete_file, path)
+        return {"ok": True, "removed": [cid], "removed_card_ids": resp.get("removed_card_ids") or [cid], "source": "awen-agent"}
+    return _handle(bf.delete_file, path)
 
 
 @router.post("/import")
 def import_brain() -> dict[str, Any]:
-    return _handle(gb.import_brain)
+    """重建检索索引。前门是 awenAgent 的 retrieval sync。"""
+    status, raw = bc.reindex_after_save()
+    if status.startswith("failed"):
+        raise HTTPException(status_code=502, detail=status)
+    return {"ok": True, "status": status, "raw": raw}
 
 
 @router.get("/git/status")
 def git_status() -> dict[str, str]:
-    return _handle(gb.git_status)
+    # GBrain 把知识库存成一个 git 仓，这个端点是给它的"未提交改动"提示用的。
+    # awenAgent 的知识库有自己的版本与变更台账（/v1/knowledge/versions、
+    # /v1/knowledge/changes），不走 git —— 所以摘除之后这里恒为干净。
+    # 知识库不再是一个 git 仓：awenAgent 有自己的版本与变更台账
+    # （/v1/knowledge/versions、/v1/knowledge/changes）。恒为干净。
+    return {"dirty": "", "status": ""}
 
 
 @router.post("/upload")
@@ -421,11 +515,11 @@ async def upload_knowledge(
     import_after_save: bool = Form(True),
 ) -> dict[str, Any]:
     data = await file.read(bc.MAX_UPLOAD_BYTES + 1)
-    if _ivyea_front_door():
+    if _awen_front_door():
         try:
             return _ia_upload_bytes(file.filename or "upload.txt", data, title, category)
         except Exception:  # noqa: BLE001 — degrade to legacy GBrain upload
-            pass
+            logger.debug("_ia_upload_bytes 失败（旁路，已忽略）", exc_info=True)
     return _handle(bc.upload_knowledge, file.filename or "upload", data, category, title, import_after_save)
 
 
@@ -436,11 +530,11 @@ def uploads(limit: int = Query(50, ge=1, le=100)) -> dict[str, Any]:
 
 @router.post("/ingest/text")
 async def ingest_text(body: IngestTextBody) -> dict[str, Any]:
-    if _ivyea_front_door():
+    if _awen_front_door():
         try:
             return await _ia_ingest_analyzed(body.text)
         except Exception:  # noqa: BLE001 — degrade to legacy GBrain ingest
-            pass
+            logger.debug("await _ia_ingest_analyzed 失败（旁路，已忽略）", exc_info=True)
     return _handle(bc.ingest_pasted_text, body.text, body.import_after_save)
 
 
@@ -451,7 +545,7 @@ async def ingest_url(body: IngestUrlBody) -> dict[str, Any]:
     import re
 
     # A browser-like UA + Accept headers cut down on the 403 / anti-bot blocks
-    # a bare "IvyeaOps/1.0" agent triggers on many sites.
+    # a bare "awenops/1.0" agent triggers on many sites.
     fetch_headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                       "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -480,7 +574,7 @@ async def ingest_url(body: IngestUrlBody) -> dict[str, Any]:
     # Truncate for AI processing (smaller window = faster single round-trip).
     raw_text = text[:8000]
 
-    # ONE round-trip through the unified text chain (IvyeaAgent → global fallback
+    # ONE round-trip through the unified text chain (awenAgent → global fallback
     # → DeepSeek …): clean the scrape into Markdown, then a ```json``` metadata
     # block for classification. A single call keeps us well under the client
     # timeout (two sequential model calls previously blew past 180s on real
@@ -519,13 +613,13 @@ async def ingest_url(body: IngestUrlBody) -> dict[str, Any]:
     analysis = _analysis_from_obj(obj, content)
     body_text = f"> 来源：{body.url}\n\n{content}"
 
-    # Ingest through the IvyeaAgent front door with auto title/tags/summary
+    # Ingest through the awenAgent front door with auto title/tags/summary
     # (consistent with paste/file upload); fall back to legacy only when down.
-    if _ivyea_front_door():
+    if _awen_front_door():
         try:
             return await _ia_ingest_analyzed(body_text, analysis=analysis)
         except Exception:  # noqa: BLE001 — degrade to legacy GBrain ingest
-            pass
+            logger.debug("await _ia_ingest_analyzed 失败（旁路，已忽略）", exc_info=True)
     return _handle(bc.ingest_pasted_text, body_text, body.import_after_save)
 
 
@@ -552,6 +646,45 @@ def _save_migration_map(mapping: dict[str, str]) -> None:
     tmp.replace(p)
 
 
+def _mirror_to_agent(session_id: str, principal: str) -> None:
+    """把这条知识库对话的纯文本副本同步进 agent 会话库。
+
+    **是镜像，不是搬家。** agent 的会话只存 {role, content}，而知识库对话的价值
+    有一半在引证、告警、对话模式上 —— 真搬过去这些字段就没了。所以系统记录仍然是
+    brain 自己的 sqlite，这里只同步一份正文，为的是让左栏能把三个板块的对话列在
+    一起、点进来能回到这条（回的是 /brain，引证还在）。
+
+    **不会越镜像越多**：agent 的 import 按 id 覆盖写，而 id 是从 brain 的
+    session_id 算出来的，所以同一条对话每轮都写回同一个文件。
+
+    已经被 /chat/migrate-to-agent 搬过的老会话复用它当初拿到的 id —— 否则同一条
+    对话会在 agent 库里躺两份（一份随机 id 的旧迁移，一份新镜像）。
+
+    整个过程 best-effort：镜像失败绝不能影响这一轮对话本身。
+    """
+    try:
+        detail = bc.get_session(session_id)
+        messages = [
+            {"role": m.get("role"), "content": m.get("content") or ""}
+            for m in (detail.get("messages") or [])
+            if m.get("role") in {"user", "assistant"} and (m.get("content") or "").strip()
+        ]
+        if not messages:
+            return
+        mapping = _load_migration_map()
+        agent_id = mapping.get(session_id) or f"imp-brain-{session_id}"
+        resp = ia.chat_import({"id": agent_id, "messages": messages})
+        if not resp.get("ok"):
+            return
+        agent_id = str(resp.get("id") or agent_id)
+        if mapping.get(session_id) != agent_id:
+            mapping[session_id] = agent_id
+            _save_migration_map(mapping)
+        console_sessions.register_session(agent_id, principal, "", "brain")
+    except Exception:  # noqa: BLE001 — 镜像是附加价值，坏了也不该毁掉这轮对话
+        return
+
+
 @router.post("/chat/migrate-to-agent")
 def chat_migrate_to_agent() -> dict[str, Any]:
     """One-time, idempotent migration of legacy brain_chat transcripts into the
@@ -559,8 +692,8 @@ def chat_migrate_to_agent() -> dict[str, Any]:
     Safe to call repeatedly — already-migrated sessions are skipped via a marker."""
     from datetime import datetime
 
-    if not _ivyea_front_door():
-        return {"ok": False, "error": "IvyeaAgent 未连接，稍后重试", "migrated": 0, "skipped": 0, "total": 0}
+    if not _awen_front_door():
+        return {"ok": False, "error": "awenAgent 未连接，稍后重试", "migrated": 0, "skipped": 0, "total": 0}
 
     mapping = _load_migration_map()
     try:
@@ -639,16 +772,19 @@ def chat_session_update(session_id: str, body: ChatSessionUpdateBody) -> dict[st
 
 
 @router.post("/chat/sessions/{session_id}/messages")
-def chat_message_send(session_id: str, body: ChatMessageBody) -> dict[str, Any]:
-    return _handle(bc.send_message, session_id, body.content)
+def chat_message_send(session_id: str, body: ChatMessageBody,
+                      info: dict[str, Any] = Depends(require_user_info)) -> dict[str, Any]:
+    out = _handle(bc.send_message, session_id, body.content)
+    _mirror_to_agent(session_id, str(info.get("id") or ""))
+    return out
 
 
 def _sse(evt: dict[str, Any]) -> str:
     return f"data: {json.dumps(evt, ensure_ascii=False)}\n\n"
 
 
-async def _bridge_ivyea_stream(question: str, session_id: str):
-    """Drive IvyeaAgent /v1/chat/stream (blocking, stdlib urllib) from a worker
+async def _bridge_awen_stream(question: str, session_id: str):
+    """Drive awenAgent /v1/chat/stream (blocking, stdlib urllib) from a worker
     thread and yield its (event, data) frames into the async SSE handler."""
     q: asyncio.Queue = asyncio.Queue()
     sentinel = object()
@@ -660,7 +796,7 @@ async def _bridge_ivyea_stream(question: str, session_id: str):
                 "message": question,
                 "session_id": session_id or "",
                 "plan_mode": True,   # read-only knowledge turn, no side effects
-                "persist": False,    # IvyeaOps owns session persistence
+                "persist": False,    # awenops owns session persistence
             }
             for event, data in ia.chat_stream_events(payload):
                 loop.call_soon_threadsafe(q.put_nowait, (event, data))
@@ -684,22 +820,23 @@ _STREAM_DEADLINE_S = int(__import__("os").environ.get("BRAIN_CHAT_HERMES_TIMEOUT
 
 
 @router.post("/chat/sessions/{session_id}/messages/stream")
-async def chat_message_stream(session_id: str, body: ChatStreamBody):
+async def chat_message_stream(session_id: str, body: ChatStreamBody,
+                              info: dict[str, Any] = Depends(require_user_info)):
     """Stream a hermes answer token-by-token over SSE. Emits:
     start{user_message,citations} → token{text}* → done{assistant_message} | error{detail}."""
 
     async def gen():
-        # Front door: route the knowledge chat through the governed IvyeaAgent
+        # Front door: route the knowledge chat through the governed awenAgent
         # brain (its built-in Amazon knowledge base) when the local service is
         # up; skip the legacy GBrain citation retrieval in that case. Hermes /
-        # the global text chain remain only as fallbacks when IvyeaAgent is down.
-        use_ivyea = bc.ivyea_chat_available()
+        # the global text chain remain only as fallbacks when awenAgent is down.
+        use_awen = bc.awen_chat_available()
         try:
             turn = bc.begin_chat_turn(
                 session_id, body.content, regenerate=body.regenerate,
-                category=body.category, retrieve=not use_ivyea,
+                category=body.category, retrieve=not use_awen,
             )
-        except (gb.GBrainError, bc.BrainChatError) as e:
+        except (bf.BrainFilesError, bc.BrainChatError) as e:
             yield _sse({"type": "error", "detail": str(e)})
             return
         except Exception as e:  # noqa: BLE001
@@ -715,12 +852,12 @@ async def chat_message_stream(session_id: str, body: ChatStreamBody):
 
         parts: list[str] = []
         timed_out = False
-        engine = ""  # which engine produced the answer: ivyea-agent | hermes | global
+        engine = ""  # which engine produced the answer: awen-agent | hermes | global
 
-        # 1) IvyeaAgent brain (token-by-token over the local bridge).
-        if use_ivyea:
+        # 1) awenAgent brain (token-by-token over the local bridge).
+        if use_awen:
             try:
-                async for event, data in _bridge_ivyea_stream(turn.get("question") or body.content, session_id):
+                async for event, data in _bridge_awen_stream(turn.get("question") or body.content, session_id):
                     if event == "token":
                         text = str(data.get("text") or "")
                         if text:
@@ -739,12 +876,12 @@ async def chat_message_stream(session_id: str, body: ChatStreamBody):
                         # degrade to the global chain below (do not surface yet)
                         break
                 if "".join(parts).strip():
-                    engine = "ivyea-agent"
+                    engine = "awen-agent"
             except Exception:  # noqa: BLE001 — degrade to fallbacks below
-                pass
+                logger.debug("str 失败（旁路，已忽略）", exc_info=True)
 
-        # 2) Hermes (only when IvyeaAgent is unavailable), token-by-token.
-        if not "".join(parts).strip() and not use_ivyea and bc.hermes_available():
+        # 2) Hermes (only when awenAgent is unavailable), token-by-token.
+        if not "".join(parts).strip() and not use_awen and bc.hermes_available():
             spec = bc.stream_spec(turn["prompt"])
             proc = None
             try:
@@ -766,7 +903,7 @@ async def chat_message_stream(session_id: str, body: ChatStreamBody):
                     await proc.stdin.drain()
                     proc.stdin.close()
                 except Exception:
-                    pass
+                    logger.debug("proc.stdin.write 失败（旁路，已忽略）", exc_info=True)
 
                 decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
                 deadline = time.monotonic() + _STREAM_DEADLINE_S
@@ -792,17 +929,17 @@ async def chat_message_stream(session_id: str, body: ChatStreamBody):
                         try:
                             proc.kill()
                         except Exception:
-                            pass
+                            logger.debug("proc.kill 失败（旁路，已忽略）", exc_info=True)
                     try:
                         await proc.wait()
                     except Exception:
-                        pass
+                        logger.debug("proc.wait 失败（旁路，已忽略）", exc_info=True)
 
         if not engine and "".join(parts).strip():
             engine = "hermes"
 
         # Fall back to the unified global text chain (DeepSeek → Apimart → 全局兜底
-        # 大模型) when IvyeaAgent/Hermes are absent or produced nothing — so the
+        # 大模型) when awenAgent/Hermes are absent or produced nothing — so the
         # knowledge-base chat still answers without any local agent.
         if not "".join(parts).strip():
             fallback_prompt = turn.get("prompt") or (turn.get("question") or body.content)
@@ -815,18 +952,20 @@ async def chat_message_stream(session_id: str, body: ChatStreamBody):
                     engine = "global"
             except Exception as e:  # noqa: BLE001
                 if not "".join(parts).strip():
-                    yield _sse({"type": "error", "detail": f"对话失败（IvyeaAgent 与全局兜底均不可用）：{e}"})
+                    yield _sse({"type": "error", "detail": f"对话失败（awenAgent 与全局兜底均不可用）：{e}"})
                     return
 
         answer = "".join(parts)
         if not answer.strip():
-            yield _sse({"type": "error", "detail": "未能生成回答：请确认 IvyeaAgent 服务在运行，或在「系统配置 → 全局兜底大模型」配置一个文本模型。"})
+            yield _sse({"type": "error", "detail": "未能生成回答：请确认 awenAgent 服务在运行，或在「系统配置 → 全局兜底大模型」配置一个文本模型。"})
             return
         try:
             assistant = bc.commit_chat_answer(session_id, answer, turn["citations"])
-        except (gb.GBrainError, bc.BrainChatError) as e:
+        except (bf.BrainFilesError, bc.BrainChatError) as e:
             yield _sse({"type": "error", "detail": str(e)})
             return
+        # 落库成功之后才镜像，镜像里就不会出现"问了但还没答"的半截会话
+        _mirror_to_agent(session_id, str(info.get("id") or ""))
         yield _sse({
             "type": "done",
             "assistant_message": assistant,

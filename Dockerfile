@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════════
-# IvyeaOps Dockerfile — with IvyeaAgent built-in
+# awenops Dockerfile — with awenAgent built-in
 # ═══════════════════════════════════════════════════════════════════
 
 # ── Stage 1: Frontend build ────────────────────────────────────────
@@ -20,14 +20,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Python dependencies for IvyeaOps
+# Python dependencies for awenops
 COPY server/requirements.txt ./server/requirements.txt
 RUN pip install --no-cache-dir -r server/requirements.txt
 
-# Built-in IvyeaAgent runtime (Agent + knowledge base + local retrieval).
-ARG IVYEA_AGENT_REPO=https://github.com/Hector-xue/ivyea-agent.git
-ARG IVYEA_AGENT_REF=main
-RUN pip install --no-cache-dir "git+${IVYEA_AGENT_REPO}@${IVYEA_AGENT_REF}"
+# Built-in awenAgent runtime (Agent + knowledge base + local retrieval).
+ARG AWEN_AGENT_REPO=https://github.com/zheng-zhengwen/awen-agent.git
+ARG AWEN_AGENT_REF=main
+RUN pip install --no-cache-dir "git+${AWEN_AGENT_REPO}@${AWEN_AGENT_REF}"
 
 # Copy backend source
 COPY server/ ./server/
@@ -39,16 +39,16 @@ COPY --from=frontend-build /build/dist /app/client/dist
 COPY deploy/docker/nginx.conf /etc/nginx/nginx.conf
 
 # Default environment
-ENV IVYEA_OPS_DATA_DIR=/app/data
-ENV IVYEA_OPS_HOST=0.0.0.0
-ENV IVYEA_OPS_PORT=8001
+ENV AWENOPS_DATA_DIR=/app/data
+ENV AWENOPS_HOST=0.0.0.0
+ENV AWENOPS_PORT=8001
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app/server
 ENV HOME=/root
-ENV IVYEA_HOME=/root/.ivyea
+ENV AWEN_HOME=/root/.awen
 
 # Create data directory
-RUN mkdir -p /app/data /root/.ivyea/knowledge /root/.ivyea/models
+RUN mkdir -p /app/data /root/.awen/knowledge /root/.awen/models
 
 # Expose ports
 EXPOSE 80

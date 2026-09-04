@@ -1,16 +1,16 @@
-"""Config self-check probes + IvyeaAgent upgrade-from-IvyeaOps."""
+"""Config self-check probes + awenAgent upgrade-from-awenops."""
 from __future__ import annotations
 
 import asyncio
 
 from app.services import settings_test as st
-from app.services import ai_synthesis_service, ivyea_agent_service as svc
+from app.services import ai_synthesis_service, awen_agent_service as svc
 
 
 def test_catchall_is_graceful_not_scary(monkeypatch):
     monkeypatch.setattr(st, "_hub_get", lambda k: "")
     # a setting with no online test + a value → soft-ok, never "未知配置项"
-    r = asyncio.run(st.test_value("ivyea_agent_auto_start", "True"))
+    r = asyncio.run(st.test_value("awen_agent_auto_start", "True"))
     assert r["ok"] is True and "未知配置项" not in r["detail"]
     # empty → clear "not configured"
     r2 = asyncio.run(st.test_value("whatever_key", ""))
@@ -18,9 +18,9 @@ def test_catchall_is_graceful_not_scary(monkeypatch):
 
 
 def test_provider_list_validation():
-    good = asyncio.run(st.test_value("text_ai_providers", "ivyea-agent,deepseek"))
+    good = asyncio.run(st.test_value("text_ai_providers", "awen-agent,deepseek"))
     assert good["ok"] is True
-    bad = asyncio.run(st.test_value("text_ai_providers", "ivyea-agent,bogus"))
+    bad = asyncio.run(st.test_value("text_ai_providers", "awen-agent,bogus"))
     assert bad["ok"] is False and "bogus" in bad["detail"]
 
 
@@ -41,7 +41,7 @@ def test_self_check_returns_matrix(monkeypatch):
     # only deepseek + text_ai_providers configured
     monkeypatch.setattr(st, "_hub_get",
                         lambda k: "sk-x" if k == "deepseek_api_key"
-                        else ("ivyea-agent,deepseek" if k == "text_ai_providers" else ""))
+                        else ("awen-agent,deepseek" if k == "text_ai_providers" else ""))
 
     async def fake_gen(provider, prompt):
         return "可用"
@@ -57,7 +57,11 @@ def test_self_check_returns_matrix(monkeypatch):
 
 
 def test_upgrade_agent_prefers_self_update_and_restarts(monkeypatch):
-    monkeypatch.setattr(svc, "_find_ivyea_cli", lambda: "/root/.local/bin/ivyea")
+    # **必须钉死**：upgrade_agent 会去 GitHub API 取最新 release tag，取不到就直接
+    # ok=False 中止。不钉的话这条用例的成败取决于跑测试时的网络和 API 限流 ——
+    # 实测 macOS runner 上被限流，同一个 PR 里 ubuntu/windows 全过、macOS 两条齐挂。
+    monkeypatch.setattr(svc, "latest_agent_version", lambda: "v1.15.0")
+    monkeypatch.setattr(svc, "_find_awen_cli", lambda: "/root/.local/bin/awen")
     monkeypatch.setattr(svc, "_venv_python", lambda cli: "/usr/bin/python")
     versions = iter(["1.0.23", "1.0.24"])
     # version now comes from the installed package (not the possibly-stale serve)
@@ -78,7 +82,8 @@ def test_upgrade_agent_prefers_self_update_and_restarts(monkeypatch):
 
 
 def test_upgrade_agent_falls_back_to_pip_when_self_update_unavailable(monkeypatch):
-    monkeypatch.setattr(svc, "_find_ivyea_cli", lambda: "/root/.local/bin/ivyea")
+    monkeypatch.setattr(svc, "latest_agent_version", lambda: "v1.15.0")   # 同上，别出网
+    monkeypatch.setattr(svc, "_find_awen_cli", lambda: "/root/.local/bin/awen")
     monkeypatch.setattr(svc, "_venv_python", lambda cli: "/usr/bin/python")
     versions = iter(["1.0.23", "1.0.24"])
     monkeypatch.setattr(svc, "_installed_agent_version", lambda py: next(versions))
@@ -99,7 +104,7 @@ def test_upgrade_agent_falls_back_to_pip_when_self_update_unavailable(monkeypatc
 
 
 def test_upgrade_agent_no_cli(monkeypatch):
-    monkeypatch.setattr(svc, "_find_ivyea_cli", lambda: "")
+    monkeypatch.setattr(svc, "_find_awen_cli", lambda: "")
     r = svc.upgrade_agent()
     assert r["ok"] is False and "未找到" in r["error"]
 

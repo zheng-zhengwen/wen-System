@@ -1,4 +1,4 @@
-# Lightweight Windows GUI wrapper for IvyeaOps update/stop actions.
+﻿# Lightweight Windows GUI wrapper for awenops update/stop actions.
 
 param(
     [ValidateSet("update", "stop")]
@@ -20,7 +20,7 @@ Add-Type -AssemblyName System.Drawing
 
 [System.Windows.Forms.Application]::EnableVisualStyles()
 
-$title = if ($Mode -eq "update") { "IvyeaOps Update" } else { "Stop IvyeaOps" }
+$title = if ($Mode -eq "update") { "awenops Update" } else { "Stop awenops" }
 $subtitle = if ($Mode -eq "update") {
     "Updating program files while keeping your data and config."
 } else {
@@ -109,9 +109,9 @@ function Append-Log($text) {
 }
 
 $form.Add_Shown({
-    Append-Log "[IvyeaOps] Starting $Mode..."
+    Append-Log "[awenops] Starting $Mode..."
     if (-not (Test-Path $ScriptPath)) {
-        Append-Log "[IvyeaOps] ERROR: script not found: $ScriptPath"
+        Append-Log "[awenops] ERROR: script not found: $ScriptPath"
         $progress.Style = "Blocks"
         $progress.Value = 0
         $closeButton.Enabled = $true
@@ -128,7 +128,7 @@ $form.Add_Shown({
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError = $true
     $psi.CreateNoWindow = $true
-    $psi.EnvironmentVariables["IVYEAOPS_NONINTERACTIVE"] = "1"
+    $psi.EnvironmentVariables["AWENOPS_NONINTERACTIVE"] = "1"
 
     $proc = New-Object System.Diagnostics.Process
     $proc.StartInfo = $psi
@@ -141,10 +141,10 @@ $form.Add_Shown({
             $progress.Style = "Blocks"
             $progress.Value = if ($code -eq 0) { 100 } else { 0 }
             if ($code -eq 0) {
-                Append-Log "[IvyeaOps] Done."
+                Append-Log "[awenops] Done."
                 $subLabel.Text = if ($Mode -eq "update") { "Update complete." } else { "Service stopped." }
             } else {
-                Append-Log "[IvyeaOps] ERROR: exited with code $code"
+                Append-Log "[awenops] ERROR: exited with code $code"
                 $subLabel.Text = "Action failed. Review the log above."
             }
             $closeButton.Enabled = $true
@@ -156,7 +156,7 @@ $form.Add_Shown({
         $proc.BeginOutputReadLine()
         $proc.BeginErrorReadLine()
     } catch {
-        Append-Log "[IvyeaOps] ERROR: $_"
+        Append-Log "[awenops] ERROR: $_"
         $progress.Style = "Blocks"
         $progress.Value = 0
         $closeButton.Enabled = $true

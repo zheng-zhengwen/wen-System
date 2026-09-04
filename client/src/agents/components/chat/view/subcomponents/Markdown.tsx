@@ -1,15 +1,12 @@
 import React, { useMemo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import remarkMath from 'remark-math';
-import rehypeKatex from 'rehype-katex';
-// PrismLight with a curated language set — the full `Prism` build bundles every
-// Prism language and bloated the Agents chunk by hundreds of KB.
-import SyntaxHighlighter from '../../../../lib/prismLight';
-import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
+// 高亮器（Prism 引擎 + 22 种语法约 190 kB）按需加载，加载前先原样显示代码。
+import LazyHighlighter from '../../../../lib/LazyHighlighter';
 import { useTranslation } from 'react-i18next';
 import { normalizeInlineCodeFences } from '../../utils/chatFormatting';
 import { copyTextToClipboard } from '../../../../utils/clipboard';
+import { useMathPlugins } from '../../../../lib/mathPlugins';
 
 type MarkdownProps = {
   children: React.ReactNode;
@@ -34,7 +31,7 @@ const CodeBlock = ({ node, inline, className, children, ...props }: CodeBlockPro
   if (shouldInline) {
     return (
       <code
-        className={`whitespace-pre-wrap break-words rounded-md border border-gray-200 bg-gray-100 px-1.5 py-0.5 font-mono text-[0.9em] text-gray-900 dark:border-gray-700 dark:bg-gray-800/60 dark:text-gray-100 ${className || ''
+        className={`whitespace-pre-wrap break-words rounded-md border border-gray-200 bg-gray-100 px-1.5 py-0.5 font-mono text-[0.9em] text-gray-900 border-gray-700 bg-gray-800/60 text-gray-100 ${className || ''
           }`}
         {...props}
       >
@@ -96,9 +93,9 @@ const CodeBlock = ({ node, inline, className, children, ...props }: CodeBlockPro
         )}
       </button>
 
-      <SyntaxHighlighter
+      <LazyHighlighter
         language={language}
-        style={oneDark}
+        code={raw}
         customStyle={{
           margin: 0,
           borderRadius: '0.5rem',
@@ -111,9 +108,7 @@ const CodeBlock = ({ node, inline, className, children, ...props }: CodeBlockPro
               'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
           },
         }}
-      >
-        {raw}
-      </SyntaxHighlighter>
+      />
     </div>
   );
 };
@@ -121,34 +116,36 @@ const CodeBlock = ({ node, inline, className, children, ...props }: CodeBlockPro
 const markdownComponents = {
   code: CodeBlock,
   blockquote: ({ children }: { children?: React.ReactNode }) => (
-    <blockquote className="my-2 border-l-4 border-gray-300 pl-4 italic text-gray-600 dark:border-gray-600 dark:text-gray-400">
+    <blockquote className="my-2 border-l-4 border-gray-300 pl-4 italic text-gray-600 border-gray-600 text-gray-400">
       {children}
     </blockquote>
   ),
   a: ({ href, children }: { href?: string; children?: React.ReactNode }) => (
-    <a href={href} className="text-blue-600 hover:underline dark:text-blue-400" target="_blank" rel="noopener noreferrer">
+    <a href={href} className="text-blue-600 hover:underline text-blue-400" target="_blank" rel="noopener noreferrer">
       {children}
     </a>
   ),
   p: ({ children }: { children?: React.ReactNode }) => <div className="mb-2 last:mb-0">{children}</div>,
   table: ({ children }: { children?: React.ReactNode }) => (
     <div className="my-2 overflow-x-auto">
-      <table className="min-w-full border-collapse border border-gray-200 dark:border-gray-700">{children}</table>
+      <table className="min-w-full border-collapse border border-gray-200 border-gray-700">{children}</table>
     </div>
   ),
-  thead: ({ children }: { children?: React.ReactNode }) => <thead className="bg-gray-50 dark:bg-gray-800">{children}</thead>,
+  thead: ({ children }: { children?: React.ReactNode }) => <thead className="bg-gray-50 bg-gray-800">{children}</thead>,
   th: ({ children }: { children?: React.ReactNode }) => (
-    <th className="border border-gray-200 px-3 py-2 text-left text-sm font-semibold dark:border-gray-700">{children}</th>
+    <th className="border border-gray-200 px-3 py-2 text-left text-sm font-semibold border-gray-700">{children}</th>
   ),
   td: ({ children }: { children?: React.ReactNode }) => (
-    <td className="border border-gray-200 px-3 py-2 align-top text-sm dark:border-gray-700">{children}</td>
+    <td className="border border-gray-200 px-3 py-2 align-top text-sm border-gray-700">{children}</td>
   ),
 };
 
 export function Markdown({ children, className }: MarkdownProps) {
   const content = normalizeInlineCodeFences(String(children ?? ''));
-  const remarkPlugins = useMemo(() => [remarkGfm, remarkMath], []);
-  const rehypePlugins = useMemo(() => [rehypeKatex], []);
+  // KaTeX 只在这条消息真的含公式时才拉进来，见 lib/mathPlugins。
+  const math = useMathPlugins(content);
+  const remarkPlugins = useMemo(() => [remarkGfm, ...math.remark], [math]);
+  const rehypePlugins = useMemo(() => math.rehype, [math]);
 
   return (
     <div className={className}>

@@ -6,7 +6,6 @@ without needing an Origin header.
 """
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import pytest
@@ -19,10 +18,10 @@ def client(tmp_path: Path, monkeypatch):
     studio = tmp_path / "skill-studio"
     skills.mkdir()
     studio.mkdir()
-    monkeypatch.setenv("IVYEA_OPS_SKILLS_ROOT", str(skills))
-    monkeypatch.setenv("IVYEA_OPS_STUDIO_ROOT", str(studio))
+    monkeypatch.setenv("AWENOPS_SKILLS_ROOT", str(skills))
+    monkeypatch.setenv("AWENOPS_STUDIO_ROOT", str(studio))
     # Need a secret for the session serializer to initialize (harmless value).
-    monkeypatch.setenv("IVYEA_OPS_SECRET", "test-secret-not-used")
+    monkeypatch.setenv("AWENOPS_SECRET", "test-secret-not-used")
 
     import importlib
     # Reload in dependency order.

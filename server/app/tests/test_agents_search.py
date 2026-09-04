@@ -14,8 +14,8 @@ _ORIGIN = "https://test.example.com"
 
 @pytest.fixture
 def ctx(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("IVYEA_OPS_SECRET", "test-secret")
-    monkeypatch.setenv("IVYEA_OPS_ALLOWED_ORIGINS", _ORIGIN)
+    monkeypatch.setenv("AWENOPS_SECRET", "test-secret")
+    monkeypatch.setenv("AWENOPS_ALLOWED_ORIGINS", _ORIGIN)
     monkeypatch.setenv("AGENTS_DB_PATH", str(tmp_path / "agents.db"))
     from app.core import config as cfg_mod
     importlib.reload(cfg_mod)
@@ -32,12 +32,15 @@ def ctx(tmp_path: Path, monkeypatch):
         {"sessionId": "s1", "uuid": "u2", "timestamp": "2026-01-01T00:00:01Z",
          "message": {"role": "assistant", "content": [{"type": "text", "text": "no needle here"}]}},
     ]), encoding="utf-8")
+    from app.agents import repos as repos_mod
+    project_path = repos_mod.normalize_project_path(str(proj))
+
     with db_mod.db_conn() as conn:
         conn.execute("INSERT INTO projects(project_id, project_path, custom_project_name, isStarred, isArchived)"
-                     " VALUES(?,?,?,0,0)", ("p1", str(proj), "My Proj"))
+                     " VALUES(?,?,?,0,0)", ("p1", project_path, "My Proj"))
         conn.execute("INSERT INTO sessions(session_id, provider, custom_name, project_path, jsonl_path,"
                      " isArchived, created_at, updated_at) VALUES(?,?,?,?,?,0,?,?)",
-                     ("s1", "claude", "Sess One", str(proj), str(transcript),
+                     ("s1", "claude", "Sess One", project_path, str(transcript),
                       "2026-01-01T00:00:00Z", "2026-01-01T00:00:02Z"))
 
     from app.agents import search as search_mod

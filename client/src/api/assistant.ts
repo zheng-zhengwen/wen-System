@@ -39,37 +39,36 @@ export function streamChat(
   });
 }
 
-export async function submitImage(prompt: string, size: string, n: number, imageUrls?: string[]): Promise<string> {
-  const body: Record<string, unknown> = { prompt, size, n };
-  if (imageUrls && imageUrls.length > 0) body.image_urls = imageUrls;
-  const r = await fetch("/api/assistant/image", {
+/**
+ * 把一张附图换成 `awen-ref://` 短句柄。
+ *
+ * 任务台在发送前调它：图片本体留在服务器上，只有句柄跟着这一轮进模型，agent 拿
+ * 句柄填 image_generate 的 image_urls 就是图生图。data URL 有几百 KB，让它穿过
+ * 工具调用参数是不可能的。
+ */
+export async function imageRef(dataUrl: string): Promise<{ ref: string; bytes: number }> {
+  const r = await fetch("/api/assistant/image/ref", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
-    body: JSON.stringify(body),
+    body: JSON.stringify({ data_url: dataUrl }),
   });
   if (!r.ok) {
     const d = await r.json().catch(() => ({} as any));
     throw new Error(d.detail || `HTTP ${r.status}`);
   }
-  return (await r.json()).task_id as string;
-}
-
-export interface ImageStatus {
-  status: string;       // submitted | pending | running | completed | failed
-  progress: number;
-  images: string[];     // URLs (when completed)
-  error: string | null;
-}
-
-export async function imageStatus(taskId: string): Promise<ImageStatus> {
-  const r = await fetch(`/api/assistant/image/status?task_id=${encodeURIComponent(taskId)}`, { credentials: "include" });
-  if (!r.ok) throw new Error(`HTTP ${r.status}`);
   return r.json();
 }
 
-export async function assistantStatus(): Promise<{ deepseek: boolean; apimart: boolean }> {
-  const r = await fetch("/api/assistant/status", { credentials: "include" });
-  if (!r.ok) throw new Error(`HTTP ${r.status}`);
-  return r.json();
+/**
+ * `awen-ref://<id>` → 能直接放进 `<img src>` 的地址。
+ *
+ * 历史会话是从 agent 的存档里恢复的，而存档里只有文字（图片从来不进模型），
+ * 用户发过的那张图只剩这串句柄 —— 会话记录里的缩略图靠它取回原图。
+ * 不是句柄（http 地址、data URL）就原样返回。
+ */
+export function imageRefUrl(ref: string): string {
+  const id = String(ref || "").trim();
+  if (!id.startsWith("awen-ref://")) return id;
+  return "/api/assistant/image/ref/" + encodeURIComponent(id.slice("awen-ref://".length));
 }

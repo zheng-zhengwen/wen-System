@@ -1,0 +1,85 @@
+/* 琉璃·浅唯一主题的颜色、材质、高度与动效令牌。 */
+:root[data-theme="lucent-light"] {
+  --lc-c-canvas: 255 255 255;
+  --lc-c-paper: 244 246 249;
+  --lc-c-wash: 237 240 244;
+  --lc-c-sink: 228 232 238;
+  --lc-c-hair: 229 232 237;
+  --lc-c-rule: 214 218 225;
+  --lc-c-ink: 15 17 21;
+  --lc-c-muted: 62 67 77;
+  --lc-c-faint: 98 105 116;
+  --lc-c-brand: 22 163 74;
+  --lc-c-brand-text: 18 128 64;
+  --lc-c-accent: 201 52 44;
+  --lc-c-ok: 22 142 74;
+  --lc-c-info: 10 110 235;
+  --lc-c-warn: 165 92 0;
+  --lc-c-hint: 130 76 214;
+  --lc-c-calm: 0 122 153;
+  --lc-c-syn-key: 130 76 214;
+  --lc-c-syn-str: 22 142 74;
+  --lc-c-syn-fn: 10 110 235;
+  --lc-c-syn-num: 165 92 0;
+  --lc-c-syn-type: 176 123 0;
+  --lc-c-syn-comment: 150 156 166;
+  --lc-c-shadow: 15 23 42;
+
+  --ag-n50: 255 255 255;
+  --ag-n100: 244 246 249;
+  --ag-n200: 229 232 237;
+  --ag-n300: 214 218 225;
+  --ag-n400: 150 158 170;
+  --ag-n500: 98 105 116;
+  --ag-n600: 62 67 77;
+  --ag-n700: 48 53 62;
+  --ag-n800: 34 38 45;
+  --ag-n900: 24 27 33;
+  --ag-n950: 15 17 21;
+
+  --lc-canvas: rgb(var(--lc-c-canvas));
+  --lc-paper: rgb(var(--lc-c-paper));
+  --lc-wash: rgb(var(--lc-c-wash));
+  --lc-sink: rgb(var(--lc-c-sink));
+  --lc-hair: rgb(var(--lc-c-hair));
+  --lc-rule: rgb(var(--lc-c-rule));
+  --lc-ink: rgb(var(--lc-c-ink));
+  --lc-muted: rgb(var(--lc-c-muted));
+  --lc-faint: rgb(var(--lc-c-faint));
+  --lc-brand: rgb(var(--lc-c-brand));
+  --lc-brand-text: rgb(var(--lc-c-brand-text));
+  --lc-accent: rgb(var(--lc-c-accent));
+  --lc-ok: rgb(var(--lc-c-ok));
+  --lc-info: rgb(var(--lc-c-info));
+  --lc-warn: rgb(var(--lc-c-warn));
+  --lc-hint: rgb(var(--lc-c-hint));
+  --lc-calm: rgb(var(--lc-c-calm));
+
+  --lc-mat-thick: rgb(var(--lc-c-paper) / .72);
+  --lc-mat-regular: rgb(var(--lc-c-paper) / .80);
+  --lc-mat-thin: rgb(var(--lc-c-sink) / .72);
+  --lc-mat-ultrathin: rgb(var(--lc-c-ink) / .06);
+  --lc-mat-edge: inset 0 0 0 .5px rgb(var(--lc-c-ink) / .10);
+  --lc-blur-thick: saturate(180%) blur(30px);
+  --lc-blur-regular: saturate(190%) blur(40px);
+  --lc-blur-thin: saturate(180%) blur(24px);
+  --lc-blur-ultrathin: saturate(160%) blur(18px);
+
+  --e0: none;
+  --e1: 0 .5px 1px rgb(var(--lc-c-shadow) / .05), 0 1px 3px rgb(var(--lc-c-shadow) / .06);
+  --e2: 0 1px 2px rgb(var(--lc-c-shadow) / .06), 0 4px 12px rgb(var(--lc-c-shadow) / .08);
+  --e3: 0 2px 6px rgb(var(--lc-c-shadow) / .08), 0 12px 32px rgb(var(--lc-c-shadow) / .12);
+  --e4: 0 8px 24px rgb(var(--lc-c-shadow) / .10), 0 32px 64px rgb(var(--lc-c-shadow) / .18);
+  --e-hl: inset 0 1px 0 rgb(255 255 255 / .60);
+
+  --r-xs: 6px;
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 16px;
+  --r-xl: 22px;
+  --d-fast: 140ms;
+  --d-base: 220ms;
+  --d-slow: 320ms;
+  --ease-out: cubic-bezier(.2, .8, .2, 1);
+  --ease-spring: cubic-bezier(.34, 1.3, .64, 1);
+}

@@ -2,7 +2,7 @@
 
 Daily AI industry + Amazon seller news with LLM-generated Chinese summaries.
 Data is produced by the Hermes skill ``ai-amazon-daily-digest`` and stored as
-one JSON file per day under ``$IVYEA_OPS_DATA_DIR/news/YYYY-MM-DD.json``.
+one JSON file per day under ``$AWENOPS_DATA_DIR/news/YYYY-MM-DD.json``.
 
 Retention: only the ``_KEEP_DAYS`` most recent days are kept. Anything older is
 purged by ``_cleanup_old()`` which runs on every ``/refresh`` call and on startup.
@@ -10,13 +10,12 @@ purged by ``_cleanup_old()`` which runs on every ``/refresh`` call and on startu
 from __future__ import annotations
 
 import json
-import os
 import re
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from app.core.config import settings

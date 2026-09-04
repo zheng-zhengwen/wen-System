@@ -6,7 +6,7 @@ import GeminiLogo from './GeminiLogo';
 import OpenCodeLogo from './OpenCodeLogo';
 import HermesLogo from './HermesLogo';
 import AgyLogo from './AgyLogo';
-import IvyeaLogo from './IvyeaLogo';
+import AwenLogo from './awenLogo';
 
 type SessionProviderLogoProps = {
   provider?: LLMProvider | string | null;
@@ -41,8 +41,8 @@ export default function SessionProviderLogo({
     return <AgyLogo className={className} />;
   }
 
-  if (provider === 'ivyea') {
-    return <IvyeaLogo className={className} />;
+  if (provider === 'awen') {
+    return <AwenLogo className={className} />;
   }
 
   return <ClaudeLogo className={className} />;

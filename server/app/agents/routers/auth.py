@@ -1,7 +1,7 @@
 """Auth shims for platform-embedded mode.
 
 The agents frontend runs with ``IS_PLATFORM = true``, so it never shows its
-own login screen — it trusts the surrounding ops session (the ``ivyea_ops_session``
+own login screen — it trusts the surrounding ops session (the ``awenops_session``
 cookie). The whole agents router is already gated by ops auth at mount time, so by
 the time these handlers run the caller is authenticated. We only need to answer
 the few status/identity probes the frontend's AuthContext may issue.

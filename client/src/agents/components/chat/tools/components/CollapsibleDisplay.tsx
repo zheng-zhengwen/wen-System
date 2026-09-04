@@ -18,14 +18,14 @@ interface CollapsibleDisplayProps {
 }
 
 const borderColorMap: Record<string, string> = {
-  edit: 'border-l-amber-500 dark:border-l-amber-400',
+  edit: 'border-l-amber-500 border-l-amber-400',
   search: 'border-l-muted-foreground/40',
-  bash: 'border-l-green-500 dark:border-l-green-400',
-  todo: 'border-l-violet-500 dark:border-l-violet-400',
-  task: 'border-l-violet-500 dark:border-l-violet-400',
-  agent: 'border-l-purple-500 dark:border-l-purple-400',
-  plan: 'border-l-indigo-500 dark:border-l-indigo-400',
-  question: 'border-l-blue-500 dark:border-l-blue-400',
+  bash: 'border-l-green-500 border-l-green-400',
+  todo: 'border-l-violet-500 border-l-violet-400',
+  task: 'border-l-violet-500 border-l-violet-400',
+  agent: 'border-l-purple-500 border-l-purple-400',
+  plan: 'border-l-indigo-500 border-l-indigo-400',
+  question: 'border-l-blue-500 border-l-blue-400',
   default: 'border-l-border',
 };
 
@@ -58,7 +58,7 @@ export const CollapsibleDisplay: React.FC<CollapsibleDisplayProps> = ({
 
         {showRawParameters && rawContent && (
           <Collapsible className="mt-2">
-            <CollapsibleTrigger className="flex items-center gap-1.5 py-0.5 text-[11px] text-muted-foreground hover:text-foreground">
+            <CollapsibleTrigger className="flex items-center gap-1.5 py-0.5 text-[length:var(--fs-11)] text-muted-foreground hover:text-foreground">
               <svg
                 className="h-2.5 w-2.5 flex-shrink-0 transition-transform duration-150 data-[state=open]:rotate-90"
                 fill="none"
@@ -70,7 +70,7 @@ export const CollapsibleDisplay: React.FC<CollapsibleDisplayProps> = ({
               raw params
             </CollapsibleTrigger>
             <CollapsibleContent>
-              <pre className="mt-1 overflow-hidden whitespace-pre-wrap break-words rounded border border-border/40 bg-muted p-2 font-mono text-[11px] text-muted-foreground">
+              <pre className="mt-1 overflow-hidden whitespace-pre-wrap break-words rounded border border-border/40 bg-muted p-2 font-mono text-[length:var(--fs-11)] text-muted-foreground">
                 {rawContent}
               </pre>
             </CollapsibleContent>

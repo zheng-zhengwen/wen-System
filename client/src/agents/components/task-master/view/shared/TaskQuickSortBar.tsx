@@ -27,8 +27,8 @@ export default function TaskQuickSortBar({ sortField, sortOrder, onSortChange }:
         className={cn(
           'flex items-center gap-1 px-3 py-1.5 rounded-md text-sm',
           sortField === 'id'
-            ? 'bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300'
-            : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700',
+            ? 'bg-blue-100 bg-blue-900 text-blue-700 text-blue-300'
+            : 'bg-gray-100 bg-gray-800 text-gray-600 text-gray-400 hover:bg-gray-200 hover:bg-gray-700',
         )}
       >
         {t('sort.id')} {getSortIcon('id', sortField, sortOrder)}
@@ -39,8 +39,8 @@ export default function TaskQuickSortBar({ sortField, sortOrder, onSortChange }:
         className={cn(
           'flex items-center gap-1 px-3 py-1.5 rounded-md text-sm',
           sortField === 'status'
-            ? 'bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300'
-            : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700',
+            ? 'bg-blue-100 bg-blue-900 text-blue-700 text-blue-300'
+            : 'bg-gray-100 bg-gray-800 text-gray-600 text-gray-400 hover:bg-gray-200 hover:bg-gray-700',
         )}
       >
         {t('sort.status')} {getSortIcon('status', sortField, sortOrder)}
@@ -51,8 +51,8 @@ export default function TaskQuickSortBar({ sortField, sortOrder, onSortChange }:
         className={cn(
           'flex items-center gap-1 px-3 py-1.5 rounded-md text-sm',
           sortField === 'priority'
-            ? 'bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300'
-            : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700',
+            ? 'bg-blue-100 bg-blue-900 text-blue-700 text-blue-300'
+            : 'bg-gray-100 bg-gray-800 text-gray-600 text-gray-400 hover:bg-gray-200 hover:bg-gray-700',
         )}
       >
         {t('sort.priority')} {getSortIcon('priority', sortField, sortOrder)}

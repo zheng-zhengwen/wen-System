@@ -18,8 +18,8 @@ export default function GitConfigurationStep({
   return (
     <div className="space-y-6">
       <div className="mb-8 text-center">
-        <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-blue-100 dark:bg-blue-900/30">
-          <GitBranch className="h-8 w-8 text-blue-600 dark:text-blue-400" />
+        <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-blue-100 bg-blue-900/30">
+          <GitBranch className="h-8 w-8 text-blue-600 text-blue-400" />
         </div>
         <h2 className="mb-2 text-2xl font-bold text-foreground">Git Configuration</h2>
         <p className="text-muted-foreground">

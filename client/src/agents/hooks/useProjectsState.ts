@@ -65,7 +65,7 @@ const projectsHaveChanges = (
       serialize(nextProject.opencodeSessions) !== serialize(prevProject.opencodeSessions) ||
       serialize(nextProject.hermesSessions) !== serialize(prevProject.hermesSessions) ||
       serialize(nextProject.agySessions) !== serialize(prevProject.agySessions) ||
-      serialize(nextProject.ivyeaSessions) !== serialize(prevProject.ivyeaSessions)
+      serialize(nextProject.awenSessions) !== serialize(prevProject.awenSessions)
     );
   });
 };
@@ -105,7 +105,7 @@ const getProjectSessions = (project: Project): ProjectSession[] => {
     ...(project.opencodeSessions ?? []),
     ...(project.hermesSessions ?? []),
     ...(project.agySessions ?? []),
-    ...(project.ivyeaSessions ?? []),
+    ...(project.awenSessions ?? []),
   ];
 };
 
@@ -156,7 +156,7 @@ const mergeExpandedSessionPages = (previousProjects: Project[], incomingProjects
       opencodeSessions: mergeSessionProviderLists(incomingProject.opencodeSessions ?? [], previousProject.opencodeSessions ?? []),
       hermesSessions: mergeSessionProviderLists(incomingProject.hermesSessions ?? [], previousProject.hermesSessions ?? []),
       agySessions: mergeSessionProviderLists(incomingProject.agySessions ?? [], previousProject.agySessions ?? []),
-      ivyeaSessions: mergeSessionProviderLists(incomingProject.ivyeaSessions ?? [], previousProject.ivyeaSessions ?? []),
+      awenSessions: mergeSessionProviderLists(incomingProject.awenSessions ?? [], previousProject.awenSessions ?? []),
     };
 
     const totalSessions = Number(incomingProject.sessionMeta?.total ?? previousLoadedCount);
@@ -172,7 +172,7 @@ const mergeExpandedSessionPages = (previousProjects: Project[], incomingProjects
 
 const mergeProjectSessionPage = (
   existingProject: Project,
-  sessionsPage: Pick<Project, 'sessions' | 'cursorSessions' | 'codexSessions' | 'geminiSessions' | 'opencodeSessions' | 'hermesSessions' | 'agySessions' | 'ivyeaSessions' | 'sessionMeta'>,
+  sessionsPage: Pick<Project, 'sessions' | 'cursorSessions' | 'codexSessions' | 'geminiSessions' | 'opencodeSessions' | 'hermesSessions' | 'agySessions' | 'awenSessions' | 'sessionMeta'>,
 ): Project => {
   const mergedProject: Project = {
     ...existingProject,
@@ -183,7 +183,7 @@ const mergeProjectSessionPage = (
     opencodeSessions: mergeSessionProviderLists(existingProject.opencodeSessions ?? [], sessionsPage.opencodeSessions ?? []),
     hermesSessions: mergeSessionProviderLists(existingProject.hermesSessions ?? [], sessionsPage.hermesSessions ?? []),
     agySessions: mergeSessionProviderLists(existingProject.agySessions ?? [], sessionsPage.agySessions ?? []),
-    ivyeaSessions: mergeSessionProviderLists(existingProject.ivyeaSessions ?? [], sessionsPage.ivyeaSessions ?? []),
+    awenSessions: mergeSessionProviderLists(existingProject.awenSessions ?? [], sessionsPage.awenSessions ?? []),
   };
 
   const totalSessions = Number(sessionsPage.sessionMeta?.total ?? existingProject.sessionMeta?.total ?? 0);
@@ -617,17 +617,17 @@ export function useProjectsState({
         return;
       }
 
-      const ivyeaSession = project.ivyeaSessions?.find((session) => session.id === sessionId);
-      if (ivyeaSession) {
+      const awenSession = project.awenSessions?.find((session) => session.id === sessionId);
+      if (awenSession) {
         const shouldUpdateProject = selectedProject?.projectId !== project.projectId;
         const shouldUpdateSession =
-          selectedSession?.id !== sessionId || selectedSession.__provider !== 'ivyea';
+          selectedSession?.id !== sessionId || selectedSession.__provider !== 'awen';
 
         if (shouldUpdateProject) {
           setSelectedProject(project);
         }
         if (shouldUpdateSession) {
-          setSelectedSession({ ...ivyeaSession, __provider: 'ivyea' });
+          setSelectedSession({ ...awenSession, __provider: 'awen' });
         }
         return;
       }
@@ -652,14 +652,14 @@ export function useProjectsState({
       providerFromStorage = null;
     }
 
-    // Prefer a single-provider synthetic project (Ivyea Agent / Hermes / Antigravity):
+    // Prefer a single-provider synthetic project (awen Agent / Hermes / Antigravity):
     // a brand-new session there is that provider regardless of the last-selected one.
     // Falls back to the last-selected provider from localStorage for code projects.
     const syntheticProvider: LLMProvider | null =
       (selectedProject.sessions?.length ?? 0) > 0
         ? null
-        : (selectedProject.ivyeaSessions?.length ?? 0) > 0
-          ? 'ivyea'
+        : (selectedProject.awenSessions?.length ?? 0) > 0
+          ? 'awen'
           : (selectedProject.hermesSessions?.length ?? 0) > 0
             ? 'hermes'
             : (selectedProject.agySessions?.length ?? 0) > 0
@@ -681,8 +681,8 @@ export function useProjectsState({
                 ? 'hermes'
                 : providerFromStorage === 'agy'
                   ? 'agy'
-                  : providerFromStorage === 'ivyea'
-                    ? 'ivyea'
+                  : providerFromStorage === 'awen'
+                    ? 'awen'
             : 'claude';
 
     setSelectedSession({
@@ -768,7 +768,7 @@ export function useProjectsState({
           const opencodeSessions = project.opencodeSessions?.filter((session) => session.id !== sessionIdToDelete) ?? [];
           const hermesSessions = project.hermesSessions?.filter((session) => session.id !== sessionIdToDelete) ?? [];
           const agySessions = project.agySessions?.filter((session) => session.id !== sessionIdToDelete) ?? [];
-          const ivyeaSessions = project.ivyeaSessions?.filter((session) => session.id !== sessionIdToDelete) ?? [];
+          const awenSessions = project.awenSessions?.filter((session) => session.id !== sessionIdToDelete) ?? [];
 
           const removedFromProject = (
             sessions.length !== (project.sessions?.length ?? 0)
@@ -778,7 +778,7 @@ export function useProjectsState({
             || opencodeSessions.length !== (project.opencodeSessions?.length ?? 0)
             || hermesSessions.length !== (project.hermesSessions?.length ?? 0)
             || agySessions.length !== (project.agySessions?.length ?? 0)
-            || ivyeaSessions.length !== (project.ivyeaSessions?.length ?? 0)
+            || awenSessions.length !== (project.awenSessions?.length ?? 0)
           );
 
           if (!removedFromProject) {
@@ -794,7 +794,7 @@ export function useProjectsState({
             opencodeSessions,
             hermesSessions,
             agySessions,
-            ivyeaSessions,
+            awenSessions,
           };
 
           const totalSessions = Math.max(0, Number(project.sessionMeta?.total ?? 0) - 1);

@@ -1,0 +1,436 @@
+/* 柔和形状层 —— 琉璃·浅
+ * ============================================================================
+ *
+ * `data-theme` 标记唯一的琉璃·浅配色，`data-skin` 标记琉璃形状层。
+ * 形状层与 lucent-skin.css 配合提供材质、高度、动效和排版。
+ *
+ * 该文件只在唯一保留的琉璃·浅皮肤下生效。
+ *
+ * 形状层按职责集中在这里，避免同一套规则在多个主题文件中漂移。
+ *
+ * ── 为什么不学 flat 用一条 `*` 上的 !important ─────────────────────────────
+ * flat 要做的是"圆角和阴影全部归零"，那是个**无差别**的诉求，通配符正合适。
+ * 这里要做的不是"边框全删" —— 有几处边框是必须活下来的（下面 ④），无差别
+ * 归零之后再逐条捞回来，就成了"先炸掉再抢救"，而抢救名单会一直漏。
+ *
+ * 所以这里按**层**点名：
+ *   L2 控件（按钮/芯片）→ 默认无形，hover 才显形
+ *   L1 容器（卡片/面板/回答块）→ 去框，靠留白和表面色差分组
+ *   L0 结构（顶栏/侧栏/底座）→ 去线，靠表面色差分隔
+ *   ④ 白名单 → 有意保留，见下
+ *
+ * 三层里 L2 的杠杆最大：`.tbtn` 一条规则覆盖了 48 个文件里的 271 处调用，
+ * 这就是为什么全站扫尾几乎不用逐页改样式。
+ *
+ * ── 为什么这里的 !important 是必要的 ─────────────────────────────────────
+ * 被覆盖的原规则里有大量 `.a.b` 两级选择器（如 `.cc-ai .cs-approval`），
+ * 特异性高于 `html[data-skin=lucent] .x` 里的单类部分；且部分容器的边框写在
+ * 内联 style 上。逐条去数特异性会让这个文件变得没法维护 —— 这一层的职责就是
+ * "最后一道形状裁决"，用 !important 表达它本来就该赢。
+ * ============================================================================ */
+
+/* ── ⓪ 圆角档位 ──────────────────────────────────────────────────────────
+   琉璃的参照系是 ChatGPT / DeepSeek / iOS，它们"软"的观感有一半来自**半径**，
+   不是来自没有边框。--r 是全站通用半径（1219 处引用），在这里抬到 14px；
+   几个大面自己再加大一档。 */
+html[data-skin="lucent"] { --r: 14px; }
+/* 输入区是整屏视觉重心，半径要最大 —— 参考图里它接近胶囊。 */
+html[data-skin="lucent"] .cc-composer { border-radius: 22px !important; }
+html[data-skin="lucent"] .cc-bubble { border-radius: 18px !important; }
+html[data-skin="lucent"] .tv-panel { border-radius: 18px !important; }
+html[data-skin="lucent"] .tv-card { border-radius: 12px !important; }
+html[data-skin="lucent"] .sb-menu { border-radius: 14px !important; }
+html[data-skin="lucent"] .sb-menu-item,
+html[data-skin="lucent"] .sb-acct,
+html[data-skin="lucent"] .ni,
+html[data-skin="lucent"] .sb-sess { border-radius: 10px !important; }
+
+/* ── ① 背景画三件套：关掉 ─────────────────────────────────────────────────
+   表面已经全不透明，那两个 position:fixed + mix-blend-mode 的伪元素留着就是
+   两个覆盖全屏、强制整页 GPU 合成的空层。**必须 content:none 而不是 opacity:0**。 */
+html[data-skin="lucent"] body { background-image: none !important; }
+html[data-skin="lucent"] body::before,
+html[data-skin="lucent"] body::after { content: none !important; }
+
+/* 表面不透明之后，19 处 backdrop-filter 变成纯开销（还会强制合成层）。
+   **这一条是整个文件里唯一不给琉璃的规则。** 琉璃的层次恰恰是靠 backdrop-filter
+   表达的（见 lucent-skin.css ②），被这条 !important 通配符扫到就整套失效 ——
+   而且失效得很安静：玻璃变成一块半透明色板，看着只是"有点淡"。
+   琉璃对应的开销约束不是"全关"，而是"**只准六个固定浮层用**"，同样是硬规定。 */
+/* ── ② L0 结构：顶栏 / 侧栏 / 底座 ──────────────────────────────────────── */
+
+/* 顶栏完全透明、与主画面之间不留分界线。它现在只承载"我在哪儿"和一两个
+   板块动作，没有任何需要被框起来的东西。 */
+html[data-skin="lucent"] .topbar {
+  background: transparent !important;
+  border-bottom: none !important;
+  height: 46px;
+}
+/* 标题是坐标不是主角 —— 不加粗、用次级色。 */
+html[data-skin="lucent"] .tb-path b { font-weight: 500; color: var(--t2); }
+
+/* 侧栏：去掉那条 inset 分界阴影，改由表面色差站住
+   （琉璃浅色是"内容区纯白 + 侧栏微灰"，见 lucent-tokens.css 的偏移 ①）。 */
+html[data-skin="lucent"] .sb {
+  box-shadow: none !important;
+  border-right: none !important;
+}
+html[data-skin="lucent"] .sb-logo { border-bottom: none !important; }
+html[data-skin="lucent"] .sb-nav-dock { border-top: none !important; }
+/* 浮起来的面（账户菜单 / 全部工具浮层）**保留边框**：它们脱离了页面平面，
+   需要一圈线说明"这是浮在上面的一层"。去掉之后在浅色下会直接和页面糊在一起。 */
+/* 侧栏里那些 1px 的手写分隔条（MainLayout 里的 divider，内联 style）。
+   **不能 display:none** —— 经典外壳的四段分组没有小标题，全靠这几条线分开，
+   直接删掉就成了 18 条不分组的长列表。改成"线消失、间距留下"：分组关系还在，
+   只是由留白承担，这正是这套皮肤想表达的东西。 */
+html[data-skin="lucent"] .sb nav div[style*="background: var(--b)"] {
+  background: transparent !important;
+  margin-top: 10px !important;
+  margin-bottom: 10px !important;
+}
+
+/* 会话滚到输入框底下时的渐隐。
+   去掉 .cc-dock 那条 border-top 之后，正文会**直接被输入框切断**，看着像盖住了
+   而不是滚下去了。参考图里 ChatGPT 用的也是渐隐而不是线 —— 这正是"用留白代替
+   线条"该有的收尾，不补的话去掉的那条线就成了纯损失。
+   .cc-thread-wrap 本来就是 position:relative（给「回到底部」当定位参照）。
+   **只在 .scrolled（没滚到底）时出现。** 无条件挂着的话，滚到底之后它照样罩在
+   最后 44px 上，把回答的末行和「复制/重新生成」那一行蒙成灰的 —— 用户看到的是
+   "复制按钮有点模糊"，而那不是渲染问题，是这层渐隐盖上去的。 */
+html[data-skin="lucent"] .cc-thread-wrap.scrolled::after {
+  content: '';
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  /* 44 而不是 30：30px 的渐隐吃不掉一整行 16px/1.8 的正文，滚到底下的那行会被
+     齐刷刷切一刀，看着像"输入框压住了字"。要让它是**化开**的，就得比一行高。 */
+  height: 44px;
+  pointer-events: none;
+  background: linear-gradient(to bottom, transparent, var(--bg));
+}
+/* 「回到底部」是浮在渐隐之上的，不抬 z-index 会被那层渐隐洗掉。 */
+html[data-skin="lucent"] .cc-tobottom { z-index: 1; }
+
+/* 内容区与任务台底座。
+   `:not(.content-fullpage)` 是必须的 —— 整页板块（终端 / 任务台 / 外部智能体）
+   的 padding 是 8px，而琉璃皮肤的内容区规则特异性更高，必须排除终端整页布局。
+   `.content-fullpage`，不排除的话终端会平白多出 20px 内边距、还会算错高度。 */
+html[data-skin="lucent"] .content:not(.content-fullpage):not(:has(.terminal-workbench-page)) {
+  padding: 20px 24px;
+}
+html[data-skin="lucent"] .cc-dock { border-top: none !important; }
+
+
+/* ── ③ L2 控件：默认无形，触碰才显形 ──────────────────────────────────────
+   这是 Apple 那套语汇里最值得抄的一条 —— iOS 的按钮本身就是纯文字，边界只在
+   按下时以背景的形式出现。 */
+html[data-skin="lucent"] .tbtn,
+html[data-skin="lucent"] .cs-btn,
+html[data-skin="lucent"] .cc-chip,
+html[data-skin="lucent"] .cc-scene,
+html[data-skin="lucent"] .hs-test-btn,
+html[data-skin="lucent"] .sb-toggle,
+html[data-skin="lucent"] .cs-toggle,
+html[data-skin="lucent"] .cc-tobottom,
+html[data-skin="lucent"] .cc-followup {
+  border-color: transparent !important;
+  background: transparent !important;
+}
+html[data-skin="lucent"] .tbtn:hover,
+html[data-skin="lucent"] .cs-btn:hover:not(:disabled),
+html[data-skin="lucent"] .cc-chip:hover,
+html[data-skin="lucent"] .cc-scene:hover,
+html[data-skin="lucent"] .hs-test-btn:hover,
+html[data-skin="lucent"] .sb-toggle:hover,
+html[data-skin="lucent"] .cs-toggle:hover,
+html[data-skin="lucent"] .cc-tobottom:hover,
+html[data-skin="lucent"] .cc-followup:hover {
+  border-color: transparent !important;
+  background: var(--bg2) !important;
+}
+/* 主按钮是唯一带实底的控件 —— 一屏只该有一个，它就是"下一步做什么"。 */
+html[data-skin="lucent"] .cs-btn-primary {
+  background: var(--acc) !important;
+  color: var(--on-acc) !important;
+}
+html[data-skin="lucent"] .cs-btn-primary:hover:not(:disabled) {
+  background: var(--acc) !important;
+  filter: brightness(1.08);
+}
+/* 「回到底部」浮在内容上，去框之后需要一点底才不至于和正文糊在一起 */
+html[data-skin="lucent"] .cc-tobottom {
+  background: var(--bg1) !important;
+  box-shadow: 0 1px 8px rgb(0 0 0 / .08);
+}
+
+
+/* ── ④ 白名单：有意保留边框 ──────────────────────────────────────────────
+   这不是漏网，是判断。简约不能吃掉三类信号：能填的、要处理的、有风险的。 */
+
+/* 4.1 输入区。参考图里 ChatGPT 的输入框同样是有形的 —— 整个界面里它是唯一
+       "等你动手"的地方，必须一眼可辨。 */
+html[data-skin="lucent"] .cc-composer {
+  border: 1px solid var(--b) !important;
+  background: var(--bg1) !important;
+}
+html[data-skin="lucent"] .cc-composer:focus-within {
+  border-color: var(--acc) !important;
+}
+
+/* 4.2 表单控件。去框会让人不知道哪里能填、哪里能选。 */
+html[data-skin="lucent"] input:not([type="checkbox"]):not([type="radio"]),
+html[data-skin="lucent"] select,
+html[data-skin="lucent"] textarea,
+html[data-skin="lucent"] .hs-input {
+  border: 1px solid var(--b) !important;
+  background: var(--bg1) !important;
+}
+/* SheetSelect 的触发器就是 `.xsel-wrap`，在设置页它带 `.hs-input`（上面已覆盖）、
+   在输入器里它带 `.cc-chip`（属于 L2 控件，该无形）—— 所以这里**不能**按
+   `.xsel-wrap` 一刀切，否则输入器上那几个芯片会把边框长回来。 */
+/* 输入器内部那块 textarea 例外 —— 它的边界由外面的 .cc-composer 承担，
+   再套一层就成了框中框。 */
+html[data-skin="lucent"] .cc-input,
+/* 「全部工具」浮层的搜索框同理：整条 header 就是搜索区，外面还有面板自己的
+   边框，再给 input 套一个就成了框中框 —— 而且它没有圆角，看着就是个直角条。 */
+html[data-skin="lucent"] .tv-search {
+  border: none !important;
+  background: transparent !important;
+}
+
+/* 4.3 需要你处理 / 有风险。审批卡、危险动作、告警芯片、更新提醒：
+       这些的存在意义就是被看见。 */
+html[data-skin="lucent"] .cc-ai .cs-approval,
+html[data-skin="lucent"] .cs-approval {
+  border: 1px solid var(--b2) !important;
+}
+html[data-skin="lucent"] .cs-approval.cs-destructive { border-color: var(--amber) !important; }
+html[data-skin="lucent"] .cc-chip-warn { border: 1px solid var(--amber) !important; }
+/* 审批档位芯片同理：只读那档可以无形（它就是默认），另外两档是"有风险"，
+   边框和那层浅底都得留住 —— 上面 ⑤ 那条把所有 .cc-chip 的底色扒光了，
+   不在这里补回来的话，「完全放行」在简约皮肤下只剩一行红字，和普通芯片一样轻。 */
+html[data-skin="lucent"] .cc-chip-mode.tone-warn {
+  border: 1px solid color-mix(in srgb, var(--amber) 55%, transparent) !important;
+  background: color-mix(in srgb, var(--amber) 9%, transparent) !important;
+}
+html[data-skin="lucent"] .cc-chip-mode.tone-danger {
+  border: 1px solid color-mix(in srgb, var(--red) 55%, transparent) !important;
+  background: color-mix(in srgb, var(--red) 10%, transparent) !important;
+}
+/* 「有新版本」现在是账户行头像上那颗红点 + 菜单里那一行变红（见 .sb-acct-dot /
+   .sb-menu-item.has-update），不再是一个带框按钮 —— 它们本身就没有边框可留。 */
+
+/* 4.4 焦点圈。键盘可达性不参与简约。
+   **但不能无差别套。** outline 是矩形的，元素自己没有圆角时画出来就是个直角框；
+   而任务台的输入框恰恰是 border-radius:0 的裸 textarea（它的焦点由外层
+   .cc-composer 换边框色来表达，基础样式里写的是 outline:none）。无差别加上去
+   的结果，就是一进页面输入框里凭空多出一个直角矩形 —— 这条规则上一版就是
+   这么把"简约"变成"多了个框"的。
+   所以：**只给自己有圆角的元素画焦点圈**，并显式排掉那些由容器代为表达焦点的。 */
+html[data-skin="lucent"] :focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--acc) 60%, transparent) !important;
+  outline-offset: 1px;
+}
+html[data-skin="lucent"] .cc-input:focus-visible,
+html[data-skin="lucent"] .cc-input:focus,
+html[data-skin="lucent"] .tv-search:focus-visible,
+html[data-skin="lucent"] .tv-search:focus {
+  outline: none !important;
+}
+
+/* 4.5 **凡是保留了边框的，都必须有圆角。**
+   白名单是按"这块要不要被看见"选的，选完就忘了形状 —— 于是留下来的那几个框
+   全是直角，在一套圆角语汇里格外扎眼。这条兜住它们。 */
+html[data-skin="lucent"] input:not([type="checkbox"]):not([type="radio"]),
+html[data-skin="lucent"] select,
+html[data-skin="lucent"] textarea:not(.cc-input),
+html[data-skin="lucent"] .hs-input,
+html[data-skin="lucent"] .cs-approval,
+html[data-skin="lucent"] .sb-sess-more,
+html[data-skin="lucent"] .tv-kbd {
+  border-radius: 10px !important;
+}
+
+
+/* ── ⑤ L1 容器：去框，靠留白和表面色差分组 ──────────────────────────────── */
+html[data-skin="lucent"] .card,
+html[data-skin="lucent"] .hs-section,
+html[data-skin="lucent"] .hs-agent-card,
+html[data-skin="lucent"] .cc-rail-panel,
+html[data-skin="lucent"] .cs-timeline,
+html[data-skin="lucent"] .cc-answer {
+  border-color: transparent !important;
+}
+html[data-skin="lucent"] .cs-timeline.cs-open { border-color: transparent !important; }
+html[data-skin="lucent"] .cc-rail,
+html[data-skin="lucent"] .cc-rail-panel { border-left-color: transparent !important; }
+html[data-skin="lucent"] .cc-rail-title { border-bottom: none !important; }
+
+
+/* ── ⑥ 任务台对话流 ──────────────────────────────────────────────────────
+   用户读的是**内容**，不是承载内容的那个盒子。这一段把盒子全部拿掉，只留
+   字和留白。 */
+
+/* 6.1 回答：直接落在画布上，不再是一张卡。 */
+html[data-skin="lucent"] .cc-answer {
+  background: transparent !important;
+  padding: 0 !important;
+  font-size: 16px;
+  line-height: 1.8;
+  color: var(--t);
+}
+/* 失败态仍然要红，但也不套框 */
+html[data-skin="lucent"] .cc-answer-error {
+  color: var(--red) !important;
+  background: transparent !important;
+}
+
+/* 6.2 阅读行宽。一行 100+ 字的中文读起来极累，眼睛回扫会丢行。
+       ~720px 在 15~16px 字号下约合 45 个汉字，是长文的舒适区。 */
+/* 居中列本身已经提到基础层（workbench.css 里的 --cc-col，以及给 .cc-thread 和
+   .cc-dock 的直接子项加的宽度上限），因为"正文和输入框不对称"是**所有主题**共同的
+   毛病，不是这套皮肤的偏好。这里只把列宽收窄到这套皮肤想要的 720px —— 长文阅读
+   舒适区，一行约 45 个汉字。
+   （注意别在注释里写 .cc-dock 的子选择器：那串字符里的星号加斜杠会把注释就地
+   截断，后面整段都变成无效 CSS —— 刚踩过，表现是这条变量规则压根没生效。） */
+html[data-skin="lucent"] .cc-page { --cc-col: 720px; }
+html[data-skin="lucent"] .cc-thread { padding: 22px 24px 10px; }
+
+/* 6.3 提问气泡：保留气泡形（参考图里 ChatGPT 也保留），但去掉描边，
+       只留一层极淡的强调色底。 */
+html[data-skin="lucent"] .cc-bubble {
+  border: none !important;
+  padding: 10px 15px;
+  background: color-mix(in srgb, var(--acc) 9%, var(--bg2)) !important;
+  font-size: 15px;
+}
+
+/* 6.4 执行过程：去掉外框；展开后用**左侧一条发丝竖线**表达层级，而不是盒子。
+       竖线是"这些属于上一行"的最轻量表达 —— 一根线，不是四根。 */
+/* 边框要**真的去掉**而不只是透明：留着那 1px 会把整条活动行往里挤 1px，
+   于是它和下面的回答差一个像素对不齐（量出来是 472 : 471）。 */
+html[data-skin="lucent"] .cs-timeline { background: transparent !important; border-width: 0 !important; }
+/* 活动行左对齐到正文列。cs-live-main 的 11px 内边距是给 hover 底色留的呼吸，
+   框还在的时候看不出来；琉璃把框去掉之后，它就变成一段没有来由的缩进 —— 上面的
+   提问、下面的回答都从 0 开始，只有这一行往里缩。用负 margin 把**字**拉回 0，
+   hover 底色照样有内边距。 */
+html[data-skin="lucent"] .cs-live-main {
+  padding-left: 8px;
+  margin-left: -8px;
+  border-radius: 8px;
+}
+html[data-skin="lucent"] .cs-log-wrap {
+  border-top: none !important;
+  border-left: 1px solid var(--b) !important;
+  margin-left: 6px;   /* 竖线走在图标那一列的正下方 */
+  padding-left: 12px;
+}
+html[data-skin="lucent"] .cs-args {
+  border-top: none !important;
+  background: var(--bg2) !important;
+}
+
+/* 6.5 跟进建议：从"带框按钮"变成一行可点的文字。 */
+html[data-skin="lucent"] .cc-followup { padding: 7px 0 7px 10px; }
+html[data-skin="lucent"] .cc-followup:hover {
+  background: var(--bg2) !important;
+  padding-left: 14px;
+  transform: none !important;
+}
+
+/* 6.6 统计条：去掉竖分隔线，改留白 + 更淡。 */
+html[data-skin="lucent"] .cc-stat + .cc-stat { border-left: none !important; padding-left: 0; }
+html[data-skin="lucent"] .cc-stats { gap: 4px 18px; opacity: .8; }
+
+/* 6.7 Hero 态。
+   删掉副标题之后，标题和输入框之间的关系变成"一句话 + 一个动作"，参考图里
+   就是这么干净。标题再大一档撑住这块留白；场景入口从"带框胶囊"改成**无框
+   文字行**（ChatGPT 的「撰写或编辑 / 搜索网页」就是这个形态）—— 一排五个
+   描边胶囊等于把刚去掉的框又摆回首屏正中。 */
+html[data-skin="lucent"] .cc-hero { gap: 22px; }
+html[data-skin="lucent"] .cc-hero-brand { gap: 16px; }
+html[data-skin="lucent"] .cc-hero-title { font-size: 32px; letter-spacing: -.015em; }
+html[data-skin="lucent"] .cc-hero-composer { max-width: 760px; }
+
+/* 首屏输入器：半径再大一档（会话态那只仍是 22px），并且**允许它有投影**。
+   琉璃的通则是"表面不浮起"，这里是唯一的例外 —— 整屏就这一个等你动手的地方，
+   它得从光晕里浮出来，否则一块白底套一圈浅线，和背景是糊在一起的。 */
+html[data-skin="lucent"] .cc-hero-composer .cc-composer {
+  border-radius: 26px !important;
+  box-shadow: 0 10px 34px rgb(0 0 0 / .06), 0 2px 8px rgb(0 0 0 / .035);
+}
+html[data-skin="lucent"] .cc-hero-composer .cc-composer:focus-within {
+  /* 首屏这只框一进页面就是聚焦态，满饱和的绿边会盖过标题（会话态那只不受影响）。 */
+  border-color: color-mix(in srgb, var(--acc) 42%, var(--b)) !important;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--acc) 11%, transparent),
+              0 12px 36px rgb(0 0 0 / .08);
+}
+
+/* 场景入口：无框文字行，居中排一行。
+   曾经是两列网格 —— 5 个入口会剩一个落单挂在左下角，版面就歪了；而条数本身
+   随权限变（sceneChips 按可见性算），任何写死的列数都会在某个账号下塌掉。 */
+html[data-skin="lucent"] .cc-scenes {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 4px 6px;
+  max-width: 720px;
+}
+html[data-skin="lucent"] .cc-scene {
+  gap: 8px;
+  padding: 8px 14px;
+  border-radius: 999px !important;
+  background: transparent !important;
+  color: var(--t2) !important;
+}
+html[data-skin="lucent"] .cc-scene:hover {
+  background: var(--bg2) !important;
+  color: var(--t) !important;
+  transform: none !important;
+}
+@media (max-width: 640px) {
+  html[data-skin="lucent"] .cc-scenes { max-width: 100%; }
+}
+
+
+/* ── ⑦ Markdown 正文：让层级由字重和留白表达，不由线条 ────────────────────
+   基线样式（含类名定义）在 workbench.css 的「Markdown 报告」一节。 */
+html[data-skin="lucent"] .md-h1 {
+  border-bottom: none !important;
+  padding-bottom: 0 !important;
+  font-size: 1.35em;
+}
+html[data-skin="lucent"] .md-h2 { font-size: 1.15em; margin-top: 1.6em; }
+html[data-skin="lucent"] .md-h3 { color: var(--t) !important; }
+/* 代码块：去框，只留一层 wash 底 */
+html[data-skin="lucent"] .md-pre { border: none !important; background: var(--bg2) !important; }
+/* 表格：表头一条实线 + 行发丝线，去掉强调色那条 2px 粗线 */
+html[data-skin="lucent"] .md-th { border-bottom: 1px solid var(--b) !important; }
+html[data-skin="lucent"] .md-tr { border-bottom: 1px solid var(--b) !important; }
+/* 列表符号回归中性 —— 每一个圆点都是强调色的话，强调色就不强调了 */
+html[data-skin="lucent"] .md-bullet { color: var(--t3) !important; }
+html[data-skin="lucent"] .md-quote { border-left-color: var(--b2) !important; font-style: normal; }
+html[data-skin="lucent"] .md-hr { border-top-color: var(--b) !important; }
+/* 段间距。基线是 6px 的 .md-gap —— 在 16px/1.8 的正文里，段与段之间几乎贴着，
+   一屏下来就是一堵字墙（用户的原话是"凌乱"）。对比 ChatGPT：它的段距接近一个
+   整行。列表项之间同理松一档。 */
+html[data-skin="lucent"] .md-gap { height: 15px; }
+html[data-skin="lucent"] .md-li { line-height: 1.8; margin: 3px 0; }
+html[data-skin="lucent"] .md-quote { margin: 10px 0; padding: 2px 0 2px 14px; }
+
+
+/* ── ⑧ 侧栏项：选中态由左侧色条改为整块淡底 ──────────────────────────────
+   一条 2px 的竖线在无边框语境里显得很突兀（它是"线条风"的语汇）；整块淡底
+   才是 ChatGPT / Finder 那种选中表达。 */
+html[data-skin="lucent"] .ni {
+  border-left-color: transparent !important;
+  border-radius: 8px;
+  margin: 1px 8px;
+  padding-left: 10px;
+}
+html[data-skin="lucent"] .ni.active {
+  border-left-color: transparent !important;
+  background: var(--bg3) !important;
+  color: var(--t) !important;
+}
+html[data-skin="lucent"] .sb.collapsed .ni { margin: 1px 6px; }
+html[data-skin="lucent"] .sb.collapsed .ni.active { border-right-color: transparent !important; }

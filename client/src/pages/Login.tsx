@@ -1,6 +1,7 @@
 import { FormEvent, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { login, register } from "../api/client";
+import { errText } from "../lib/errText";
 
 type Mode = "login" | "register";
 
@@ -29,7 +30,7 @@ export default function Login() {
         setPassword("");
       }
     } catch (err: any) {
-      setError(err?.response?.data?.detail || (mode === "login" ? "登录失败" : "注册失败"));
+      setError(errText(err, mode === "login" ? "登录失败" : "注册失败"));
     } finally {
       setLoading(false);
     }
@@ -41,7 +42,7 @@ export default function Login() {
     <div className="login-wrap">
       <form className="login-box" onSubmit={onSubmit}>
         <div className="mark">OPS WORKBENCH</div>
-        <h1>{isReg ? <>注册账号 · <b>IvyeaOps</b></> : <>欢迎回来 · <b>IvyeaOps</b></>}</h1>
+        <h1>{isReg ? <>注册账号 · <b>awenops</b></> : <>欢迎回来 · <b>awenops</b></>}</h1>
 
         <label>{isReg ? "邮箱" : "账号 / 邮箱"}</label>
         <input
@@ -73,7 +74,7 @@ export default function Login() {
           )}
         </button>
 
-        <div style={{ marginTop: 14, fontSize: 12, color: "var(--t3)", textAlign: "center" }}>
+        <div style={{ marginTop: 14, fontSize: "var(--fs-12)", color: "var(--t3)", textAlign: "center" }}>
           {isReg ? (
             <>已有账号？<a onClick={() => { setMode("login"); setError(null); }} style={{ color: "var(--acc)", cursor: "pointer" }}>去登录</a></>
           ) : (

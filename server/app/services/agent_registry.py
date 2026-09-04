@@ -4,7 +4,7 @@ We support a small fixed set out of the box (hermes, codex, claude-code,
 kiro-cli). Adding a new agent is two steps:
 
   1. Drop a new entry into AGENT_DEFS below.
-  2. Restart IvyeaOps. discover_agents() will probe and persist.
+  2. Restart awenops. discover_agents() will probe and persist.
 
 Each AgentDef captures everything pty_manager and the chat/SSE router need
 to know to launch and converse with the binary:
@@ -25,6 +25,7 @@ from __future__ import annotations
 from app.core.proc import no_window_kwargs
 
 import os
+import logging
 import shutil
 import subprocess
 from dataclasses import dataclass, field
@@ -38,8 +39,12 @@ from app.services import agent_session_service as svc
 # Optional legacy gateway config. Leave unset by default: the old local
 # kiro gateway on :8000 has been retired.
 # ---------------------------------------------------------------------------
-KIRO_GATEWAY_URL = os.environ.get("IVYEA_OPS_KIRO_GATEWAY", "").strip()
-KIRO_GATEWAY_KEY = os.environ.get("IVYEA_OPS_KIRO_GATEWAY_KEY", "hermes2024")
+KIRO_GATEWAY_URL = os.environ.get("AWENOPS_KIRO_GATEWAY", "").strip()
+from app.core import secret_env as _secret_env
+
+logger = logging.getLogger("awen.services.agent_registry")
+
+KIRO_GATEWAY_KEY = _secret_env.get("AWENOPS_KIRO_GATEWAY_KEY", "hermes2024")
 
 
 def _list_kiro_models() -> list[str]:
@@ -254,18 +259,18 @@ AGENT_DEFS: dict[str, AgentDef] = {
         prompt_regex=r"\n(?:agy|Antigravity) ?[>›❯]\s*$",
         caps_extra={"supports_oneshot": True, "supports_resume": True},
     ),
-    # ---- Ivyea Agent (native provider, driven by agents/ivyea_driver) ----
+    # ---- awen Agent (native provider, driven by agents/awen_driver) ----
     # Registered so the deep-analysis / market-research agent picker
     # (/api/agents/catalog) can surface it. The actual chat is driven by the
-    # native agents provider system (agents/routers/providers.py id="ivyea"),
-    # not these cli_args — the model is configured server-side via `ivyea /model`.
-    "ivyea": AgentDef(
-        id="ivyea",
-        display_name="Ivyea Agent",
+    # native agents provider system (agents/routers/providers.py id="awen"),
+    # not these cli_args — the model is configured server-side via `awen /model`.
+    "awen": AgentDef(
+        id="awen",
+        display_name="awen Agent",
         bin_candidates=[
-            "ivyea",
-            os.path.expanduser("~/.local/bin/ivyea"),
-            os.path.expanduser("~/.ivyea/bin/ivyea"),
+            "awen",
+            os.path.expanduser("~/.local/bin/awen"),
+            os.path.expanduser("~/.awen/bin/awen"),
         ],
         default_model="default",
         static_models=["default"],
@@ -444,7 +449,7 @@ def _claude_authenticated() -> bool:
             if json.load(f).get("oauthAccount"):
                 return True
     except Exception:
-        pass
+        logger.debug("True 失败（旁路，已忽略）", exc_info=True)
     return False
 
 
@@ -474,7 +479,7 @@ def _read_codex_models() -> list[str]:
                     if slug and slug not in models:
                         models.append(slug)
     except Exception:
-        pass
+        logger.debug("slug = 失败（旁路，已忽略）", exc_info=True)
     return models
 
 

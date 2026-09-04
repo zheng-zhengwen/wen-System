@@ -14,7 +14,7 @@ Key design choices:
   * stream_callback is wired → tokens flow out per-token.
   * Model/provider come from hermes's own config.yaml.
 
-Usage (called by IvyeaOps ai_synthesis_service):
+Usage (called by awenops ai_synthesis_service):
     echo "prompt" | python hermes_stream_wrapper.py
 
 Exit codes:
@@ -27,6 +27,8 @@ import logging
 import os
 import sys
 from pathlib import Path
+
+logger = logging.getLogger("awen.services.hermes_stream_wrapper")
 
 # ── Path bootstrap (mirrors hermes_cli/main.py) ────────────────────────────
 _HERMES_ROOT = Path.home() / ".hermes" / "hermes-agent"
@@ -64,7 +66,7 @@ def main() -> int:
             from tools.mcp_tool import discover_mcp_tools
             discover_mcp_tools()
         except Exception:
-            pass  # MCP unavailable — agent continues with no tools
+            logger.debug("discover_mcp_tools 失败（旁路，已忽略）", exc_info=True)
 
         cfg = load_config()
         model_cfg = cfg.get("model") or {}

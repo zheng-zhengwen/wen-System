@@ -56,8 +56,6 @@
   "common": {
     "language": "Dil",
     "theme": "Tema",
-    "darkMode": "Koyu Mod",
-    "lightMode": "Açık Mod",
     "name": "İsim",
     "description": "Açıklama",
     "enabled": "Etkin",
