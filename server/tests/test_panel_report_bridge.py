@@ -245,3 +245,74 @@ def test_new_generate_tools_registered_and_listed():
     assert {"market_generate_report", "playbook_generate_report"} <= names
     listed = {t["name"] for t in awenops_tools.list_tools(module="market")["tools"]}
     assert "market_generate_report" in listed
+
+
+def test_lingxing_optimizer_bridge_returns_completed_rule_result(monkeypatch):
+    """The chat bridge must return candidates, not call a missing router helper."""
+    from app.services import lingxing_optimizer, lingxing_service
+
+    seen = {}
+
+    async def fake_run_store(sid, progress=None, days=None):
+        seen.update(sid=sid, progress=progress, days=days)
+        return {"sid": sid, "window_days": days, "count": 1,
+                "candidates": [{"lever": "否词"}]}
+
+    monkeypatch.setattr(lingxing_optimizer, "run_store", fake_run_store)
+    monkeypatch.setattr(lingxing_service, "is_master_enabled", lambda: True)
+
+    res = asyncio.run(awenops_tools.call_tool(
+        "lingxing_optimizer", {"sid": 113, "days": 3}))
+
+    assert res["ok"] is True
+    assert res["result"]["window_days"] == 3
+    assert res["result"]["candidates"][0]["lever"] == "否词"
+    assert seen == {"sid": 113, "progress": None, "days": 3}
+
+
+def test_lingxing_optimizer_window_override_keeps_three_days(monkeypatch):
+    """A requested 3-day patrol must not silently reuse/clamp the global window."""
+    from app.services import lingxing_optimizer
+
+    monkeypatch.setattr(
+        lingxing_optimizer,
+        "_cfg",
+        lambda: {"lingxing_opt_exclude_recent_days": 2, "lingxing_opt_window_days": 30},
+    )
+
+    dates = lingxing_optimizer._window_dates(3)
+
+    assert len(dates) == 3
+
+
+def test_lingxing_optimizer_bridge_rejects_invalid_scope_before_fetch(monkeypatch):
+    from app.services import lingxing_optimizer
+
+    async def forbidden(*_args, **_kwargs):
+        raise AssertionError("invalid scope must not reach Lingxing")
+
+    monkeypatch.setattr(lingxing_optimizer, "run_store", forbidden)
+
+    bad_sid = asyncio.run(awenops_tools.call_tool(
+        "lingxing_optimizer", {"sid": 0, "days": 7}))
+    bad_days = asyncio.run(awenops_tools.call_tool(
+        "lingxing_optimizer", {"sid": 113, "days": 61}))
+
+    assert bad_sid["ok"] is False and "sid" in bad_sid["detail"]
+    assert bad_days["ok"] is False and "days" in bad_days["detail"]
+
+
+def test_lingxing_optimizer_bridge_honors_master_switch(monkeypatch):
+    from app.services import lingxing_optimizer, lingxing_service
+
+    async def forbidden(*_args, **_kwargs):
+        raise AssertionError("disabled integration must not reach Lingxing")
+
+    monkeypatch.setattr(lingxing_service, "is_master_enabled", lambda: False)
+    monkeypatch.setattr(lingxing_optimizer, "run_store", forbidden)
+
+    res = asyncio.run(awenops_tools.call_tool(
+        "lingxing_optimizer", {"sid": 113, "days": 7}))
+
+    assert res["ok"] is False
+    assert "总开关" in res["detail"]

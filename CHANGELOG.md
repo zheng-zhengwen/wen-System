@@ -17,6 +17,9 @@
 
 ### 修复
 
+- **awenAgent 可直接复用工作台的领星连接完成广告巡检。** 领星优化桥接不再调用不存在的
+  路由函数，而是等待规则引擎返回真实候选；每次请求的 3/7/14 天窗口独立生效，不会被
+  全局配置覆盖或串扰。凭证继续只保存在工作台后端，不会暴露或复制给 Agent。
 - **awenAgent 安装恢复可用，跨平台安装日志不再乱码。** Windows、Linux、macOS、
   Docker、应用内更新以及 CI/Release 现在统一从 `zheng-zhengwen/awen-agent` 解析和安装，
   不再访问已经失效的旧仓库。应用内安装器统一使用 UTF-8，并兼容 Windows PowerShell 5.1

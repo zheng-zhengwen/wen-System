@@ -44,10 +44,19 @@ def _cfg() -> Dict[str, Any]:
     return _hs.load()
 
 
-def _window_dates() -> List[str]:
+def _window_days(days: Optional[int] = None) -> int:
+    c = _cfg()
+    raw = (c.get("lingxing_opt_window_days") or 30) if days is None else days
+    try:
+        return max(1, min(int(raw), 60))
+    except (TypeError, ValueError):
+        return 30
+
+
+def _window_dates(days: Optional[int] = None) -> List[str]:
     c = _cfg()
     excl = int(c.get("lingxing_opt_exclude_recent_days") or 2)
-    win = int(c.get("lingxing_opt_window_days") or 30)
+    win = _window_days(days)
     return [(datetime.now(timezone.utc) - timedelta(days=d)).strftime("%Y-%m-%d")
             for d in range(excl + 1, excl + 1 + win)]
 
@@ -72,10 +81,11 @@ def _metrics(b: Dict[str, float]) -> Dict[str, Any]:
 
 async def _agg(sid: int, dataset: str, key_fn: Callable[[Dict[str, Any]], Any],
                capture: Tuple[str, ...],
-               on_day: Optional[Callable[[], None]] = None) -> Dict[Any, Dict[str, Any]]:
+               on_day: Optional[Callable[[], None]] = None,
+               days: Optional[int] = None) -> Dict[Any, Dict[str, Any]]:
     """Sum a per-day report over the window, bucketed by key_fn; capture static fields."""
     out: Dict[Any, Dict[str, Any]] = {}
-    for day in _window_dates():
+    for day in _window_dates(days):
         if on_day:
             on_day()
         try:
@@ -218,7 +228,8 @@ async def _recent_touched(sid: int) -> set:
 
 
 async def run_store(sid: int,
-                    progress: Optional[Callable[[str, int, int], None]] = None) -> Dict[str, Any]:
+                    progress: Optional[Callable[[str, int, int], None]] = None,
+                    days: Optional[int] = None) -> Dict[str, Any]:
     c = _cfg()
     factor = _f(c.get("lingxing_target_acos_factor")) or 0.7
     neg_clicks = int(c.get("lingxing_neg_min_clicks") or 15)
@@ -227,7 +238,7 @@ async def run_store(sid: int,
     harvest_orders = int(c.get("lingxing_harvest_min_orders") or 3)
     step = (_f(c.get("lingxing_bid_step_pct")) or 15) / 100.0
     floor = _f(c.get("lingxing_bid_floor")) or 0.02
-    win = int(c.get("lingxing_opt_window_days") or 30)
+    win = _window_days(days)
 
     # progress: 3 report datasets × win days + 4 fixed lookups
     total_steps = 3 * win + 4
@@ -284,7 +295,7 @@ async def run_store(sid: int,
     st = await _agg(sid, "sp_search_term_report",
                     lambda r: (str(r.get("campaign_id")), str(r.get("query") or "")) if r.get("query") else None,
                     capture=("query", "campaign_id", "ad_group_id", "match_type"),
-                    on_day=lambda: tick("聚合搜索词报表"))
+                    on_day=lambda: tick("聚合搜索词报表"), days=win)
     for (cid, q), b in st.items():
         m = _metrics(b["_b"])
         if m["clicks"] >= neg_clicks and m["orders"] == 0 and sig_ok(q):
@@ -312,7 +323,7 @@ async def run_store(sid: int,
     # ---- 降bid / 加bid：keyword report + live bids ----
     kr = await _agg(sid, "sp_keyword_report", lambda r: str(r.get("keyword_id")) if r.get("keyword_id") else None,
                     capture=("keyword_id", "keyword_text", "match_type", "campaign_id"),
-                    on_day=lambda: tick("聚合关键词报表"))
+                    on_day=lambda: tick("聚合关键词报表"), days=win)
     bids = await _bid_map(sid) if kr else {}
     tick("读取当前竞价")
     for kid, b in kr.items():
@@ -348,7 +359,7 @@ async def run_store(sid: int,
     # ---- 加预算：campaign report + budgets ----
     cr = await _agg(sid, "sp_campaign_report", lambda r: str(r.get("campaign_id")) if r.get("campaign_id") else None,
                     capture=("campaign_id",),
-                    on_day=lambda: tick("聚合活动报表"))
+                    on_day=lambda: tick("聚合活动报表"), days=win)
     budgets = await _campaign_budgets(sid) if cr else {}
     tick("读取活动预算")
     for cid, b in cr.items():

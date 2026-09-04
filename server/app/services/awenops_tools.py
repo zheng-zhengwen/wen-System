@@ -534,11 +534,21 @@ async def _lingxing_dashboard(args: dict[str, Any]) -> Any:
 
 
 async def _lingxing_optimizer(args: dict[str, Any]) -> Any:
-    from app.routers import lingxing
-    return await lingxing.optimizer_run(
-        sid=int(args.get("sid") or 0),
-        days=int(args.get("days") or 0),
-    )
+    from app.services import lingxing_optimizer as optimizer
+    from app.services import lingxing_service as gateway
+
+    sid = int(args.get("sid") or 0)
+    days = int(args.get("days") or 0)
+    if sid <= 0:
+        raise ValueError("sid 必须是正整数")
+    if days < 0 or days > 60:
+        raise ValueError("days 必须在 1 到 60 之间；不传或传 0 时使用系统默认窗口")
+    if not gateway.is_master_enabled():
+        raise ValueError("领星集成未启用（总开关关闭）")
+    # The bridge call is itself long-running and has a wide timeout.  Await the
+    # deterministic engine so the agent receives actual candidates instead of a
+    # background run handle it has no status tool to poll.
+    return await optimizer.run_store(sid, days=days or None)
 
 
 async def _lingxing_operate_tickets(args: dict[str, Any]) -> Any:
