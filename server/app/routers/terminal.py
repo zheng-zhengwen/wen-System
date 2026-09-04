@@ -55,7 +55,11 @@ def _legacy_ttyd_supported() -> bool:
     Windows uses the ConPTY-backed live sessions below; macOS and non-systemd
     Linux hosts likewise must not try to execute a command they do not have.
     """
-    return sys.platform.startswith("linux") and shutil.which("systemctl") is not None
+    return (
+        not _WINDOWS
+        and sys.platform.startswith("linux")
+        and shutil.which("systemctl") is not None
+    )
 
 
 def _legacy_ttyd_status() -> dict:
