@@ -11,7 +11,7 @@
 自托管的 Amazon 运营工作台。用户在自己的服务器 / Windows / macOS 上部署，浏览器访问。
 AGPL-3.0。前端 React + Vite + Tailwind（`client/`），后端 FastAPI（`server/`）。
 
-AI 能力统一由 [awenAgent](https://github.com/Hector-xue/awen-agent) 提供，它随本项目一起
+AI 能力统一由 [awenAgent](https://github.com/zheng-zhengwen/awen-agent) 提供，它随本项目一起
 打包分发。
 
 ## 常用命令

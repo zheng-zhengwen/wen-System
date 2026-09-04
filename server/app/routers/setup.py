@@ -17,7 +17,11 @@ Design notes
 """
 from __future__ import annotations
 
-from app.core.proc import no_window_kwargs
+from app.core.proc import (
+    decode_process_output,
+    no_window_kwargs,
+    powershell_utf8_script_command,
+)
 
 import asyncio
 import logging
@@ -52,6 +56,7 @@ _INSTALLABLE: dict[str, str] = {
 }
 _COMPONENTS = {"awen-agent", "legacy", "hermes", "codex", "claude", "all"}
 _LATEST_RELEASE_API = "https://api.github.com/repos/zheng-zhengwen/wen-System/releases/latest"
+_AWEN_AGENT_GIT_URL = "https://github.com/zheng-zhengwen/awen-agent.git"
 
 
 def _version_tuple(value: str) -> tuple[int, int, int] | None:
@@ -181,7 +186,7 @@ def _awen_install_shell(root: Path) -> str:
     if local and Path(local).expanduser().is_dir():
         target = "-e " + shlex.quote(str(Path(local).expanduser()) + "[feishu]")
     else:
-        repo = os.environ.get("AWEN_AGENT_REPO", "https://github.com/Hector-xue/awen-agent.git")
+        repo = os.environ.get("AWEN_AGENT_REPO", _AWEN_AGENT_GIT_URL)
         ref = os.environ.get("AWEN_AGENT_REF", "main")
         target = shlex.quote(f"awen-agent[feishu] @ git+{repo}@{ref}")
 
@@ -470,6 +475,7 @@ async def _component_install_stream(component: str) -> AsyncGenerator[str, None]
     root = _runtime_root()
     script = root / "scripts" / "install-components.ps1"
     ps = _powershell_bin()
+    display_cmd: list[str] | None = None
     if sys.platform.startswith("win"):
         if not script.is_file():
             yield f"data: ERROR: Windows installer not found: {script}\n\n"
@@ -479,7 +485,21 @@ async def _component_install_stream(component: str) -> AsyncGenerator[str, None]
             yield "data: ERROR: PowerShell not found. Please start awenops from a normal Windows environment.\n\n"
             yield "data: __ERROR__\n\n"
             return
-        cmd = [ps, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script), "-Component", component]
+        display_cmd = [
+            ps,
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(script),
+            "-Component",
+            component,
+        ]
+        cmd = powershell_utf8_script_command(
+            ps,
+            script,
+            named_args={"Component": component},
+        )
     elif component in {"all", "awen-agent"}:
         cmd = ["bash", "-lc", _awen_install_shell(root)]
     elif component in {"legacy", "hermes"}:
@@ -491,7 +511,10 @@ async def _component_install_stream(component: str) -> AsyncGenerator[str, None]
     else:
         cmd = ["bash", "-lc", "curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash"]
 
-    yield f"data: > {' '.join(cmd)}\n\n"
+    if display_cmd is None:
+        display_cmd = cmd
+
+    yield f"data: > {' '.join(display_cmd)}\n\n"
     env = {**os.environ}
     home = Path.home()
     extra = [
@@ -506,6 +529,11 @@ async def _component_install_stream(component: str) -> AsyncGenerator[str, None]
     ]
     env["PATH"] = os.pathsep.join(dict.fromkeys(p for p in extra + env.get("PATH", "").split(os.pathsep) if p))
     env.setdefault("HOME", str(home))
+    # Python/pip inherit the same redirected pipe as PowerShell.  Pin their
+    # stream encoding too, otherwise a non-UTF-8 Windows locale can reintroduce
+    # mixed encodings midway through a single installer log.
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUTF8"] = "1"
 
     try:
         proc = await asyncio.create_subprocess_exec(
@@ -517,7 +545,7 @@ async def _component_install_stream(component: str) -> AsyncGenerator[str, None]
         )
         assert proc.stdout is not None
         async for raw in proc.stdout:
-            line = raw.decode("utf-8", errors="replace").rstrip()
+            line = decode_process_output(raw).rstrip()
             if line:
                 yield f"data: {line}\n\n"
         await proc.wait()
@@ -552,6 +580,8 @@ async def _npm_install_stream(agent: str, package: str) -> AsyncGenerator[str, N
     path_parts = extra + env.get("PATH", "").split(os.pathsep)
     env["PATH"] = os.pathsep.join(dict.fromkeys(p for p in path_parts if p))
     env.setdefault("HOME", str(home))
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUTF8"] = "1"
 
     cmd = [npm, "install", "-g", package]
     yield f"data: > {' '.join(cmd)}\n\n"
@@ -566,7 +596,7 @@ async def _npm_install_stream(agent: str, package: str) -> AsyncGenerator[str, N
         )
         assert proc.stdout is not None
         async for raw in proc.stdout:
-            line = raw.decode("utf-8", errors="replace").rstrip()
+            line = decode_process_output(raw).rstrip()
             if line:
                 yield f"data: {line}\n\n"
         await proc.wait()

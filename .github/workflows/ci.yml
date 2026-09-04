@@ -69,7 +69,7 @@ jobs:
             ref=$(curl -fsSL \
                     -H "Authorization: Bearer ${GITHUB_TOKEN}" \
                     -H "Accept: application/vnd.github+json" \
-                    https://api.github.com/repos/Hector-xue/awen-agent/releases/latest \
+                    https://api.github.com/repos/zheng-zhengwen/awen-agent/releases/latest \
                   | python -c "import json,sys; print(json.load(sys.stdin).get('tag_name',''))" 2>/dev/null || true)
           fi
           # CI 里回退 main 是可以接受的（测的是本仓库的代码，agent 只是依赖），
@@ -80,7 +80,7 @@ jobs:
             ref=main
           fi
           echo "installing awen-agent@$ref"
-          pip install "git+https://github.com/Hector-xue/awen-agent.git@$ref"
+          pip install "git+https://github.com/zheng-zhengwen/awen-agent.git@$ref"
       # --timeout 而不是任由它挂：挂起在 CI 上表现为"作业转 6 小时然后被杀"，
       # 日志要等作业结束才可读，等于什么线索都拿不到。有了每测试超时，挂起会变成
       # 一条指名道姓的失败。thread 方法在 Windows 上也有效（signal 方法只支持 POSIX）。
@@ -176,6 +176,18 @@ jobs:
           Get-ChildItem -Recurse -Filter *.ps1 |
             Where-Object { $_.FullName -notmatch '\\node_modules\\' } |
             ForEach-Object {
+              $bytes = [IO.File]::ReadAllBytes($_.FullName)
+              $hasBom = $bytes.Length -ge 3 -and
+                $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF
+              $offset = if ($hasBom) { 3 } else { 0 }
+              $hasNonAscii = $false
+              for ($i = $offset; $i -lt $bytes.Length; $i++) {
+                if ($bytes[$i] -ge 0x80) { $hasNonAscii = $true; break }
+              }
+              if ($hasNonAscii -and -not $hasBom) {
+                $bad++
+                Write-Host "::error file=$($_.FullName)::含 Unicode 的 PowerShell 脚本必须使用 UTF-8 BOM（兼容 Windows PowerShell 5.1）"
+              }
               $errors = $null
               [System.Management.Automation.Language.Parser]::ParseFile(
                 $_.FullName, [ref]$null, [ref]$errors) | Out-Null

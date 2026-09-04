@@ -17,6 +17,13 @@
 
 ### 修复
 
+- **awenAgent 安装恢复可用，跨平台安装日志不再乱码。** Windows、Linux、macOS、
+  Docker、应用内更新以及 CI/Release 现在统一从 `zheng-zhengwen/awen-agent` 解析和安装，
+  不再访问已经失效的旧仓库。应用内安装器统一使用 UTF-8，并兼容 Windows PowerShell 5.1
+  的本机代码页输出；含中文的 PowerShell 脚本恢复 UTF-8 BOM，中文目录、错误信息和 pip/npm
+  输出不会再显示成 `����`。配套 awenAgent 也会在 Python 3.13/3.14 上使用新版 RapidOCR，
+  不再因旧 OCR 包仅支持 Python 3.12 及以下而中断安装；Windows 后台服务也不再继承安装器
+  的输出管道，服务健康后按钮会正常收到完成状态，不会一直转圈。
 - **Windows 服务器终端不再报内部错误或在切换板块后挤成两字符一行。** Windows 现在只显示
   可用的 ConPTY/PowerShell 会话，不再轮询或尝试启动 Linux 专属的 systemd/ttyd 主终端；
   常驻终端隐藏时也不会把宽度为零的尺寸发给 ConPTY。重新连接回放历史画面时，xterm 的

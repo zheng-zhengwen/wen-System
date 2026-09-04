@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from app.core.config import settings as ops_settings
-from app.core.proc import no_window_kwargs
+from app.core.proc import decode_process_output, no_window_kwargs
 from app.core import secret_env as _secret_env
 
 logger = logging.getLogger("awen.services.awen_agent")
@@ -338,7 +338,7 @@ def agent_version() -> str:
         return ""
 
 
-_AGENT_REPO = "Hector-xue/awen-agent"
+_AGENT_REPO = "zheng-zhengwen/awen-agent"
 _agent_latest_cache: dict[str, Any] = {"tag": "", "at": 0.0}
 
 
@@ -412,10 +412,13 @@ def _installed_agent_version(py: str) -> str:
 
 def _run_step(cmd: list[str], timeout: float = 300.0) -> dict[str, Any]:
     try:
-        p = subprocess.run(cmd, cwd=str(ops_settings.root_dir), text=True,
-                           capture_output=True, timeout=timeout, **no_window_kwargs())
+        env = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
+        p = subprocess.run(cmd, cwd=str(ops_settings.root_dir),
+                           capture_output=True, timeout=timeout, env=env,
+                           **no_window_kwargs())
         return {"cmd": " ".join(cmd[:4]), "returncode": p.returncode,
-                "stdout": (p.stdout or "")[-1500:], "stderr": (p.stderr or "")[-1500:]}
+                "stdout": decode_process_output(p.stdout or b"")[-1500:],
+                "stderr": decode_process_output(p.stderr or b"")[-1500:]}
     except Exception as exc:  # noqa: BLE001
         return {"cmd": " ".join(cmd[:4]), "returncode": -1, "error": str(exc)}
 
@@ -445,7 +448,8 @@ def upgrade_agent(progress=None) -> dict[str, Any]:
     if not cli:
         return {"ok": False, "error": "awen CLI 未找到（awenAgent 可能未安装）"}
     py = _venv_python(cli)
-    repo = (os.getenv("AWEN_AGENT_REPO") or "https://github.com/Hector-xue/awen-agent.git").strip()
+    repo = (os.getenv("AWEN_AGENT_REPO") or
+            "https://github.com/zheng-zhengwen/awen-agent.git").strip()
     # 装 release tag，**不装 main**。「有新版本」的提示比的就是 release tag
     # （agent_update_available → latest_agent_version），装 main 会让提示和实际
     # 装到的东西对不上，还会把未发布代码推给用户。release.yml 同一策略。
@@ -455,7 +459,8 @@ def upgrade_agent(progress=None) -> dict[str, Any]:
                 "note": "取不到 awenAgent 的最新 release，已中止更新。"
                         "这里**故意不回退到 main** —— 那会装上未发布代码，而且和"
                         "「有新版本」的提示对不上（提示比的是 release tag）。"
-                        "请检查网络后重试，或设置 AWEN_AGENT_REF 指定版本。"}
+                        "请确认仓库已有可访问的 release 并重试，或设置 "
+                        "AWEN_AGENT_REF 指定版本。"}
     before = _installed_agent_version(py) or agent_version()
     _p("downloading", 25)
     # 优先用 awenAgent 自己的 updater：`awen self update` 会按安装方式选对更新方式——

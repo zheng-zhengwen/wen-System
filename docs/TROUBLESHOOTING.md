@@ -82,7 +82,9 @@ git -c credential.interactive=never clone https://gitee.com/hectorxue/awenops.gi
 
 **原因**：脚本编码不对。Windows PowerShell 5.1 读**无 BOM 的 UTF-8** `.ps1` 时按系统 GBK 解码 → 中文乱 → 解析崩；而 `.bat` 反过来**不能有 BOM**（cmd 会让 `@echo off` 失效）。
 
-**解决**：用最新版脚本即可（`install.ps1` 已带 UTF-8 BOM、两个 `.bat` 已改纯 ASCII）。你若是旧 ZIP，重新拉一份最新代码再装：
+**解决**：用最新版脚本即可（所有含中文/Unicode 的 `.ps1` 都带 UTF-8 BOM、`.bat` 保持无 BOM，
+应用内安装日志还会把隐藏 PowerShell、pip 和 npm 的输出统一转换为 UTF-8）。你若是旧 ZIP，
+重新拉一份最新代码再装：
 ```powershell
 git clone https://gh-proxy.com/https://github.com/zheng-zhengwen/wen-System.git
 ```

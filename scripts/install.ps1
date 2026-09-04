@@ -1,4 +1,4 @@
-# awenops 一键安装（Windows / PowerShell 5.1+）
+﻿# awenops 一键安装（Windows / PowerShell 5.1+）
 #
 # 做的事：
 #   1. 自动检测 Python 3.9+ 和 Node 18+；缺失则用 winget 自动安装
@@ -10,6 +10,13 @@
 #
 # 用法：双击根目录的「安装 awenops.bat」，或：
 #   powershell -ExecutionPolicy Bypass -File scripts\install.ps1
+
+$Utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+[Console]::InputEncoding = $Utf8NoBom
+[Console]::OutputEncoding = $Utf8NoBom
+$OutputEncoding = $Utf8NoBom
+$env:PYTHONIOENCODING = "utf-8"
+$env:PYTHONUTF8 = "1"
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
@@ -223,7 +230,7 @@ try {
             Write-Info "  从本地源码安装 awenAgent：$awenAgentSource"
             & $VenvPy -m pip install -q @PipMirror -e $awenAgentSource
         } else {
-            $awenAgentRepo = if ($env:AWEN_AGENT_REPO) { $env:AWEN_AGENT_REPO } else { "https://github.com/Hector-xue/awen-agent.git" }
+            $awenAgentRepo = if ($env:AWEN_AGENT_REPO) { $env:AWEN_AGENT_REPO } else { "https://github.com/zheng-zhengwen/awen-agent.git" }
             # 默认装**最新 release tag**，不是 main：装 main 等于把未发布代码推给
             # 用户，且和「有新版本」的提示对不上（那个提示比的就是 release tag）。
             # 取不到时不硬失败（安装是从零开始，挡住人不合适），但要大声说清楚。
@@ -231,14 +238,14 @@ try {
             if ([string]::IsNullOrWhiteSpace($awenAgentRef)) {
                 try {
                     $rel = Invoke-RestMethod -TimeoutSec 8 -Headers @{ "User-Agent" = "awenops" } `
-                        -Uri "https://api.github.com/repos/Hector-xue/awen-agent/releases/latest"
+                        -Uri "https://api.github.com/repos/zheng-zhengwen/awen-agent/releases/latest"
                     $awenAgentRef = $rel.tag_name
                 } catch { $awenAgentRef = $null }
             }
             if ([string]::IsNullOrWhiteSpace($awenAgentRef)) {
                 $awenAgentRef = "main"
-                Write-Warn "  取不到 awenAgent 的最新 release（网络？），改用 main 分支 —— 这是**未发布代码**。"
-                Write-Warn "  网络恢复后建议重装到正式版：`$env:AWEN_AGENT_REF='vX.Y.Z' 后重跑本脚本。"
+                Write-Warn "  未解析到 awenAgent 的正式 release（尚未发布或网络不可用），改用 main 分支 —— 这是**未发布代码**。"
+                Write-Warn "  release 发布且可访问后，建议设置 `$env:AWEN_AGENT_REF='vX.Y.Z' 并重跑本脚本。"
             }
             Write-Info "  从 Git 安装 awenAgent：$awenAgentRepo@$awenAgentRef"
             & $VenvPy -m pip install -q @PipMirror "git+$awenAgentRepo@$awenAgentRef"

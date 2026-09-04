@@ -32,6 +32,8 @@ agents 里 AI 自己决定的工具调用、skills 目录下 63 个可执行脚�
 """
 from __future__ import annotations
 
+import codecs
+import locale
 import logging
 import os
 import re
@@ -66,6 +68,115 @@ def no_window_kwargs() -> dict:
     if sys.platform == "win32":
         return {"creationflags": _CREATE_NO_WINDOW}
     return {}
+
+
+def _append_encoding(candidates: list[str], value: str | None) -> None:
+    """Append a valid codec name once, preserving probe order."""
+    name = (value or "").strip()
+    if not name:
+        return
+    try:
+        canonical = codecs.lookup(name).name
+    except LookupError:
+        return
+    if canonical not in candidates:
+        candidates.append(canonical)
+
+
+def _windows_output_encodings() -> list[str]:
+    """Return the Windows console/OEM/ANSI code pages without assuming locale.
+
+    Hidden Windows PowerShell 5.1 processes have no console and commonly write
+    with the OEM code page, while Python's preferred encoding reports the ANSI
+    code page (or UTF-8 mode).  Probe both Windows APIs so a localized error can
+    still be decoded even when those values differ.
+    """
+    if sys.platform != "win32":
+        return []
+    try:
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        pages = (
+            kernel32.GetConsoleOutputCP(),
+            kernel32.GetOEMCP(),
+            kernel32.GetACP(),
+        )
+    except Exception:  # noqa: BLE001 - decoding must never break the caller
+        return []
+    return [f"cp{page}" for page in pages if page]
+
+
+def decode_process_output(raw: bytes, *, preferred_encoding: str | None = None) -> str:
+    """Decode human-facing subprocess output without turning it into mojibake.
+
+    UTF-8 is the application contract on Linux/macOS and for subprocesses that
+    awenops launches itself.  Localized Windows PowerShell 5.1 can nevertheless
+    emit an OEM/ANSI code page when it is hidden with CREATE_NO_WINDOW, so those
+    platform code pages are strict fallbacks.  Unknown bytes are escaped instead
+    of silently becoming the replacement character ``�``.
+    """
+    if not raw:
+        return ""
+    candidates: list[str] = []
+    _append_encoding(candidates, "utf-8-sig")
+    _append_encoding(candidates, preferred_encoding)
+    for encoding in _windows_output_encodings():
+        _append_encoding(candidates, encoding)
+    _append_encoding(candidates, locale.getpreferredencoding(False))
+
+    for encoding in candidates:
+        try:
+            return raw.decode(encoding, errors="strict")
+        except UnicodeDecodeError:
+            continue
+    return raw.decode("utf-8", errors="backslashreplace")
+
+
+def powershell_utf8_script_command(
+    executable: str,
+    script: os.PathLike[str] | str,
+    *,
+    named_args: Mapping[str, str] | None = None,
+) -> list[str]:
+    """Build a PowerShell command that establishes UTF-8 before script parsing.
+
+    ``-File`` parses the target before its first line can set OutputEncoding.
+    With Windows PowerShell 5.1 + CREATE_NO_WINDOW that makes even parameter
+    validation errors come out as the machine code page.  A small ``-Command``
+    wrapper sets UTF-8 first, then invokes the real script.  Names are validated
+    and values are single-quote escaped so paths with spaces, CJK, or apostrophes
+    remain data rather than PowerShell syntax.
+    """
+    args = named_args or {}
+    fragments = [f"& '{str(script).replace(chr(39), chr(39) * 2)}'"]
+    for name, value in args.items():
+        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", name):
+            raise ValueError(f"invalid PowerShell parameter name: {name!r}")
+        escaped = str(value).replace("'", "''")
+        fragments.append(f"-{name} '{escaped}'")
+    invocation = " ".join(fragments)
+    command = (
+        "$utf8=[System.Text.UTF8Encoding]::new($false);"
+        "[Console]::InputEncoding=$utf8;"
+        "[Console]::OutputEncoding=$utf8;"
+        "$OutputEncoding=$utf8;"
+        f"{invocation};"
+        "$awenopsOk=$?;"
+        "$awenopsExit=$LASTEXITCODE;"
+        "if(-not $awenopsOk){"
+        "if(($null -ne $awenopsExit)-and($awenopsExit -ne 0)){exit $awenopsExit}"
+        "else{exit 1}"
+        "}"
+    )
+    return [
+        executable,
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        command,
+    ]
 
 
 def _extra_allow() -> set:

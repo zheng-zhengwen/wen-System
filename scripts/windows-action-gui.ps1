@@ -1,4 +1,4 @@
-# Lightweight Windows GUI wrapper for awenops update/stop actions.
+﻿# Lightweight Windows GUI wrapper for awenops update/stop actions.
 
 param(
     [ValidateSet("update", "stop")]

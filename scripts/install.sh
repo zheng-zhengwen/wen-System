@@ -242,7 +242,7 @@ if [ ! -x "$AWEN_AGENT_BIN" ]; then
     info "  从本地源码安装 awenAgent：$AWEN_AGENT_SOURCE"
     "$VENV_PY" -m pip install -e "$AWEN_AGENT_SOURCE" $PIP_MIRROR
   else
-    AWEN_AGENT_REPO="${AWEN_AGENT_REPO:-https://github.com/Hector-xue/awen-agent.git}"
+    AWEN_AGENT_REPO="${AWEN_AGENT_REPO:-https://github.com/zheng-zhengwen/awen-agent.git}"
     # 默认装**最新 release tag**，不是 main。装 main 等于把未发布代码推给用户，
     # 而且和「有新版本」的提示对不上（那个提示比的就是 release tag）。
     # 取不到时这里**不像更新流程那样直接失败** —— 安装是从零开始，硬失败会把人
@@ -250,12 +250,12 @@ if [ ! -x "$AWEN_AGENT_BIN" ]; then
     if [ -z "${AWEN_AGENT_REF:-}" ]; then
       AWEN_AGENT_REF="$(curl -fsSL --max-time 8 \
         -H 'Accept: application/vnd.github+json' \
-        https://api.github.com/repos/Hector-xue/awen-agent/releases/latest 2>/dev/null \
+        https://api.github.com/repos/zheng-zhengwen/awen-agent/releases/latest 2>/dev/null \
         | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
       if [ -z "$AWEN_AGENT_REF" ]; then
         AWEN_AGENT_REF="main"
-        warn "  取不到 awenAgent 的最新 release（网络？），改用 main 分支 —— 这是**未发布代码**。"
-        warn "  网络恢复后建议重装到正式版：AWEN_AGENT_REF=vX.Y.Z 重跑本脚本。"
+        warn "  未解析到 awenAgent 的正式 release（尚未发布或网络不可用），改用 main 分支 —— 这是**未发布代码**。"
+        warn "  release 发布且可访问后，建议设置 AWEN_AGENT_REF=vX.Y.Z 并重跑本脚本。"
       fi
     fi
     info "  从 Git 安装 awenAgent：$AWEN_AGENT_REPO@$AWEN_AGENT_REF"

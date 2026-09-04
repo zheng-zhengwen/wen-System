@@ -1,4 +1,4 @@
-# awenops optional component installer (Windows / PowerShell 5.1+)
+﻿# awenops optional component installer (Windows / PowerShell 5.1+)
 #
 # Components:
 #   all         - awenAgent runtime (default)
@@ -13,6 +13,13 @@ param(
     [ValidateSet("all", "awen-agent", "legacy", "hermes", "ollama", "codex", "claude", "status")]
     [string]$Component = "all"
 )
+
+$Utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+[Console]::InputEncoding = $Utf8NoBom
+[Console]::OutputEncoding = $Utf8NoBom
+$OutputEncoding = $Utf8NoBom
+$env:PYTHONIOENCODING = "utf-8"
+$env:PYTHONUTF8 = "1"
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
@@ -164,24 +171,24 @@ function Install-awenAgent {
             Write-Info "Installing awenAgent from local source: $awenAgentSource"
             & $VenvPy -m pip install -e $awenAgentSource
         } else {
-            $awenAgentRepo = if ($env:AWEN_AGENT_REPO) { $env:AWEN_AGENT_REPO } else { "https://github.com/Hector-xue/awen-agent.git" }
+            $awenAgentRepo = if ($env:AWEN_AGENT_REPO) { $env:AWEN_AGENT_REPO } else { "https://github.com/zheng-zhengwen/awen-agent.git" }
             # Default to the latest *release tag*, not main: installing main ships
             # unreleased code and disagrees with the "update available" prompt,
             # which compares against the release tag. Falling back to main is
-            # allowed here (a fresh install shouldn't be blocked by a flaky
-            # network) but must be said out loud, never silently.
+            # allowed here (a fresh install shouldn't be blocked by a missing
+            # release or temporary network failure) but must never be silent.
             $awenAgentRef = $env:AWEN_AGENT_REF
             if ([string]::IsNullOrWhiteSpace($awenAgentRef)) {
                 try {
                     $rel = Invoke-RestMethod -TimeoutSec 8 -Headers @{ "User-Agent" = "awenops" } `
-                        -Uri "https://api.github.com/repos/Hector-xue/awen-agent/releases/latest"
+                        -Uri "https://api.github.com/repos/zheng-zhengwen/awen-agent/releases/latest"
                     $awenAgentRef = $rel.tag_name
                 } catch { $awenAgentRef = $null }
             }
             if ([string]::IsNullOrWhiteSpace($awenAgentRef)) {
                 $awenAgentRef = "main"
-                Write-Warn "Could not resolve the latest awenAgent release; falling back to main (UNRELEASED code)."
-                Write-Warn "Once the network is back, reinstall a release: `$env:AWEN_AGENT_REF='vX.Y.Z'"
+                Write-Warn "Could not resolve a published awenAgent release; falling back to main (UNRELEASED code)."
+                Write-Warn "Once a release is published and reachable, reinstall it: `$env:AWEN_AGENT_REF='vX.Y.Z'"
             }
             Write-Info "Installing awenAgent from Git: $awenAgentRepo@$awenAgentRef"
             & $VenvPy -m pip install "git+$awenAgentRepo@$awenAgentRef"

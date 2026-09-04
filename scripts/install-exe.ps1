@@ -1,4 +1,4 @@
-# awenops Windows x64 免 Python 安装器
+﻿# awenops Windows x64 免 Python 安装器
 #
 # 用于 GitHub Release 的 awenops-Windows-x64.zip：
 #   1. 不安装 Python / Node

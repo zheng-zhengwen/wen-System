@@ -25,7 +25,7 @@ COPY server/requirements.txt ./server/requirements.txt
 RUN pip install --no-cache-dir -r server/requirements.txt
 
 # Built-in awenAgent runtime (Agent + knowledge base + local retrieval).
-ARG AWEN_AGENT_REPO=https://github.com/Hector-xue/awen-agent.git
+ARG AWEN_AGENT_REPO=https://github.com/zheng-zhengwen/awen-agent.git
 ARG AWEN_AGENT_REF=main
 RUN pip install --no-cache-dir "git+${AWEN_AGENT_REPO}@${AWEN_AGENT_REF}"
 

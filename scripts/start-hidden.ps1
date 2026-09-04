@@ -1,4 +1,4 @@
-# awenops hidden Windows launcher.
+﻿# awenops hidden Windows launcher.
 # Starts the FastAPI backend in the background, writes logs/PID, then opens the browser.
 
 Set-StrictMode -Version Latest

@@ -48,7 +48,7 @@ jobs:
               ref=$(curl -fsSL \
                       -H "Authorization: Bearer $GH_TOKEN" \
                       -H "Accept: application/vnd.github+json" \
-                      "https://api.github.com/repos/Hector-xue/awen-agent/releases/latest" \
+                      "https://api.github.com/repos/zheng-zhengwen/awen-agent/releases/latest" \
                     | python3 -c "import json,sys;print(json.load(sys.stdin).get('tag_name') or '')" 2>/dev/null) || ref=""
               [ -n "$ref" ] && break
               echo "第 $attempt 次没取到，5 秒后重试"
@@ -170,7 +170,7 @@ jobs:
           echo "bundling awen-agent ref: $AGENT_REF"
           # 克隆失败不再回退默认分支：那是同一个"悄悄换个版本"的坑，
           # 用户拿到的包会和版本号说的不是一回事。
-          git clone --depth 1 --branch "$AGENT_REF" https://github.com/Hector-xue/awen-agent.git "$STAGE/agent"
+          git clone --depth 1 --branch "$AGENT_REF" https://github.com/zheng-zhengwen/awen-agent.git "$STAGE/agent"
           rm -rf "$STAGE/agent/.git"
           test -f "$STAGE/agent/pyproject.toml"   # bundled agent source present
           # 包里的 agent 自报版本必须和捆绑的 tag 一致。对不上时用户那边的表现是
@@ -259,7 +259,7 @@ jobs:
           # 版本由 agent-ref 作业统一解析（见文件顶部那段注释），三个平台的包共用同一个。
           $agentRef = "${{ needs.agent-ref.outputs.ref }}"
           Write-Host "bundling awen-agent ref: $agentRef"
-          python -m pip install "git+https://github.com/Hector-xue/awen-agent.git@$agentRef"
+          python -m pip install "git+https://github.com/zheng-zhengwen/awen-agent.git@$agentRef"
           $bundled = python -c "import awen_agent; print(awen_agent.__version__)"
           Write-Host "bundling awenAgent $bundled"
           # 自报版本必须和 tag 一致 —— 对不上时用户那边的表现是「有更新」徽标一直亮着
@@ -383,7 +383,7 @@ jobs:
           # 失败了不吭声。现在它没有自己的解析逻辑，也就没有自己的兜底。
           AGENT_REF="${{ needs.agent-ref.outputs.ref }}"
           echo "bundling awen-agent ref: $AGENT_REF"
-          python -m pip install "git+https://github.com/Hector-xue/awen-agent.git@${AGENT_REF}"
+          python -m pip install "git+https://github.com/zheng-zhengwen/awen-agent.git@${AGENT_REF}"
           BUNDLED=$(python -c "import awen_agent; print(awen_agent.__version__)")
           echo "bundling awenAgent $BUNDLED"
           [ "v$BUNDLED" = "$AGENT_REF" ] || {
