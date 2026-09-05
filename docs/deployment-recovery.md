@@ -2,6 +2,9 @@
 
 ## 版本与安装
 
+awenOps v1.13.2 配套 awenAgent v1.16.9（Bridge v2）。Docker 示例和 GitHub 构建变量
+均固定此 tag，避免不同平台的发行包安装不同 Agent；不要将精确版本换成 `main`。
+
 原生入口为 `scripts/install.sh`、`scripts/install.ps1`；根 `setup.*` 现为转发入口。
 Docker 单独使用 `docker-compose.yml`，先按 `.env.example` 填完整配置，再执行 compose。
 
@@ -48,6 +51,9 @@ backend 与 Agent 仍仅内部回环可达，只有 nginx 入口对外。
 
 开发测试先安装 `server/requirements-dev.txt`。仓库根运行 `python -m pytest` 会收集两套后端测试，
 并强制加载跨平台超时插件；前端在 `client/` 运行 `npm run test:dock`、`npm run test:approval` 和 `npm run build`。
+
+前端编译测试通过 esbuild JavaScript API 调用，不把 Linux/macOS 的原生 CLI 当成 Node 脚本。
+`node --test e2e/esbuild-native-entry.test.mjs` 可在任意平台重现该差异，并验证审批、统计、会话恢复测试入口。
 
 本次本机验证是 Windows / Python 3.14 / Node 20：双端审批契约、UTF-8、中文路径、后端测试、
 真实 React 组件生命周期、类型检查及构建。CI 配置含 Windows/Linux/macOS，尚需远端实际运行。
