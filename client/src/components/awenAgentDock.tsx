@@ -16,7 +16,7 @@
  */
 import {
   type CSSProperties, type PointerEvent as ReactPointerEvent,
-  useEffect, useRef, useState,
+  lazy, Suspense, useEffect, useRef, useState,
 } from "react";
 import { createPortal } from "react-dom";
 import { Bot, History, Loader2, Plus, RefreshCw, Trash2, X } from "lucide-react";
@@ -28,9 +28,10 @@ import {
   type awenAgentStatus as AwenAgentStatus,
   type awenChatSession,
 } from "../api/awenAgent";
-import Console from "../pages/workbench/Console";
 import "../styles/awen-agent-dock.css";
 import { errText } from "../lib/errText";
+
+const Console = lazy(() => import("../pages/workbench/Console"));
 
 const FAB_SIZE = 52;
 const FAB_MARGIN = 12;
@@ -289,12 +290,14 @@ export default function AwenAgentDock() {
              * 用条件渲染切换会把正在跑的那一轮卸载掉，而"发出去之后翻一下历史"
              * 是再正常不过的动作。
              */}
-            <Console
-              embedded
-              sessionId={sessionId}
-              onSessionChange={setSessionId}
-              resetSignal={resetSignal}
-            />
+            <Suspense fallback={<div role="status">正在加载任务台…</div>}>
+              <Console
+                embedded
+                sessionId={sessionId}
+                onSessionChange={setSessionId}
+                resetSignal={resetSignal}
+              />
+            </Suspense>
 
             {showHistory && (
               <div className="awen-agent-history-view">

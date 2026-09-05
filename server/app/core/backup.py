@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import io
 import json
 import logging
 import os
@@ -39,7 +40,7 @@ from typing import Any, Optional
 logger = logging.getLogger("awen.core.backup")
 
 MANIFEST = "manifest.json"
-FORMAT_VERSION = 1
+FORMAT_VERSION = 2  # v1 remains readable; v2 adds the encrypted agent data archive
 
 # 备份里不收的东西：-wal/-shm 由在线备份消化掉；日志、缓存、临时文件丢了无所谓。
 _SKIP_SUFFIXES = (".sqlite3-wal", ".sqlite3-shm", ".db-wal", ".db-shm", ".log", ".tmp")
@@ -50,7 +51,7 @@ _MEDIA_DIRS = {"imagegen-jobs", "image_workspace", "listing_images",
 # 把它算进 media 的后果是：开了 include_media 之后，每个新备份都会把此前所有
 # 备份装进去（体积指数级滚雪球），还会把**正在写的那个包自己**的半成品读进去
 # —— 压缩流已经开着，文件就在磁盘上长。
-_NEVER_BACKED_UP_DIRS = {"backups"}
+_NEVER_BACKED_UP_DIRS = {"backups", "awen-agent"}
 
 _PBKDF2_ROUNDS = 240_000
 
@@ -90,7 +91,8 @@ def _snapshot_db(src: Path, dest: Path) -> None:
         source.close()
 
 
-def _iter_payload(data_dir: Path, include_media: bool, exclude_dir: Optional[Path] = None):
+def _iter_payload(data_dir: Path, include_media: bool, exclude_dir: Optional[Path] = None,
+                  agent_dir: Optional[Path] = None):
     """产出 (归档内路径, 磁盘路径, 类型)。
 
     ``exclude_dir`` 是本次备份的输出目录 —— 用户可以把它指到 data_dir 里的任意
@@ -98,28 +100,51 @@ def _iter_payload(data_dir: Path, include_media: bool, exclude_dir: Optional[Pat
     输出位置再挡一道。
     """
     excluded = exclude_dir.resolve() if exclude_dir else None
-    for path in sorted(data_dir.iterdir()):
-        name = path.name
-        if name.startswith(".") and name != ".master.key":
-            continue
-        if name.endswith(_SKIP_SUFFIXES):
-            continue
-        if path.is_dir():
-            if name in _NEVER_BACKED_UP_DIRS:
+    private = agent_dir.resolve() if agent_dir else None
+    for folder, dirs, files in os.walk(data_dir, followlinks=False):
+        root = Path(folder)
+        dirs[:] = sorted(name for name in dirs
+                         if name not in _NEVER_BACKED_UP_DIRS and not name.startswith(".")
+                         and (include_media or name not in _MEDIA_DIRS)
+                         and not (root / name).is_symlink()
+                         and (private is None or (root / name).resolve() != private)
+                         and (excluded is None or (root / name).resolve() != excluded))
+        for name in sorted(files):
+            path = root / name
+            if (name.startswith(".") or name.endswith(_SKIP_SUFFIXES) or path.is_symlink()
+                    or (name.startswith("awenops-backup-") and name.endswith(".zip"))):
                 continue
-            if excluded is not None and path.resolve() == excluded:
-                continue
-            if name in _MEDIA_DIRS and not include_media:
-                continue
-            for sub in sorted(path.rglob("*")):
-                if sub.is_file() and not sub.name.endswith(_SKIP_SUFFIXES):
-                    yield f"files/{sub.relative_to(data_dir).as_posix()}", sub, "file"
-        elif path.suffix in (".sqlite3", ".db"):
-            yield f"db/{name}", path, "db"
-        elif name == ".master.key":
-            continue          # 单独处理，见 create()
-        elif path.is_file():
-            yield f"files/{name}", path, "file"
+            kind = "db" if path.suffix in (".sqlite3", ".db") else "file"
+            prefix = "db" if kind == "db" else "files"
+            yield f"{prefix}/{path.relative_to(data_dir).as_posix()}", path, kind
+
+
+def _agent_dir(data_dir: Optional[Path], explicit: Optional[Path] = None) -> Path:
+    if explicit is not None:
+        return Path(explicit).expanduser().resolve()
+    if data_dir is not None:
+        return Path(data_dir) / "awen-agent"  # isolated restore/test destination
+    return Path(os.getenv("AWEN_HOME") or (Path.home() / ".awen")).expanduser().resolve()
+
+
+def _agent_archive(home: Path, staging: Path) -> bytes:
+    """Agent configs can contain plaintext keys: encrypt the entire archive."""
+    out = io.BytesIO()
+    skip = {"models", "cache", "caches", "logs", "tmp", "backups", ".git", "__pycache__"}
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zf:
+        for folder, dirs, files in os.walk(home, followlinks=False):
+            root = Path(folder)
+            dirs[:] = sorted(d for d in dirs if d not in skip and not (root / d).is_symlink())
+            for name in sorted(files):
+                path = root / name
+                if path.is_symlink() or name.endswith(_SKIP_SUFFIXES + (".pid",)):
+                    continue
+                source = path
+                if path.suffix in {".db", ".sqlite3", ".sqlite"}:
+                    source = staging / "agent-snapshot.db"
+                    _snapshot_db(path, source)
+                zf.writestr(path.relative_to(home).as_posix(), source.read_bytes())
+    return out.getvalue()
 
 
 def create(
@@ -128,6 +153,7 @@ def create(
     passphrase: str = "",
     include_media: bool = False,
     data_dir: Optional[Path] = None,
+    agent_dir: Optional[Path] = None,
 ) -> Path:
     """生成一个备份包，返回它的路径。"""
     from app.core import secrets as _secrets
@@ -135,16 +161,19 @@ def create(
     from app.core.version import app_version
 
     src = Path(data_dir) if data_dir is not None else Path(settings.data_dir)
+    agent_home = _agent_dir(data_dir, agent_dir)
+    if agent_home.resolve() == src.resolve():
+        raise ValueError("AWEN_HOME must be a separate agent directory, not the Ops data root")
     out_dir = Path(dest_dir) if dest_dir is not None else src / "backups"
     out_dir.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
     out = out_dir / f"awenops-backup-{stamp}.zip"
 
     entries: list[dict[str, Any]] = []
     with tempfile.TemporaryDirectory() as tmp:
         tmpdir = Path(tmp)
         with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zf:
-            for arcname, path, kind in _iter_payload(src, include_media, out_dir):
+            for arcname, path, kind in _iter_payload(src, include_media, out_dir, agent_home):
                 if kind == "db":
                     staged = tmpdir / path.name
                     try:
@@ -178,6 +207,15 @@ def create(
                 zf.writestr("secrets/master.key.enc", _seal(passphrase, key_path.read_bytes()))
                 has_key = True
 
+            has_agent = agent_home.is_dir()
+            agent_included = bool(has_agent and passphrase)
+            if agent_included:
+                sealed = _seal(passphrase, _agent_archive(agent_home, tmpdir)).encode("ascii")
+                arcname = "secrets/awen-agent.enc"
+                zf.writestr(arcname, sealed)
+                entries.append({"path": arcname, "bytes": len(sealed),
+                                "sha256": hashlib.sha256(sealed).hexdigest()})
+
             manifest = {
                 "format": FORMAT_VERSION,
                 "app_version": app_version(),
@@ -185,6 +223,8 @@ def create(
                 "created_ts": int(time.time()),
                 "include_media": include_media,
                 "master_key_included": has_key,
+                "agent_data_present": has_agent,
+                "agent_data_included": agent_included,
                 "entries": entries,
                 "total_bytes": sum(e["bytes"] for e in entries),
             }
@@ -248,6 +288,8 @@ def inspect(path: Path) -> dict:
                 report["problems"].append("内容损坏：" + "、".join(corrupted[:10]))
 
             report["master_key_included"] = bool(manifest.get("master_key_included"))
+            if manifest.get("agent_data_present") and not manifest.get("agent_data_included"):
+                report["problems"].append("未包含 awenAgent 数据（需要带口令备份），会话、知识和模型配置不能由此包恢复")
             if not report["master_key_included"]:
                 report["problems"].append(
                     "包里没有主密钥（备份时未设口令）——恢复后各处 API 密钥需要重填")
@@ -255,8 +297,8 @@ def inspect(path: Path) -> dict:
         report["problems"].append(f"无法读取备份包：{type(exc).__name__}: {exc}")
         return report
 
-    # 只有"缺主密钥"这一条不算致命：它是提醒，不是错误。
-    fatal = [p for p in report["problems"] if not p.startswith("包里没有主密钥")]
+    # 未携带密钥/Agent 的不完整备份可以恢复已有部分；这两项是明确的提醒。
+    fatal = [p for p in report["problems"] if not p.startswith(("包里没有主密钥", "未包含 awenAgent"))]
     report["ok"] = not fatal
     return report
 
@@ -267,6 +309,7 @@ def restore(
     passphrase: str = "",
     dry_run: bool = True,
     data_dir: Optional[Path] = None,
+    agent_dir: Optional[Path] = None,
 ) -> dict:
     """恢复备份。**默认只干跑**。
 
@@ -305,6 +348,30 @@ def restore(
         else:
             key_bytes = None
 
+        agent_payloads = []
+        if manifest.get("agent_data_included"):
+            if not passphrase:
+                report["ok"] = False
+                report["problems"].append("恢复 awenAgent 数据需要备份口令")
+                return report
+            try:
+                raw = _unseal(passphrase, zf.read("secrets/awen-agent.enc").decode("ascii"))
+                agent_target = _agent_dir(data_dir, agent_dir)
+                with zipfile.ZipFile(io.BytesIO(raw)) as agent_zip:
+                    for info in agent_zip.infolist():
+                        if info.is_dir():
+                            continue
+                        dest = _dest_for(agent_target, "files/" + info.filename)
+                        if dest is None or dest == agent_target.resolve():
+                            raise ValueError("Unsafe agent archive path")
+                        agent_payloads.append((dest, agent_zip.read(info)))
+                report["agent_will_overwrite"] = [str(p.relative_to(agent_target))
+                                                   for p, _ in agent_payloads if p.exists()]
+            except Exception:  # noqa: BLE001 — validate everything before writing any file
+                report["ok"] = False
+                report["problems"].append("awenAgent 数据口令错误、归档损坏或存在越界路径")
+                return report
+
         if dry_run:
             report["restored"] = 0
             return report
@@ -328,6 +395,14 @@ def restore(
                 os.write(fd, key_bytes)
             finally:
                 os.close(fd)
+
+        for dest, payload in agent_payloads:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            tmp = dest.with_suffix(dest.suffix + ".restoring")
+            tmp.write_bytes(payload)
+            tmp.chmod(0o600)
+            os.replace(tmp, dest)
+            restored += 1
 
         report["restored"] = restored
     return report

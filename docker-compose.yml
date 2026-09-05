@@ -1,10 +1,13 @@
 services:
   app:
-    build: .
+    build:
+      context: .
+      args:
+        AWEN_AGENT_REF: ${AWEN_AGENT_REF:?Set an approved awen-agent release tag}
     container_name: awenops
     restart: unless-stopped
     ports:
-      - "${PORT:-8080}:80"
+      - "${AWENOPS_BIND:-127.0.0.1}:${PORT:-8080}:80"
     volumes:
       - awenops-data:/app/data
     env_file:

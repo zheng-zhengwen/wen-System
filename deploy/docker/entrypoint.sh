@@ -1,5 +1,17 @@
 #!/bin/bash
-set -e
+set -eu
+
+: "${AWENOPS_SECRET:?Set a stable random AWENOPS_SECRET in .env}"
+: "${AWENOPS_ALLOWED_ORIGINS:?Set AWENOPS_ALLOWED_ORIGINS to your browser origins}"
+ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
+if [ "${#AWENOPS_SECRET}" -lt 32 ]; then
+    echo "AWENOPS_SECRET must contain at least 32 random characters" >&2
+    exit 1
+fi
+if [ -z "${AWENOPS_PASSWORD_HASH:-}" ] && [ "${#ADMIN_PASSWORD}" -lt 12 ]; then
+    echo "Set ADMIN_PASSWORD (at least 12 characters) or AWENOPS_PASSWORD_HASH" >&2
+    exit 1
+fi
 
 echo "====================================="
 echo "  awenops - starting"
@@ -8,25 +20,26 @@ echo "====================================="
 mkdir -p /app/data
 
 export AWENOPS_DATA_DIR=/app/data
-export AWENOPS_HOST=0.0.0.0
+export AWENOPS_HOST=127.0.0.1
 export AWENOPS_PORT=8001
 export PYTHONPATH=/app/server
 export PYTHONUNBUFFERED=1
+export PYTHONUTF8=1
+export PYTHONIOENCODING=utf-8
+export AWEN_HOME="${AWEN_HOME:-/app/data/awen-agent}"
+mkdir -p "$AWEN_HOME"
 
 # Generate password hash from ADMIN_PASSWORD env var
-if [ -n "$ADMIN_PASSWORD" ] && [ -z "$AWENOPS_PASSWORD_HASH" ]; then
-    export AWENOPS_PASSWORD_HASH=$(python3 -c "import bcrypt,sys; print(bcrypt.hashpw(sys.argv[1].encode(), bcrypt.gensalt()).decode())" "$ADMIN_PASSWORD")
+if [ -n "${ADMIN_PASSWORD:-}" ] && [ -z "${AWENOPS_PASSWORD_HASH:-}" ]; then
+    AWENOPS_PASSWORD_HASH=$(python3 -c "import bcrypt,os; print(bcrypt.hashpw(os.environ['ADMIN_PASSWORD'].encode(), bcrypt.gensalt()).decode())")
+    export AWENOPS_PASSWORD_HASH
 fi
-
-# Generate secret if not set
-if [ -z "$AWENOPS_SECRET" ]; then
-    export AWENOPS_SECRET=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))")
-fi
+unset ADMIN_PASSWORD
 
 echo "  Starting backend..."
 cd /app/server
 python3 -m uvicorn app.main:app \
-    --host 0.0.0.0 --port 8001 \
+    --host 127.0.0.1 --port 8001 \
     --log-level info --no-access-log &
 BACKEND_PID=$!
 

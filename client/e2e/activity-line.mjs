@@ -16,13 +16,12 @@
  * 跑：node e2e/activity-line.mjs
  */
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { buildSync } from "esbuild";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
 import { WsCDP, chromeArgs, click, delay, evaluate, waitFor } from "./cdp.mjs";
-import { localTool } from "./runtime.mjs";
 
 /** 步数照着用户那张截图来：192 步，铺开就是一整屏芯片墙。 */
 const STEP_COUNT = 192;
@@ -107,17 +106,9 @@ async function run() {
   const entry = path.resolve("e2e/.activity-harness.jsx");
   try {
     await writeFile(entry, HARNESS, "utf8");
-  const bundle = spawnSync(process.execPath, [localTool("esbuild"), entry, "--bundle", "--format=esm", "--jsx=automatic",
-                                   // 背景图是运行时由服务端提供的绝对路径（/art/bg.png），
-                                   // 打包器解析不到也不需要解析 —— 这条用例量的是排版，不是背景。
-                                   "--external:/art/*",
-                                   // 字体同理：@font-face 里是运行时的绝对路径
-                                   // （/fonts/*.woff2），打包器解析不到就直接报错，
-                                   // 整条用例连页面都跑不起来。这条量的是排版不是字形。
-                                   "--external:/fonts/*",
-                                   `--outfile=${path.join(work, "bundle.js")}`],
-                           { cwd: path.resolve("."), encoding: "utf8" });
-    if (bundle.status !== 0) throw new Error(bundle.stderr || bundle.stdout || "harness bundle failed");
+    // 背景和字体由服务端运行时提供；本用例验证排版，不打包这些绝对路径资源。
+    buildSync({ entryPoints: [entry], bundle: true, format: "esm", jsx: "automatic",
+      external: ["/art/*", "/fonts/*"], outfile: path.join(work, "bundle.js"), logLevel: "silent" });
     await writeFile(path.join(work, "index.html"), PAGE, "utf8");
   } catch (error) {
     await rm(entry, { force: true }).catch(() => {});

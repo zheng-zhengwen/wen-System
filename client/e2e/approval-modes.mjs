@@ -9,19 +9,16 @@
  * 跑：node e2e/approval-modes.mjs
  */
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { buildSync } from "esbuild";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { localTool } from "./runtime.mjs";
 
 const work = await mkdtemp(path.join(os.tmpdir(), "awen-approval-"));
 try {
   const outfile = path.join(work, "approvalModes.mjs");
-  const build = spawnSync(process.execPath, [localTool("esbuild"), "src/lib/approvalModes.ts", "--format=esm", `--outfile=${outfile}`],
-                          { cwd: path.resolve("."), encoding: "utf8" });
-  if (build.status !== 0) throw new Error(build.stderr || build.stdout || "bundle failed");
+  buildSync({ entryPoints: ["src/lib/approvalModes.ts"], format: "esm", outfile, logLevel: "silent" });
   const { APPROVAL_MODES, approvalPayload, approvalFromWire, approvalLabel } =
     await import(pathToFileURL(outfile).href);
 

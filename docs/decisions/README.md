@@ -50,6 +50,9 @@ git log 记得住「改了什么」，记不住「为什么不选另一条路」
 | [0030](./0030-show-image-reuses-workspace-binding.md) | Agent 给用户看图，权限复用「工作区绑目录」 | 2026-08-30 |
 | [0031](./0031-uploads-default-to-this-conversation.md) | 上传的文件默认只属于这次对话 | 2026-08-30 |
 | [0032](./0032-single-lucent-light-theme.md) | 只保留琉璃·浅一个主题 | 2026-09-03 |
+| [0033](./0033-unify-awen-branding.md) | 统一 awen 品牌标识（原重复 0015 顺延编号） | 2026-08-17 |
+| [0034](./0034-bridge-write-grants.md) | 桥接写操作由主系统签发单次授权，Agent 与主系统双端校验 | 2026-09-06 |
+| [0035](./0035-persistent-agent-deployment.md) | Agent 持久化、加密备份与可复现安装成为部署契约 | 2026-09-06 |
 
 ## 模板
 
