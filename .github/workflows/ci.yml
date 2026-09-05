@@ -230,4 +230,5 @@ jobs:
         working-directory: client
         run: |
           node e2e/lazy-dock.mjs
+          node --test e2e/esbuild-native-entry.test.mjs
           npm run test:approval

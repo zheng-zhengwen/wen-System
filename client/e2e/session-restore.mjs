@@ -13,20 +13,16 @@
  * 跑：node e2e/session-restore.mjs
  */
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { buildSync } from "esbuild";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { localTool } from "./runtime.mjs";
 
 const work = await mkdtemp(path.join(os.tmpdir(), "awen-restore-"));
 try {
   const outfile = path.join(work, "sessionRestore.mjs");
-  const build = spawnSync(process.execPath, [localTool("esbuild"), "src/lib/sessionRestore.ts", "--bundle", "--format=esm",
-                                  `--outfile=${outfile}`],
-                          { cwd: path.resolve("."), encoding: "utf8" });
-  if (build.status !== 0) throw new Error(build.stderr || build.stdout || "bundle failed");
+  buildSync({ entryPoints: ["src/lib/sessionRestore.ts"], bundle: true, format: "esm", outfile, logLevel: "silent" });
   const { restoreSession } = await import(pathToFileURL(outfile).href);
 
 const step = (id, name, extra = {}) => ({

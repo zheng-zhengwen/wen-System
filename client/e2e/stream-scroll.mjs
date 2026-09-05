@@ -12,14 +12,13 @@
  * 跑：node e2e/stream-scroll.mjs
  */
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { buildSync } from "esbuild";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { WsCDP, chromeArgs, delay, evaluate, waitFor, wheel } from "./cdp.mjs";
-import { localTool } from "./runtime.mjs";
 
 /** harness：两个一模一样的流式面板，一个用新 hook，一个用旧写法。 */
 const HARNESS = `
@@ -103,10 +102,8 @@ async function run() {
   const entry = path.resolve("e2e/.harness.jsx");
   try {
     await writeFile(entry, HARNESS, "utf8");
-  const bundle = spawnSync(process.execPath, [localTool("esbuild"), entry, "--bundle", "--format=esm", "--jsx=automatic",
-                                   `--outfile=${path.join(work, "bundle.js")}`],
-                           { cwd: path.resolve("."), encoding: "utf8" });
-    if (bundle.status !== 0) throw new Error(bundle.stderr || bundle.stdout || "harness bundle failed");
+    buildSync({ entryPoints: [entry], bundle: true, format: "esm", jsx: "automatic",
+      outfile: path.join(work, "bundle.js"), logLevel: "silent" });
     await writeFile(path.join(work, "index.html"), PAGE, "utf8");
   } catch (error) {
     await rm(entry, { force: true }).catch(() => {});
