@@ -26,8 +26,9 @@ RUN pip install --no-cache-dir -r server/requirements.txt
 
 # Built-in awenAgent runtime (Agent + knowledge base + local retrieval).
 ARG AWEN_AGENT_REPO=https://github.com/zheng-zhengwen/awen-agent.git
-ARG AWEN_AGENT_REF=main
-RUN pip install --no-cache-dir "git+${AWEN_AGENT_REPO}@${AWEN_AGENT_REF}"
+ARG AWEN_AGENT_REF
+RUN test -n "$AWEN_AGENT_REF" && \
+    pip install --no-cache-dir "git+${AWEN_AGENT_REPO}@${AWEN_AGENT_REF}"
 
 # Copy backend source
 COPY server/ ./server/
@@ -40,15 +41,17 @@ COPY deploy/docker/nginx.conf /etc/nginx/nginx.conf
 
 # Default environment
 ENV AWENOPS_DATA_DIR=/app/data
-ENV AWENOPS_HOST=0.0.0.0
+ENV AWENOPS_HOST=127.0.0.1
 ENV AWENOPS_PORT=8001
 ENV PYTHONUNBUFFERED=1
+ENV PYTHONUTF8=1
+ENV PYTHONIOENCODING=utf-8
 ENV PYTHONPATH=/app/server
 ENV HOME=/root
-ENV AWEN_HOME=/root/.awen
+ENV AWEN_HOME=/app/data/awen-agent
 
 # Create data directory
-RUN mkdir -p /app/data /root/.awen/knowledge /root/.awen/models
+RUN mkdir -p /app/data/awen-agent/knowledge /app/data/awen-agent/models
 
 # Expose ports
 EXPOSE 80

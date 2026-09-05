@@ -95,7 +95,8 @@ def test_chat_routes_forward_payload(ctx, monkeypatch):
     assert seen["chat"]["session_id"] == "s1"
     assert seen["chat"]["max_steps"] == 6
     assert seen["chat"]["inject_retrieval"] is True
-    assert seen["chat"]["ops_bridge"]["base_url"] == "http://ops.test/api/awen-agent-bridge"
+    from app.core.config import settings
+    assert seen["chat"]["ops_bridge"]["base_url"] == f"http://127.0.0.1:{settings.port}/api/awen-agent-bridge"
     assert seen["chat"]["ops_bridge"]["token"]
     assert router.chat_sessions(limit=3)["sessions"][0]["id"] == "s1"
     assert router.chat_session("s1")["session"]["id"] == "s1"

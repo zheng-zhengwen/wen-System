@@ -175,8 +175,7 @@ function Install-awenAgent {
             # Default to the latest *release tag*, not main: installing main ships
             # unreleased code and disagrees with the "update available" prompt,
             # which compares against the release tag. Falling back to main is
-            # allowed here (a fresh install shouldn't be blocked by a missing
-            # release or temporary network failure) but must never be silent.
+            # forbidden: a network failure must not change the code being deployed.
             $awenAgentRef = $env:AWEN_AGENT_REF
             if ([string]::IsNullOrWhiteSpace($awenAgentRef)) {
                 try {
@@ -186,9 +185,7 @@ function Install-awenAgent {
                 } catch { $awenAgentRef = $null }
             }
             if ([string]::IsNullOrWhiteSpace($awenAgentRef)) {
-                $awenAgentRef = "main"
-                Write-Warn "Could not resolve a published awenAgent release; falling back to main (UNRELEASED code)."
-                Write-Warn "Once a release is published and reachable, reinstall it: `$env:AWEN_AGENT_REF='vX.Y.Z'"
+                throw "No published awenAgent release is reachable. Set AWEN_AGENT_REF to an approved release tag, or AWEN_AGENT_LOCAL to an explicitly selected local source. No main fallback was installed."
             }
             Write-Info "Installing awenAgent from Git: $awenAgentRepo@$awenAgentRef"
             & $VenvPy -m pip install "git+$awenAgentRepo@$awenAgentRef"

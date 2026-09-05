@@ -43,7 +43,7 @@ def _fake_hermes_launcher(tmp_path: Path, script: Path | None = None) -> str:
     p = script or _fake_hermes(tmp_path)
     if sys.platform == "win32":
         launcher = tmp_path / "fake_hermes.cmd"
-        launcher.write_text(f'@echo off\r\n"{sys.executable}" "{p}" %*\r\n', encoding="ascii")
+        launcher.write_text(f'@echo off\nchcp 65001 >nul\n"{sys.executable}" "{p}" %*\n', encoding="utf-8")
     else:
         launcher = tmp_path / "fake_hermes.sh"
         launcher.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{p}" "$@"\n', encoding="utf-8")
@@ -55,7 +55,7 @@ def _fake_codex_launcher(tmp_path: Path) -> str:
     p = _fake_codex(tmp_path)
     if sys.platform == "win32":
         launcher = tmp_path / "fake_codex.cmd"
-        launcher.write_text(f'@echo off\r\n"{sys.executable}" "{p}" %*\r\n', encoding="ascii")
+        launcher.write_text(f'@echo off\nchcp 65001 >nul\n"{sys.executable}" "{p}" %*\n', encoding="utf-8")
     else:
         launcher = tmp_path / "fake_codex.sh"
         launcher.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{p}" "$@"\n', encoding="utf-8")

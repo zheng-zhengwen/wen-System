@@ -233,7 +233,7 @@ try {
             $awenAgentRepo = if ($env:AWEN_AGENT_REPO) { $env:AWEN_AGENT_REPO } else { "https://github.com/zheng-zhengwen/awen-agent.git" }
             # 默认装**最新 release tag**，不是 main：装 main 等于把未发布代码推给
             # 用户，且和「有新版本」的提示对不上（那个提示比的就是 release tag）。
-            # 取不到时不硬失败（安装是从零开始，挡住人不合适），但要大声说清楚。
+            # 取不到就停止：网络失败不能改变即将部署的版本。
             $awenAgentRef = $env:AWEN_AGENT_REF
             if ([string]::IsNullOrWhiteSpace($awenAgentRef)) {
                 try {
@@ -243,9 +243,7 @@ try {
                 } catch { $awenAgentRef = $null }
             }
             if ([string]::IsNullOrWhiteSpace($awenAgentRef)) {
-                $awenAgentRef = "main"
-                Write-Warn "  未解析到 awenAgent 的正式 release（尚未发布或网络不可用），改用 main 分支 —— 这是**未发布代码**。"
-                Write-Warn "  release 发布且可访问后，建议设置 `$env:AWEN_AGENT_REF='vX.Y.Z' 并重跑本脚本。"
+                throw "未解析到 awenAgent 正式 release。请设置 AWEN_AGENT_REF 为已验收的 tag，或用 AWEN_AGENT_LOCAL 明确指定本地源码；不会自动安装 main。"
             }
             Write-Info "  从 Git 安装 awenAgent：$awenAgentRepo@$awenAgentRef"
             & $VenvPy -m pip install -q @PipMirror "git+$awenAgentRepo@$awenAgentRef"

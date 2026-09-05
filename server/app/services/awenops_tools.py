@@ -11,6 +11,7 @@ from __future__ import annotations
 import inspect
 import json
 import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Union
@@ -20,9 +21,10 @@ from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 from app.core import permissions as module_permissions
 from app.core.config import settings
+from app.services import ops_bridge_security as bridge_security
 
 _BRIDGE_SALT = "awenops.awen-agent.bridge"
-_BRIDGE_MAX_AGE_SECONDS = 15 * 60
+_BRIDGE_MAX_AGE_SECONDS = bridge_security.TTL
 _serializer = URLSafeTimedSerializer(settings.secret_key, salt=_BRIDGE_SALT)
 
 
@@ -55,9 +57,13 @@ def _principal() -> dict[str, Any]:
     return {"id": ADMIN_ID, "role": "admin", "email": settings.admin_user, "permissions": []}
 
 
-def issue_bridge_token() -> str:
+def issue_bridge_token(mode: str = "none") -> str:
     principal = _principal()
-    return _serializer.dumps({"principal": principal, "iat": int(time.time())})
+    scope = {"protocol_version": bridge_security.PROTOCOL_VERSION,
+             "mode": mode if mode in {"remote", "auto"} else "none",
+             "turn": uuid.uuid4().hex, "expires": int(time.time()) + _BRIDGE_MAX_AGE_SECONDS}
+    bridge_security.open_turn(scope["turn"], scope["expires"])
+    return _serializer.dumps({"principal": principal, "bridge": scope, "iat": int(time.time())})
 
 
 def principal_from_token(token: str) -> dict[str, Any]:
@@ -76,6 +82,7 @@ def principal_from_token(token: str) -> dict[str, Any]:
         "email": principal.get("email", ""),
         "permissions": list(principal.get("permissions") or []),
         "position": principal.get("position", ""),
+        "_bridge": data.get("bridge") if isinstance(data.get("bridge"), dict) else {},
     }
 
 
@@ -797,12 +804,23 @@ def list_tools(module: str = "", query: str = "", principal: dict[str, Any] | No
     return {
         "ok": True,
         "tools": rows,
+        "protocol_version": bridge_security.PROTOCOL_VERSION,
         "modules": sorted({row["module"] for row in rows}),
         "principal": {"role": principal.get("role"), "email": principal.get("email", "")},
     }
 
 
-async def call_tool(name: str, arguments: dict[str, Any] | None = None, principal: dict[str, Any] | None = None) -> dict[str, Any]:
+def prepare_tool(name: str, arguments: dict[str, Any], principal: dict[str, Any]) -> dict[str, Any]:
+    tool = _TOOL_BY_NAME.get(name)
+    if not tool or not _can_access(tool.module, principal):
+        raise HTTPException(403, "tool_not_found_or_forbidden")
+    if not tool.destructive:
+        raise HTTPException(400, "Read-only tools do not need write grants")
+    return bridge_security.prepare(principal, name, arguments)
+
+
+async def call_tool(name: str, arguments: dict[str, Any] | None = None, principal: dict[str, Any] | None = None,
+                    call_id: str = "") -> dict[str, Any]:
     tool = _TOOL_BY_NAME.get((name or "").strip())
     if not tool:
         return {"ok": False, "error": "tool_not_found", "tool": name}
@@ -810,6 +828,9 @@ async def call_tool(name: str, arguments: dict[str, Any] | None = None, principa
     if not _can_access(tool.module, principal):
         return {"ok": False, "error": "permission_denied", "tool": tool.name, "module": tool.module}
     args = arguments if isinstance(arguments, dict) else {}
+    if tool.destructive and not bridge_security.consume(principal, tool.name, args, call_id):
+        return {"ok": False, "error": "approval_required", "tool": tool.name,
+                "detail": "写操作需要当前轮次对该工具及参数的有效审批；只读、过期或重复调用均不执行。"}
     try:
         result = tool.handler(args)
         if inspect.isawaitable(result):

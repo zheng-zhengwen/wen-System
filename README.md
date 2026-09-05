@@ -28,18 +28,18 @@
 ## 核心特性
 
 - **本地部署**：跑在自己的服务器，不依赖第三方 SaaS，业务数据不出私域。
-- **数据安全**：店铺数据、API 密钥统一存放在后端 `data/`（已 gitignore），不入代码库、不暴露给前端或智能体。
+- **数据安全**：工作台店铺数据和连接凭据存放在后端 `data/`（已 gitignore）；Agent 会话、知识和模型配置使用独立的 `AWEN_HOME`，不入代码库。领星凭据不复制给 Agent。
 - **开箱即用**：Release 包已预构建前端；Windows 普通包预置后端 wheels，Windows x64 包内置后端 exe。
 - **可二次开发**：AGPL-3.0 开源，前后端按模块拆分，路由 / 服务一一对应，新增板块成本低。
 - **高自由度 · 可定制**：板块与功能都能按需增删改；对现成功能不满意，可直接让 awenAgent 或外部智能体读代码帮你修改调优 —— 审核制修复还会在 git worktree 隔离、人工确认后才落地。
-- **一次登录，全部模块**：单点登录后侧边栏直达所有板块，统一主题（内置 10 套配色）。
+- **一次登录，全部模块**：单点登录后侧边栏直达所有板块，统一使用「琉璃·浅」主题。
 - **智能体驱动**：右下角内置 awenAgent 常驻会话与知识库；也可接入 Hermes / Claude / Codex 等外部 CLI。
 
 ---
 
 ## 界面预览
 
-> 截图取自实际工作台（统一主题，内置 10 套配色，下图为「月岩」浅色主题）。各板块完整用法见 [`docs/USAGE.md`](docs/USAGE.md)。
+> 以下是历史版本的工作台截图；当前统一使用「琉璃·浅」主题。各板块完整用法见 [`docs/USAGE.md`](docs/USAGE.md)。
 
 <table>
   <tr>
@@ -119,7 +119,7 @@
 | **系统配置** | 集中式运行时配置（密钥 / 集成路径 / 阈值），首启向导引导 |
 | **资讯** | 24 路信源并行抓取 + AI 汇总的每日行业资讯摘要（按类别均衡、附推荐理由） |
 
-> 还内置「审核制 AI 自动修复」（功能报错时用 hermes + git worktree 隔离生成修复、人工审核后应用，默认关闭）等运维能力。
+> 还内置「审核制 AI 自动修复」（awenAgent + git worktree 隔离生成修复、人工审核后应用，默认关闭）等运维能力。
 
 ---
 
@@ -153,7 +153,7 @@ bash scripts/start.sh
 
 ```bash
 git clone https://github.com/zheng-zhengwen/wen-System.git
-cd awenops
+cd wen-System
 bash scripts/install.sh   # 无 dist 时会自动装 Node、构建前端（内存不足会临时加 2G swap）
 bash scripts/start.sh
 ```
@@ -169,8 +169,6 @@ bash scripts/start.sh
 > **国内网络加速**
 > - **克隆慢**：推荐 **gh 代理**（零登录、Windows 也不弹凭据框）：
 > `git clone https://gh-proxy.com/https://github.com/zheng-zhengwen/wen-System.git`
-> 或 **Gitee 镜像**（最快，但 Windows 的 Git Credential Manager 可能弹 Gitee 登录——仓库是公开的、其实不用账号，可加 `-c credential.interactive=never` 强制匿名）：
-> `git -c credential.interactive=never clone https://gitee.com/hectorxue/awenops.git`
 > - **装依赖慢**：`install.sh` / `install.ps1` 会**自动检测**是否在大陆网络，自动把 pip、npm 切到清华 + 淘宝镜像（无需手动；可用 `AWEN_CN=1` 强制开、`AWEN_CN=0` 关）。
 > - **旧兼容组件慢**：Hermes / Ollama 会访问境外安装器、npm/pip 或模型源，默认不再安装；需要兼容旧链路时可稍后单独重试。
 
@@ -237,14 +235,15 @@ bash scripts/start.sh
 
 恢复默认只做**干跑**，先告诉你会覆盖哪些文件、包完不完整、口令对不对；确认无误后再带 `confirm=true` 真正执行。
 
-每天凌晨 3 点会自动备份一次（本地保留 7 份）。自动备份不带口令 —— 它保的是"数据还在"，换机器完整还原仍需手动做一次带口令的备份。
+每天凌晨 3 点会自动备份一次（本地保留 7 份）。自动备份不带口令，不含主密钥与 awenAgent 数据；换机器完整还原需手动做一次带口令的备份。Docker 持久卷、旧容器迁移与恢复边界见 [部署与恢复说明](docs/deployment-recovery.md)。
 
 ## 更新升级（不影响你的数据）
 
 代码与数据是分离的：你的配置和数据**全部被 `.gitignore` 保护、不在版本控制里**，更新时不会被动到——
 - `server/.env`（密钥/密码/API Key）
 - `data/`（所有 `*.sqlite3` 数据库、`hub_settings.json` 设置、上传文件）
-- `~/.hermes/skill-studio/`（Skill、快照）
+- `data/skills/`、`data/skill-studio/`（Skill、快照；旧位置仅作为迁移来源）
+- `AWEN_HOME`（本机默认 `~/.awen/`；Docker 为 `/app/data/awen-agent/`）
 
 **Linux / macOS** —— 一条命令：
 ```bash

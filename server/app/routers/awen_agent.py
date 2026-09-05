@@ -20,6 +20,7 @@ from app.services import agent_mcp
 from app.services import console_sessions
 from app.services import awen_agent_service as svc
 from app.services import awenops_tools
+from app.services import ops_bridge_security
 
 logger = logging.getLogger("awen.routers.awen_agent")
 
@@ -229,6 +230,7 @@ class OpsToolCallBody(BaseModel):
     name: str = Field(..., min_length=1, max_length=120)
     arguments: dict[str, Any] = Field(default_factory=dict)
     context: dict[str, Any] = Field(default_factory=dict)
+    call_id: str = Field(default="", max_length=64)
 
 
 def _call(fn, *args, **kwargs) -> dict[str, Any]:
@@ -256,17 +258,26 @@ def _payload(model: BaseModel) -> dict[str, Any]:
 
 def _bridge_base_url(request: Request) -> str:
     import os
+    from urllib.parse import urlsplit
+    from app.core.config import settings
     configured = (os.getenv("AWENOPS_BRIDGE_URL") or "").strip()
     if configured:
+        parsed = urlsplit(configured)
+        if (parsed.scheme not in {"http", "https"} or not parsed.hostname
+                or parsed.username or parsed.password or parsed.query or parsed.fragment):
+            raise HTTPException(503, "AWENOPS_BRIDGE_URL 必须是可信的内部 HTTP(S) 地址")
         return configured.rstrip("/")
-    return str(request.base_url).rstrip("/") + "/api/awen-agent-bridge"
+    # Never send a bearer token to a destination chosen by Host/Forwarded headers.
+    return f"http://127.0.0.1:{settings.port}/api/awen-agent-bridge"
 
 
 def _with_ops_bridge(payload: dict[str, Any], request: Request) -> dict[str, Any]:
     payload = dict(payload)
+    mode = "none" if payload.get("plan_mode", True) else payload.get("approval", "none")
     payload["ops_bridge"] = {
         "base_url": _bridge_base_url(request),
-        "token": awenops_tools.issue_bridge_token(),
+        "token": awenops_tools.issue_bridge_token(mode=mode),
+        "protocol_version": ops_bridge_security.PROTOCOL_VERSION,
     }
     ctx = payload.get("ops_context")
     if not isinstance(ctx, dict):
@@ -522,13 +533,14 @@ def _auto_title_session(session_id: str) -> None:
 
 
 def _tee_session_events(chunks: Any, principal: str, workspace: str = "",
-                        source: str = "console", persist: bool = True) -> Any:
+                        source: str = "console", persist: bool = True,
+                        bridge_principal: dict | None = None) -> Any:
     """原样转发 SSE 字节，同时从流里捞两件 ops 需要记账的事：
 
     - ``permission_request`` → 登记审批归属（谁能批这一步）
     - ``start`` → 登记会话归属（session_id 是 agent 现场生成的，只有流里才拿得到）
 
-    只读不改：先 yield 再解析，任何解析异常都不许影响转发 —— 记账失败最坏是让
+    原样转发，但先登记审批再 yield，避免快速点击抢在登记之前。记账失败最坏是让
     用户点确认时被判 404（agent 侧会超时拒绝，方向安全）、或会话没进左栏列表；
     而弄坏转发会直接毁掉整轮对话。
     """
@@ -536,14 +548,15 @@ def _tee_session_events(chunks: Any, principal: str, workspace: str = "",
     live_sid = ""
     try:
         for chunk in chunks:
-            yield chunk
             try:
                 buf += chunk
                 while b"\n\n" in buf:
                     frame, buf = buf.split(b"\n\n", 1)
-                    is_start = b"event: start" in frame
-                    is_req = b"permission_request" in frame
-                    is_timeout = b"permission_timeout" in frame
+                    event = next((line[6:].strip() for line in frame.split(b"\n")
+                                  if line.startswith(b"event:")), b"")
+                    is_start = event == b"start"
+                    is_req = event == b"permission_request"
+                    is_timeout = event == b"permission_timeout"
                     if not (is_start or is_req or is_timeout):
                         continue
                     for line in frame.split(b"\n"):
@@ -567,7 +580,11 @@ def _tee_session_events(chunks: Any, principal: str, workspace: str = "",
                             # 超时被自动拒 —— 这也是一条要留下的决定，而且是最容易
                             # 被忽略的那种（没人点，但那一步确实没执行）。
                             console_sessions.record_approval_decision(rid, "timeout")
+                            ops_bridge_security.revoke_request(rid)
                             continue
+                        call_id = str(data.get("bridge_call_id") or "")
+                        if call_id:
+                            ops_bridge_security.bind_request(rid, call_id, bridge_principal or {})
                         _remember_approval_owner(rid, principal)
                         title = str(data.get("title") or "")
                         console_sessions.record_approval_request(
@@ -582,7 +599,10 @@ def _tee_session_events(chunks: Any, principal: str, workspace: str = "",
                     buf = buf[-4096:]
             except Exception:  # noqa: BLE001 — 记账失败绝不能影响转发
                 buf = b""
+            yield chunk
     finally:
+        if bridge_principal:
+            ops_bridge_security.close_turn(bridge_principal)
         # 这一轮转发完了（正常收尾、用户中断、断链都会走到这里）才给会话起名：
         # 起名要读这一轮的正文、还要调一次模型 —— 放在流里做等于让用户多等。
         if live_sid:
@@ -611,7 +631,12 @@ def _resolve_workspace(body: ChatBody, user: str) -> tuple[dict[str, Any], str]:
 def chat(body: ChatBody, request: Request,
          user: str = Depends(require_user)) -> dict[str, Any]:
     payload, _ = _resolve_workspace(body, user)
-    return _call(svc.chat, _with_ops_bridge(payload, request))
+    payload = _with_ops_bridge(payload, request)
+    principal = awenops_tools.principal_from_token(payload["ops_bridge"]["token"])
+    try:
+        return _call(svc.chat, payload)
+    finally:
+        ops_bridge_security.close_turn(principal)
 
 
 @router.post("/chat/stream")
@@ -621,10 +646,12 @@ def chat_stream(body: ChatBody, request: Request,
     if not status.get("available"):
         raise HTTPException(status_code=503, detail=f"awenAgent 不可用：{status.get('error') or '服务未连接'}")
     payload, ws_name = _resolve_workspace(body, user)
+    payload = _with_ops_bridge(payload, request)
+    principal = awenops_tools.principal_from_token(payload["ops_bridge"]["token"])
     return StreamingResponse(
         _tee_session_events(
-            svc.chat_stream(_with_ops_bridge(payload, request)),
-            user, ws_name, body.source, body.persist,
+            svc.chat_stream(payload),
+            user, ws_name, body.source, body.persist, principal,
         ),
         media_type="text/event-stream",
         headers={
@@ -651,9 +678,11 @@ def chat_permission(body: ChatPermissionBody,
         raise HTTPException(status_code=404, detail="该审批请求不存在或已失效")
     if owner != user:
         raise HTTPException(status_code=403, detail="无权处理他人会话的审批请求")
+    ops_bridge_security.decide(body.request_id, body.choice)
     try:
         out = _call(svc.chat_permission, {"request_id": body.request_id, "choice": body.choice})
     except HTTPException as exc:
+        ops_bridge_security.revoke_request(body.request_id)
         # daemon 对"未知/已过期"回 404，而 _call 把 agent 的一切非 2xx 都翻成 502。
         # 502 在界面上读作"服务器坏了"，但这里的真相通常是**另一个标签页已经点过了**
         # ——同一个人开两个页签、或手快点了两下，都会走到这。实测并发点两次确实
@@ -668,6 +697,8 @@ def chat_permission(body: ChatPermissionBody,
     # 就会留下一条"已批准"，而那一步其实根本没执行。
     if out.get("ok"):
         console_sessions.record_approval_decision(body.request_id, body.choice)
+    else:
+        ops_bridge_security.revoke_request(body.request_id)
     return out
 
 
@@ -1845,4 +1876,10 @@ def bridge_tools(body: OpsToolsListBody, authorization: str = Header(default="")
 @bridge_router.post("/call")
 async def bridge_call(body: OpsToolCallBody, authorization: str = Header(default="")) -> dict[str, Any]:
     principal = _bridge_principal(authorization)
-    return await awenops_tools.call_tool(body.name, body.arguments, principal=principal)
+    return await awenops_tools.call_tool(body.name, body.arguments, principal=principal, call_id=body.call_id)
+
+
+@bridge_router.post("/prepare")
+def bridge_prepare(body: OpsToolCallBody, authorization: str = Header(default="")) -> dict[str, Any]:
+    principal = _bridge_principal(authorization)
+    return awenops_tools.prepare_tool(body.name, body.arguments, principal)
